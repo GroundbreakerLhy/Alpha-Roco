@@ -10,7 +10,8 @@
         "spatk": 0,
         "spdef": 0,
         "speed": 10
-      }
+      },
+      "bloodline": 12
     },
     {
       "spirit": "奇丽花",
@@ -22,7 +23,8 @@
         "spatk": 10,
         "spdef": 0,
         "speed": 10
-      }
+      },
+      "bloodline": 1
     },
     {
       "spirit": "音速犬",
@@ -34,7 +36,8 @@
         "spatk": 0,
         "spdef": 0,
         "speed": 10
-      }
+      },
+      "bloodline": 2
     },
     {
       "spirit": "翠顶夫人",
@@ -46,7 +49,8 @@
         "spatk": 0,
         "spdef": 0,
         "speed": 10
-      }
+      },
+      "bloodline": 12
     },
     {
       "spirit": "迪莫",
@@ -58,7 +62,8 @@
         "spatk": 0,
         "spdef": 0,
         "speed": 10
-      }
+      },
+      "bloodline": 4
     },
     {
       "spirit": "水灵",
@@ -70,7 +75,8 @@
         "spatk": 10,
         "spdef": 0,
         "speed": 10
-      }
+      },
+      "bloodline": 3
     }
   ]
 }

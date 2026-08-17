@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import re
 
-from . import buffs, burst, counter, marks, skill_utils, weather
+from . import buffs, burst, counter, marks, resonance, skill_utils, weather
 from .damage import calc_damage, level_coefficient
 from .models import Action, BattlePet, BattleState
 from .data_loader import load_typechart
@@ -370,6 +370,16 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
             state.log.append(f"{side} 逃跑了，{state.winner} 获胜")
             return state
 
+    # 共鸣魔法：不占回合操作，双方都选完技能后才结算，且先于本回合行动
+    actions_for_magic = {"A": action_a, "B": action_b}
+    for side, action in actions_for_magic.items():
+        if action.magic_id is None:
+            continue
+        opponent_side = "B" if side == "A" else "A"
+        opponent_action = actions_for_magic[opponent_side]
+        opponent_is_status = counter.action_category(state, opponent_side, opponent_action) == counter.STATUS
+        resonance.use_magic(state, side, action.magic_id, opponent_is_status, action.magic_branch)
+
     # 切换精灵优先级最高：先处理所有换人，再处理攻击/聚能
     actions = {"A": action_a, "B": action_b}
     for side in ("A", "B"):
@@ -383,6 +393,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         _settle_defense_cooldowns(state)
         marks.on_round_end(state)
         buffs.on_round_end(state)
+        resonance.on_round_end(state)
         weather.on_round_end(state)
         for side in ("A", "B"):
             _apply_faint(state, side)
@@ -427,6 +438,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     _settle_defense_cooldowns(state)
     marks.on_round_end(state)
     buffs.on_round_end(state)
+    resonance.on_round_end(state)
     weather.on_round_end(state)
     for side in ("A", "B"):
         _apply_faint(state, side)
@@ -458,6 +470,7 @@ def pet_to_dict(pet: BattlePet, opponent: BattlePet | None = None, typechart: di
         skills.append(item)
     return {
         "name": pet.name,
+        "spirit_id": pet.spirit_id,
         "side": pet.side,
         "hp": pet.hp,
         "max_hp": pet.max_hp,
@@ -513,5 +526,8 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         "home_side": state.home_side,
         "weather": state.weather,
         "marks": state.marks,
+        "resonance_usage": state.resonance_usage,
+        "resonance_magic": state.resonance_magic,
+        "resonance_cooldown": state.resonance_cooldown,
         "teams": teams,
     }

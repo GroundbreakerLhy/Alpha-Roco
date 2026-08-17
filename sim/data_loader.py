@@ -100,7 +100,7 @@ def calc_all_stats(base_stats: dict, ivs=None, nature=None) -> dict:
 
 
 def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
-                   skill_names=None, skill_limit: int = 4) -> BattlePet:
+                   skill_names=None, skill_limit: int = 4, bloodline=None) -> BattlePet:
     skill_map = build_skill_map()
     skill_ids = [sid for sid in spirit["skills"].get("normal", [])]
     if skill_names is None:
@@ -146,6 +146,7 @@ def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
         speed_range=speed_range,
         ivs=dict(ivs) if ivs is not None else dict(DEFAULT_IVS),
         nature=nature,
+        bloodline=bloodline if bloodline is not None else spirit.get("mainElement"),
     )
 
 

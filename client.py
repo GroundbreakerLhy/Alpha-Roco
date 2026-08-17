@@ -54,6 +54,17 @@ def choose_lead(team):
         log("无效编号，请重新输入")
 
 
+def choose_resonance():
+    print("选择共鸣魔法 (0=光合治愈, 1=愿力冲击, 2=进化之力, 回车=无):")
+    while True:
+        value = input("请输入: ").strip()
+        if value == "":
+            return None
+        if value in ("0", "1", "2"):
+            return int(value)
+        print("无效选择，请输入 0/1/2 或直接回车")
+
+
 def print_state(state):
     home = state.get("home_side", "?")
     if AUTO_MODE:
@@ -112,13 +123,47 @@ def print_state(state):
     log("=" * 56)
 
 
+def choose_lord_branch(state):
+    pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
+    spirits = json.load(open(Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "spirits.json", encoding="utf-8"))["spirits"]
+    spirit = next((x for x in spirits if x["id"] == pet["spirit_id"]), None)
+    if spirit is None:
+        return 0
+    branches = []
+    for chain in spirit.get("evolution") or []:
+        for b in chain.get("lordBranches") or []:
+            branches.append(b["name"])
+    if not branches:
+        return 0
+    print("可选择的首领形态：")
+    for i, name in enumerate(branches):
+        print(f"  {i + 1}: {name}")
+    while True:
+        value = input("请输入编号: ").strip()
+        if value.isdigit() and 1 <= int(value) <= len(branches):
+            return int(value) - 1
+        print("无效编号")
+
+
 def prompt_action(conn, state):
+    magic_id = None
+    magic_input = input("共鸣魔法? (W1使用/回车跳过): ").strip().lower()
+    magic_branch = 0
+    if magic_input == "w1":
+        magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
+        if magic_id is None:
+            log("未选择共鸣魔法")
+            magic_id = None
+        else:
+            log(f"操作: 共鸣魔法 {magic_id}")
+            if magic_id == 2:
+                magic_branch = choose_lord_branch(state)
     while True:
         action = input("输入动作 (X=聚能, 1-4=技能, E <0-9>=换人, esc=逃跑): ").strip()
         lower = action.lower()
         if lower == "x":
             log("操作: 聚能")
-            send_line(conn, {"kind": "charge"})
+            send_line(conn, {"kind": "charge", "magic_id": magic_id, "magic_branch": magic_branch})
             return
         if action in ("1", "2", "3", "4"):
             idx = int(action) - 1
@@ -131,7 +176,7 @@ def prompt_action(conn, state):
                 log(f"防御技能冷却中：{skill['name']}")
                 continue
             log(f"操作: 技能{int(action)}")
-            send_line(conn, {"kind": "skill", "skill_index": idx})
+            send_line(conn, {"kind": "skill", "skill_index": idx, "magic_id": magic_id, "magic_branch": magic_branch})
             return
         if lower.startswith("e") and not lower.startswith("esc"):
             idx_text = action[1:].strip()
@@ -142,11 +187,11 @@ def prompt_action(conn, state):
                     log(f"该精灵已无法战斗：{target['name']}")
                     continue
                 log(f"操作: 换人 {idx_text}")
-                send_line(conn, {"kind": "switch", "pet_index": idx})
+                send_line(conn, {"kind": "switch", "pet_index": idx, "magic_id": magic_id, "magic_branch": magic_branch})
                 return
         if lower in ("esc", "escape"):
             log("操作: 逃跑")
-            send_line(conn, {"kind": "flee"})
+            send_line(conn, {"kind": "flee", "magic_id": magic_id, "magic_branch": magic_branch})
             return
         log("无效输入，请输入 X / 1-4 / E<0-9> / esc")
 
@@ -239,9 +284,11 @@ def main():
             if args.auto:
                 lead = random.randrange(len(team))
                 log(f"自动选择首发：{lead + 1}")
+                resonance = None
             else:
                 lead = choose_lead(team)
-            send_line(conn, {"type": "config", "nature": args.nature, "team": team, "lead": lead})
+                resonance = choose_resonance()
+            send_line(conn, {"type": "config", "nature": args.nature, "team": team, "lead": lead, "resonance": resonance})
         elif msg_type == "choose_replacement":
             awaiting_replacement = True
             if args.auto and current_state is not None:

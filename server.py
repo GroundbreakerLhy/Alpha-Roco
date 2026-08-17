@@ -130,6 +130,7 @@ def make_team(side, team_config, spirits):
             ivs=cfg.get("ivs"),
             nature=cfg.get("nature", -1),
             skill_names=cfg.get("skills"),
+            bloodline=cfg.get("bloodline"),
         ))
     return team
 
@@ -189,6 +190,8 @@ def main():
             state.active["A"] = lead_a
         if 0 <= lead_b < len(pets_b):
             state.active["B"] = lead_b
+        state.resonance_magic["A"] = raw_config_a.get("resonance") if raw_config_a else None
+        state.resonance_magic["B"] = raw_config_b.get("resonance") if raw_config_b else None
     else:
         pets = {
             "A": make_pet("A", args.spirit_a, args.skills_a.split(","), nature_a, spirits),
@@ -228,11 +231,15 @@ def main():
                 kind=raw_a.get("kind", "charge"),
                 skill_index=raw_a.get("skill_index"),
                 pet_index=raw_a.get("pet_index"),
+                magic_id=raw_a.get("magic_id"),
+                magic_branch=raw_a.get("magic_branch", 0),
             )
             action_b = Action(
                 kind=raw_b.get("kind", "charge"),
                 skill_index=raw_b.get("skill_index"),
                 pet_index=raw_b.get("pet_index"),
+                magic_id=raw_b.get("magic_id"),
+                magic_branch=raw_b.get("magic_branch", 0),
             )
             state = step(state, action_a, action_b)
 

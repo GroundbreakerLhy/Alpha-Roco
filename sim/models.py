@@ -50,10 +50,12 @@ class BattlePet:
     overload_current: dict = field(default_factory=dict)
     ivs: dict = field(default_factory=dict)
     nature: int | None = None
+    bloodline: int | None = None
     defense_cooldowns: set = field(default_factory=set)
     defense_used_this_turn: set = field(default_factory=set)
     has_acted_since_entry: bool = False
     bursts: list = field(default_factory=list)
+    wish_original_skill: Optional[BattleSkill] = None
 
     @property
     def alive(self) -> bool:
@@ -76,6 +78,18 @@ class BattleState:
     })
     home_side: str = "A"
     weather: int | None = None
+    resonance_magic: dict = field(default_factory=lambda: {
+        "A": None,
+        "B": None,
+    })
+    resonance_usage: dict = field(default_factory=lambda: {
+        "A": {},
+        "B": {},
+    })
+    resonance_cooldown: dict = field(default_factory=lambda: {
+        "A": {},
+        "B": {},
+    })
     turn: int = 0
     log: list = field(default_factory=list)
     winner: Optional[str] = None
@@ -90,3 +104,5 @@ class Action:
     kind: str = "charge"
     skill_index: Optional[int] = None
     pet_index: Optional[int] = None
+    magic_id: Optional[int] = None
+    magic_branch: int = 0
