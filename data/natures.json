@@ -1,0 +1,187 @@
+{
+  "source": "biligame wiki 性格页 + RocomUID nature_map",
+  "fetchedAt": "2026-08-15T11:46:50.432189+00:00",
+  "count": 30,
+  "natures": [
+    {
+      "id": 0,
+      "name": "大胆",
+      "up": "atk",
+      "down": "def"
+    },
+    {
+      "id": 1,
+      "name": "固执",
+      "up": "atk",
+      "down": "spatk"
+    },
+    {
+      "id": 2,
+      "name": "调皮",
+      "up": "atk",
+      "down": "spdef"
+    },
+    {
+      "id": 3,
+      "name": "勇敢",
+      "up": "atk",
+      "down": "speed"
+    },
+    {
+      "id": 4,
+      "name": "逞强",
+      "up": "atk",
+      "down": "hp"
+    },
+    {
+      "id": 5,
+      "name": "稳重",
+      "up": "def",
+      "down": "atk"
+    },
+    {
+      "id": 6,
+      "name": "天真",
+      "up": "def",
+      "down": "spatk"
+    },
+    {
+      "id": 7,
+      "name": "懒散",
+      "up": "def",
+      "down": "spdef"
+    },
+    {
+      "id": 8,
+      "name": "悠闲",
+      "up": "def",
+      "down": "speed"
+    },
+    {
+      "id": 9,
+      "name": "坦率",
+      "up": "def",
+      "down": "hp"
+    },
+    {
+      "id": 10,
+      "name": "聪明",
+      "up": "spatk",
+      "down": "atk"
+    },
+    {
+      "id": 11,
+      "name": "专注",
+      "up": "spatk",
+      "down": "def"
+    },
+    {
+      "id": 12,
+      "name": "偏执",
+      "up": "spatk",
+      "down": "spdef"
+    },
+    {
+      "id": 13,
+      "name": "冷静",
+      "up": "spatk",
+      "down": "speed"
+    },
+    {
+      "id": 14,
+      "name": "理性",
+      "up": "spatk",
+      "down": "hp"
+    },
+    {
+      "id": 15,
+      "name": "警惕",
+      "up": "spdef",
+      "down": "atk"
+    },
+    {
+      "id": 16,
+      "name": "温顺",
+      "up": "spdef",
+      "down": "def"
+    },
+    {
+      "id": 17,
+      "name": "害羞",
+      "up": "spdef",
+      "down": "spatk"
+    },
+    {
+      "id": 18,
+      "name": "慎重",
+      "up": "spdef",
+      "down": "speed"
+    },
+    {
+      "id": 19,
+      "name": "焦虑",
+      "up": "spdef",
+      "down": "hp"
+    },
+    {
+      "id": 20,
+      "name": "胆小",
+      "up": "speed",
+      "down": "atk"
+    },
+    {
+      "id": 21,
+      "name": "急躁",
+      "up": "speed",
+      "down": "def"
+    },
+    {
+      "id": 22,
+      "name": "开朗",
+      "up": "speed",
+      "down": "spatk"
+    },
+    {
+      "id": 23,
+      "name": "莽撞",
+      "up": "speed",
+      "down": "spdef"
+    },
+    {
+      "id": 24,
+      "name": "热情",
+      "up": "speed",
+      "down": "hp"
+    },
+    {
+      "id": 25,
+      "name": "沉默",
+      "up": "hp",
+      "down": "atk"
+    },
+    {
+      "id": 26,
+      "name": "忧郁",
+      "up": "hp",
+      "down": "def"
+    },
+    {
+      "id": 27,
+      "name": "平和",
+      "up": "hp",
+      "down": "spatk"
+    },
+    {
+      "id": 28,
+      "name": "粗心",
+      "up": "hp",
+      "down": "spdef"
+    },
+    {
+      "id": 29,
+      "name": "踏实",
+      "up": "hp",
+      "down": "speed"
+    }
+  ]
+}

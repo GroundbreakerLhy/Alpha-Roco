@@ -1,0 +1,256 @@
+{
+  "buff": {
+    "id": "buff",
+    "desc": "增加属性、技能威力、连击数，以及降低能耗、吸血、过载等效果。不包括类型为“印记”、“特性”、“其他”的效果。",
+    "includes": [
+      "stat",
+      "skill_power",
+      "hit_count",
+      "energy_cost",
+      "lifesteal",
+      "overload"
+    ]
+  },
+  "debuff": {
+    "id": "debuff",
+    "desc": "降低属性、技能威力、连击数，以及增加能耗、中毒、灼烧、寄生、冻结、萌化、引电等效果。不包括类型为“印记”、“特性”、“其他”的效果。",
+    "includes": [
+      "stat",
+      "skill_power",
+      "hit_count",
+      "energy_cost",
+      "poison",
+      "burn",
+      "leech",
+      "freeze",
+      "cute",
+      "lightning"
+    ]
+  },
+  "durations": [
+    {
+      "id": "permanent",
+      "desc": "下场后再上场不会消失。"
+    },
+    {
+      "id": "normal",
+      "desc": "下场时消失。"
+    },
+    {
+      "id": "temporary",
+      "desc": "下回合结束以后消失。"
+    }
+  ],
+  "effects": [
+    {
+      "id": "atk",
+      "desc": "每层提升10%物攻。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "spatk",
+      "desc": "每层提升10%魔攻。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "def",
+      "desc": "每层提升10%物抗。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "spdef",
+      "desc": "每层提升10%魔抗。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "skill_power_percent",
+      "desc": "每层提升10%技能威力。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "lifesteal",
+      "desc": "每层提供10%吸血，按造成伤害比例回复生命。",
+      "type": "buff",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "hit_count_percent",
+      "desc": "每层提升10%连击数。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "speed",
+      "desc": "每层增加10点速度。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "flat",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "skill_power_flat",
+      "desc": "每层增加10点技能威力。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "flat",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
+      "id": "hit_count_flat",
+      "desc": "每层增加1点连击数。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "integer",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
+      "id": "energy_cost",
+      "desc": "每层使使用所有技能所需能耗增加或减少1。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "integer",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
+      "id": "overload",
+      "desc": "每层使下回合技能使用次数增加1，需要消耗相应能量。",
+      "type": "buff",
+      "duration": "normal",
+      "unit": "integer",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
+      "id": "priority",
+      "desc": "每层增加1点先手值，数值越大越先出手。",
+      "type": "buff",
+      "duration": "temporary",
+      "unit": "integer",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
+      "id": "priority_debuff",
+      "desc": "每层减少1点先手值，数值越小越后出手。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": "integer",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
+      "id": "poison",
+      "desc": "每一层中毒效果：回合结束时受到3%的毒系伤害；毒系精灵免疫此效果。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 3,
+      "immune": [
+        9
+      ]
+    },
+    {
+      "id": "burn",
+      "desc": "每一层灼烧效果：回合结束时造成2%生命的火系伤害，并衰减一半层数（向下取整）；火系精灵免疫此效果。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 2,
+      "immune": [
+        2
+      ]
+    },
+    {
+      "id": "dizzy",
+      "desc": "每一层眩晕效果：下一回合无法行动，回合结束时减少一层。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": null,
+      "per_layer": null,
+      "immune": []
+    },
+    {
+      "id": "leech",
+      "desc": "每一层寄生效果：回合结束从寄生来源吸收2%生命；草系精灵免疫此效果。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 2,
+      "immune": [
+        1
+      ]
+    },
+    {
+      "id": "freeze",
+      "desc": "每一层冻结效果：冻结5%生命，若当前生命低于冻结比例则力竭；冰系精灵免疫；下场不会消失。",
+      "type": "debuff",
+      "duration": "permanent",
+      "unit": "percent",
+      "per_layer": 5,
+      "immune": [
+        6
+      ]
+    },
+    {
+      "id": "cute",
+      "desc": "每一层萌化效果：退化到上一阶，种族资质相应降低；可以退化的精灵才可以获得萌化；下场不会消失。",
+      "type": "debuff",
+      "duration": "permanent",
+      "unit": null,
+      "per_layer": null,
+      "immune": []
+    },
+    {
+      "id": "lock",
+      "desc": "处于禁足状态时精灵无法离场，且无法获得新的禁足状态；持续回合由施加方传入value。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": null,
+      "per_layer": null,
+      "immune": []
+    },
+    {
+      "id": "lightning",
+      "desc": "获得两层引电时，立即受到25%生命的电系伤害，并失去两层引电；电系精灵免疫。",
+      "type": "debuff",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 25,
+      "immune": [
+        8
+      ]
+    }
+  ],
+  "attribute_damage_formula": "damage = int(max_hp * percent * layers * type_multiplier)",
+  "attribute_multiplier_source": "data/typechart.json"
+}
