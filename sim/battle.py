@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import re
 
-from . import buffs, burst, counter, marks, skill_utils
+from . import buffs, burst, counter, marks, skill_utils, weather
 from .damage import calc_damage, level_coefficient
 from .models import Action, BattlePet, BattleState
 from .data_loader import load_typechart
@@ -223,7 +223,8 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
 
     skill = pet.skills[action.skill_index]
     # 印记 2：蓄势印记 —— 全技能能耗+1/层；印记 11：湿润印记 —— 全技能能耗-1/层
-    mark_energy_bonus = 0
+    # 天气：沙暴使地属性技能能耗-2
+    mark_energy_bonus = weather.sandstorm_energy_modifier(state.weather, skill.element)
     positive_mark = marks.get_mark(state, side, marks.POSITIVE)
     if positive_mark is not None and positive_mark["id"] == 2:
         mark_energy_bonus += positive_mark["stacks"]
@@ -251,10 +252,12 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
         return logs
 
     if skill.category in (0, 1) and skill.power is not None:
+        # 天气：雨天使水系技能威力提升至150%
+        # 天气：雨天使水系技能威力提升至150%
+        extra_power_percent = 50.0 if state.weather == weather.RAIN and skill.element == 3 else 0.0
         # 印记 0：攻击印记 —— 全技能威力+10%/层
         # 印记 2：蓄势印记 —— 全技能威力+30%/层
         # 印记 12：风气印记 —— 先手攻击时技能威力+20%/层
-        extra_power_percent = 0.0
         extra_power_flat = 0.0
         if marks.get_mark(state, side, marks.POSITIVE) is not None:
             positive = marks.get_mark(state, side, marks.POSITIVE)
@@ -381,6 +384,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         _settle_defense_cooldowns(state)
         marks.on_round_end(state)
         buffs.on_round_end(state)
+        weather.on_round_end(state)
         for side in ("A", "B"):
             _apply_faint(state, side)
         if state.winner is not None:
@@ -424,6 +428,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     _settle_defense_cooldowns(state)
     marks.on_round_end(state)
     buffs.on_round_end(state)
+    weather.on_round_end(state)
     for side in ("A", "B"):
         _apply_faint(state, side)
     if state.winner is not None:
@@ -507,6 +512,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         "magic": state.magic,
         "active": state.active,
         "home_side": state.home_side,
+        "weather": state.weather,
         "marks": state.marks,
         "teams": teams,
     }

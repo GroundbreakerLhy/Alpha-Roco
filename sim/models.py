@@ -75,6 +75,7 @@ class BattleState:
         "B": {"positive": None, "negative": None},
     })
     home_side: str = "A"
+    weather: int | None = None
     turn: int = 0
     log: list = field(default_factory=list)
     winner: Optional[str] = None

@@ -39,6 +39,7 @@ sim/
   data_loader.py          # 数据加载、面板计算
   buffs.py                # 增益/减益、纯减益、回合结束结算
   marks.py                # 印记系统：正/负面各一槽，新印记顶掉同类旧印记
+  weather.py              # 天气系统：雨天/暴风雪/沙暴/雷鸣
   burst.py                # 迸发效果：入场后首次行动消耗
   evolution.py            # 进化链、萌化退化
   typechart.py            # 属性克制查询
