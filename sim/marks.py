@@ -33,10 +33,18 @@ def mark_side(mark_id: int) -> str:
     return POSITIVE
 
 
-def add_mark(state, side: str, mark_id: int, amount: int = 1) -> None:
+def add_mark(state, side: str, mark_id: int, amount: int = 1, stack: bool = False) -> None:
     if amount <= 0:
         return
     side_name = mark_side(mark_id)
+    if stack:
+        # 叠加模式(特性:赋予的印记不替换其他印记):同 id 合并,异 id 追加
+        for m in state.marks_extra[side][side_name]:
+            if m["id"] == mark_id:
+                m["stacks"] = min(99, m["stacks"] + amount)
+                return
+        state.marks_extra[side][side_name].append({"id": mark_id, "stacks": min(99, amount)})
+        return
     current = state.marks[side][side_name]
     if current is not None and current["id"] == mark_id:
         current["stacks"] = min(99, current["stacks"] + amount)
@@ -44,15 +52,46 @@ def add_mark(state, side: str, mark_id: int, amount: int = 1) -> None:
         state.marks[side][side_name] = {"id": mark_id, "stacks": min(99, amount)}
 
 
+def get_extra_marks(state, side: str, slot: str) -> list:
+    return state.marks_extra[side][slot]
+
+
+def find_mark(state, side: str, slot: str, mark_id: int):
+    """在槽位(含叠加印记)中查找指定 id 的印记。"""
+    cur = state.marks[side][slot]
+    if cur is not None and cur["id"] == mark_id:
+        return dict(cur)
+    for m in state.marks_extra[side][slot]:
+        if m["id"] == mark_id:
+            return dict(m)
+    return None
+
+
+def find_stacks(state, side: str, mark_id: int) -> int:
+    slot = mark_side(mark_id)
+    total = 0
+    cur = state.marks[side][slot]
+    if cur is not None and cur["id"] == mark_id:
+        total += cur["stacks"]
+    for m in state.marks_extra[side][slot]:
+        if m["id"] == mark_id:
+            total += m["stacks"]
+    return total
+
+
 def remove_mark(state, side: str, mark_id: int) -> None:
     for side_name in (POSITIVE, NEGATIVE):
         current = state.marks[side][side_name]
         if current is not None and current["id"] == mark_id:
             state.marks[side][side_name] = None
+        state.marks_extra[side][side_name] = [
+            m for m in state.marks_extra[side][side_name] if m["id"] != mark_id
+        ]
 
 
 def clear_side(state, side: str, side_name: str) -> None:
     state.marks[side][side_name] = None
+    state.marks_extra[side][side_name] = []
 
 
 def get_marks(state, side: str) -> dict:
@@ -99,16 +138,14 @@ def on_round_end(state) -> None:
         if pet.hp <= 0:
             continue
 
-        positive = state.marks[side]["positive"]
-        if positive is not None and positive["id"] == 10:
+        positive = find_mark(state, side, "positive", 10)
+        if positive is not None:
             gain = positive["stacks"]
             pet.energy = min(10, pet.energy + gain)
             state.log.append(f"{side} {pet.name} 光合印记回复 {gain} 能量")
 
-        negative = state.marks[side]["negative"]
-        if negative is None:
-            continue
-        if negative["id"] == 4:
+        negative = find_mark(state, side, "negative", 4)
+        if negative is not None:
             mult = type_multiplier(9, pet.attributes, typechart)
             damage = int(pet.max_hp * 0.03 * negative["stacks"] * mult)
             pet.hp = max(0, pet.hp - damage)

@@ -16,7 +16,7 @@ import random
 import socket
 from pathlib import Path
 
-from sim import burst
+from sim import burst, features
 from sim.battle import create_battle, create_team_battle, state_to_dict, step
 from sim.data_loader import find_spirit, load_spirits, make_battle_pet
 from sim.models import Action
@@ -78,6 +78,8 @@ def read_replacement(f, conn, state, side):
             if positive_mark is not None and positive_mark["id"] == 6:
                 burst.add_burst(pet, "attack_power_flat", 10 * positive_mark["stacks"])
             state.log.append(f"{side} 换上 {pet.name}")
+            features.apply_pending_entry(state, side, state.log)
+            features.on_entry(state, side, state.log)
             log(f"{side} 换上 {pet.name}")
             return raw
         send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
@@ -142,6 +144,8 @@ def main():
     parser.add_argument("--spirit-b", default="奇丽花")
     parser.add_argument("--skills-a", default="扇风,啄击,先发制人,俯冲猛击")
     parser.add_argument("--skills-b", default="棘突,叶绿光束,刺藤,仙人掌刺击")
+    parser.add_argument("--day-of-week", type=int, default=0, help="0=周一 ... 6=周日(周末特性判定)")
+    parser.add_argument("--no-night", action="store_true", help="关闭王国入夜环境")
     args = parser.parse_args()
     # random.seed(42)
 
@@ -195,6 +199,9 @@ def main():
             "B": make_pet("B", args.spirit_b, args.skills_b.split(","), nature_b, spirits),
         }
         state = create_battle(pets["A"], pets["B"])
+
+    state.day_of_week = args.day_of_week
+    state.is_night = not args.no_night
 
     send_line(conn_a, {"type": "state", "state": state_to_dict(state, view_side="A")})
     send_line(conn_b, {"type": "state", "state": state_to_dict(state, view_side="B")})

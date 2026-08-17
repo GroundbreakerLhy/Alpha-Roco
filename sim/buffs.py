@@ -125,7 +125,8 @@ class Buff:
 
 
 def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMAL,
-             current_turn: int | None = None, source_side: str = "", source_pet: str = "") -> None:
+             current_turn: int | None = None, source_side: str = "", source_pet: str = "",
+             _no_hook: bool = False) -> None:
     if value == 0:
         return
 
@@ -155,6 +156,12 @@ def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMA
         return
 
     if buff_type == BuffType.CUTE:
+        if not _no_hook:
+            from . import features
+            extra_cute = features.on_buff_gain(pet, buff_type, value)
+            if extra_cute < 0:
+                remove_buff(pet, BuffType.CUTE)
+                return
         applied = 0
         for _ in range(value):
             if not apply_cute(pet):
@@ -178,6 +185,12 @@ def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMA
 
     if buff_type == BuffType.LIGHTNING and get_buff_value(pet, BuffType.LIGHTNING) >= 2:
         _trigger_lightning(pet)
+
+    if not _no_hook:
+        from . import features
+        extra = features.on_buff_gain(pet, buff_type, value)
+        if extra != 0:
+            add_buff(pet, buff_type, extra, duration, current_turn, source_side, source_pet, _no_hook=True)
 
 
 def remove_buff(pet, buff_type: str) -> None:
@@ -271,8 +284,11 @@ def on_round_end(state) -> None:
             if pet.hp <= 0:
                 continue
 
-            _apply_poison(pet, typechart)
-            _apply_burn(pet, typechart)
+            from . import features
+            poison_times = 2 if features.poison_extra_trigger(state) else 1
+            for _ in range(poison_times):
+                _apply_poison(pet, typechart, state)
+            _apply_burn(pet, typechart, features.burn_mode(state, side), state)
             _apply_leech(pet, state, typechart)
             _apply_freeze(pet, typechart)
             _apply_dizzy(pet)
@@ -280,26 +296,57 @@ def on_round_end(state) -> None:
             expire_temporary_buffs(pet, state.turn)
 
 
-def _apply_poison(pet, typechart) -> None:
+def _apply_poison(pet, typechart, state=None) -> None:
     layers = get_buff_value(pet, BuffType.POISON)
     if layers <= 0 or _immune(pet, 9):
         return
     mult = type_multiplier(9, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.03 * layers * mult)
     _apply_damage(pet, damage)
+    if state is not None:
+        _feature_heal_on_doom(state, pet, damage, "敌方受到中毒效果伤害时，自己回复等量生命")
 
 
-def _apply_burn(pet, typechart) -> None:
+def _apply_burn(pet, typechart, mode: str = "normal", state=None) -> None:
     layers = get_buff_value(pet, BuffType.BURN)
     if layers <= 0 or _immune(pet, 2):
         return
     mult = type_multiplier(2, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
     _apply_damage(pet, damage)
-    new_layers = layers // 2
+    if state is not None:
+        _feature_heal_on_doom(state, pet, damage, "敌方受到灼烧伤害时，自己回复等量生命")
     remove_buff(pet, BuffType.BURN)
-    if new_layers > 0:
-        pet.buffs.append(Buff(buff_type=BuffType.BURN, value=new_layers, duration=DurationKind.NORMAL))
+    if mode == "grow":
+        # 衰减变为增长:层数翻倍
+        new_layers = layers * 2
+        if new_layers > 0:
+            pet.buffs.append(Buff(buff_type=BuffType.BURN, value=new_layers, duration=DurationKind.NORMAL))
+    elif mode == "to_poison":
+        # 衰减的灼烧变为相同层数的中毒
+        if layers > 0:
+            pet.buffs.append(Buff(buff_type=BuffType.POISON, value=layers, duration=DurationKind.NORMAL))
+    else:
+        new_layers = layers // 2
+        if new_layers > 0:
+            pet.buffs.append(Buff(buff_type=BuffType.BURN, value=new_layers, duration=DurationKind.NORMAL))
+
+
+def _feature_heal_on_doom(state, pet, damage: int, key: str) -> None:
+    """敌方因持续伤害(毒/灼烧)扣血时,若对方在场精灵特性匹配则回复等量。"""
+    if damage <= 0:
+        return
+    from . import features
+    opp_side = "B" if pet.side == "A" else "A"
+    idx = state.active[opp_side]
+    if idx < 0:
+        return
+    opp = state.teams[opp_side][idx]
+    if opp.hp <= 0:
+        return
+    if key in features.desc_of(opp):
+        opp.hp = min(opp.max_hp, opp.hp + damage)
+        state.log.append(f"  [特性] {opp.name} 回复 {damage} 生命(敌方受持续伤害)")
 
 
 def _apply_leech(pet, state, typechart) -> None:

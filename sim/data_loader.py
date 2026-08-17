@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 from .models import BattlePet, BattleSkill, SkillData
@@ -99,6 +100,25 @@ def calc_all_stats(base_stats: dict, ivs=None, nature=None) -> dict:
     }
 
 
+def _parse_skill_mechanics(raw: dict) -> dict:
+    """从技能描述解析 迅捷/传动/巧变/选择 等机制。"""
+    desc = raw.get("desc", "") or ""
+    swift = "迅捷" in desc
+    drive = 0
+    m = re.search(r"传动(\d+)", desc)
+    if m:
+        drive = int(m.group(1))
+    qiaobian = ""
+    m = re.search(r"巧变：([^。，]+)", desc)
+    if m:
+        qiaobian = m.group(1).strip()
+    choices = []
+    m = re.search(r"选择：([^。]+)", desc)
+    if m:
+        choices = [c.strip() for c in m.group(1).split("或")]
+    return {"swift": swift, "drive": drive, "qiaobian": qiaobian, "choices": choices}
+
+
 def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
                    skill_names=None, skill_limit: int = 4) -> BattlePet:
     skill_map = build_skill_map()
@@ -118,6 +138,7 @@ def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
         raw = skill_map.get(sid)
         if raw is None:
             continue
+        mech = _parse_skill_mechanics(raw)
         skills.append(BattleSkill(
             skill_id=sid,
             name=raw["name"],
@@ -126,12 +147,18 @@ def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
             power=raw.get("power"),
             energy_cost=raw.get("energyCost", 0),
             desc=raw.get("desc", ""),
+            counter_target=raw.get("counterTarget") or "",
+            swift=mech["swift"],
+            drive=mech["drive"],
+            qiaobian=mech["qiaobian"],
+            choices=mech["choices"],
         ))
     stats = calc_all_stats(spirit["stats"], ivs=ivs, nature=nature)
     speed_range = [
         calc_stat(spirit["stats"]["speed"], 0, 0.9),
         calc_stat(spirit["stats"]["speed"], 10, 1.2),
     ]
+    feature = spirit.get("feature") or {}
     return BattlePet(
         side=side,
         spirit_id=spirit["id"],
@@ -146,6 +173,9 @@ def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
         speed_range=speed_range,
         ivs=dict(ivs) if ivs is not None else dict(DEFAULT_IVS),
         nature=nature,
+        feature_id=feature.get("id"),
+        feature_desc=feature.get("desc", ""),
+        form_type=spirit.get("formType", ""),
     )
 
 
