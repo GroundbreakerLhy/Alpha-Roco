@@ -253,8 +253,7 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
 
     if skill.category in (0, 1) and skill.power is not None:
         # 天气：雨天使水系技能威力提升至150%
-        # 天气：雨天使水系技能威力提升至150%
-        extra_power_percent = 50.0 if state.weather == weather.RAIN and skill.element == 3 else 0.0
+        extra_power_percent = 50.0 if weather.get_weather_id(state) == weather.RAIN and skill.element == 3 else 0.0
         # 印记 0：攻击印记 —— 全技能威力+10%/层
         # 印记 2：蓄势印记 —— 全技能威力+30%/层
         # 印记 12：风气印记 —— 先手攻击时技能威力+20%/层
