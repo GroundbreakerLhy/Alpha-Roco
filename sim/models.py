@@ -51,6 +51,7 @@ class BattlePet:
     ivs: dict = field(default_factory=dict)
     nature: int | None = None
     bloodline: int | None = None
+    lord_bloodline: bool = False
     defense_cooldowns: set = field(default_factory=set)
     defense_used_this_turn: set = field(default_factory=set)
     has_acted_since_entry: bool = False

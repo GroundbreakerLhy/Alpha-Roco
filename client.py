@@ -55,7 +55,7 @@ def choose_lead(team):
 
 
 def choose_resonance():
-    print("选择共鸣魔法 (0=光合治愈, 1=愿力冲击, 2=进化之力, 回车=无):")
+    print("选择共鸣魔法 (0=愿力冲击, 1=进化之力, 2=光合治愈, 回车=无):")
     while True:
         value = input("请输入: ").strip()
         if value == "":
@@ -112,7 +112,9 @@ def print_state(state):
                 log(f"     buff {buff['type']} x{buff['value']} ({buff['duration']})")
             for skill in pet["skills"]:
                 if "desc" not in skill:
-                    log(f"     对方用过: {skill['name']} 能耗{skill['energy_cost']}")
+                    display = skill.get('display_power')
+                    display_text = f" 显示威力 {display}" if display is not None else ""
+                    log(f"     对方用过: {skill['name']} 能耗{skill['energy_cost']}{display_text}")
                     continue
                 display = skill.get('display_power')
                 display_text = f" 显示威力 {display}" if display is not None else ""
@@ -121,6 +123,41 @@ def print_state(state):
             if not pet["skills"]:
                 log("     （技能不可见）")
     log("=" * 56)
+
+
+def can_use_resonance(state):
+    magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
+    if magic_id is None:
+        return False
+    key = str(magic_id)
+    used = state.get("resonance_usage", {}).get(MY_SIDE, {}).get(key, 0)
+    limit = 2 if magic_id == 0 else 1
+    if used >= limit:
+        return False
+    cooldown = state.get("resonance_cooldown", {}).get(MY_SIDE, {}).get(key, 0)
+    return cooldown <= 0
+
+
+def show_resonance_info(state):
+    magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
+    if magic_id is None:
+        log("当前未携带共鸣魔法")
+        return
+    names = {0: "愿力冲击", 1: "进化之力", 2: "光合治愈"}
+    limits = {0: 2, 1: 1, 2: 1}
+    key = str(magic_id)
+    used = state.get("resonance_usage", {}).get(MY_SIDE, {}).get(key, 0)
+    cooldown = state.get("resonance_cooldown", {}).get(MY_SIDE, {}).get(key, 0)
+    log(f"共鸣魔法: {names.get(magic_id, magic_id)} 剩余 {max(0, limits.get(magic_id, 1) - used)} 次 冷却 {cooldown}")
+
+
+def show_bench(state):
+    log("场下精灵：")
+    for i, pet in enumerate(state["teams"][MY_SIDE]):
+        if i == state["active"][MY_SIDE]:
+            continue
+        status = "存活" if pet["hp"] > 0 else "无法战斗"
+        log(f"  {i + 1}: {pet['name']} HP {pet['hp']}/{pet['max_hp']} {status}")
 
 
 def choose_lord_branch(state):
@@ -147,20 +184,29 @@ def choose_lord_branch(state):
 
 def prompt_action(conn, state):
     magic_id = None
-    magic_input = input("共鸣魔法? (W1使用/回车跳过): ").strip().lower()
     magic_branch = 0
-    if magic_input == "w1":
-        magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
-        if magic_id is None:
-            log("未选择共鸣魔法")
-            magic_id = None
-        else:
-            log(f"操作: 共鸣魔法 {magic_id}")
-            if magic_id == 2:
-                magic_branch = choose_lord_branch(state)
     while True:
-        action = input("输入动作 (X=聚能, 1-4=技能, E <0-9>=换人, esc=逃跑): ").strip()
+        action = input("输入 (W1=共鸣, X=聚能, 1-4=技能, E<0-9>=换人, esc=逃跑): ").strip()
         lower = action.lower()
+        if lower == "w":
+            show_resonance_info(state)
+            continue
+        if lower == "e":
+            show_bench(state)
+            continue
+        if lower == "w1":
+            if not can_use_resonance(state):
+                log("共鸣魔法不可用")
+                continue
+            magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
+            if magic_id == 1:
+                pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
+                if not pet.get("lord_bloodline"):
+                    log("当前精灵不是首领血脉，无法首领化")
+                    continue
+                magic_branch = choose_lord_branch(state)
+            log(f"操作: 共鸣魔法 {magic_id}")
+            continue
         if lower == "x":
             log("操作: 聚能")
             send_line(conn, {"kind": "charge", "magic_id": magic_id, "magic_branch": magic_branch})
@@ -183,6 +229,9 @@ def prompt_action(conn, state):
             if idx_text.isdigit() and 1 <= int(idx_text) <= 6:
                 idx = int(idx_text) - 1
                 target = state["teams"][MY_SIDE][idx]
+                if idx == state["active"][MY_SIDE]:
+                    log("当前精灵已经在场上")
+                    continue
                 if target["hp"] <= 0:
                     log(f"该精灵已无法战斗：{target['name']}")
                     continue
@@ -193,7 +242,7 @@ def prompt_action(conn, state):
             log("操作: 逃跑")
             send_line(conn, {"kind": "flee", "magic_id": magic_id, "magic_branch": magic_branch})
             return
-        log("无效输入，请输入 X / 1-4 / E<0-9> / esc")
+        log("无效输入，请输入 W1 / X / 1-4 / E<0-9> / esc")
 
 
 def prompt_replacement(conn, state):
@@ -202,16 +251,20 @@ def prompt_replacement(conn, state):
         lower = action.lower()
         if lower.startswith("e"):
             idx_text = action[1:].strip()
-            if idx_text.isdigit() and 1 <= int(idx_text) <= 6:
-                idx = int(idx_text) - 1
-                target = state["teams"][MY_SIDE][idx]
-                if target["hp"] <= 0:
-                    log(f"该精灵已无法战斗：{target['name']}")
-                    continue
-                log(f"操作: 换人 {idx_text}")
-                send_line(conn, {"kind": "switch", "pet_index": idx})
-                return
-        log("请输入 E<0-9>")
+        elif action.isdigit():
+            idx_text = action
+        else:
+            idx_text = ""
+        if idx_text.isdigit() and 1 <= int(idx_text) <= 6:
+            idx = int(idx_text) - 1
+            target = state["teams"][MY_SIDE][idx]
+            if target["hp"] <= 0:
+                log(f"该精灵已无法战斗：{target['name']}")
+                continue
+            log(f"操作: 换人 {idx_text}")
+            send_line(conn, {"kind": "switch", "pet_index": idx})
+            return
+        log("请输入 E<0-9> 或直接输入编号")
 
 
 def auto_action(conn, state, side):
@@ -219,6 +272,16 @@ def auto_action(conn, state, side):
     if idx < 0:
         return
     pet = state["teams"][side][idx]
+    if pet["hp"] / pet["max_hp"] < 0.25:
+        candidates = [
+            i for i, p in enumerate(state["teams"][side])
+            if i != idx and p["hp"] > 0 and p["hp"] / p["max_hp"] > 0.5
+        ]
+        if candidates and random.random() < 0.3:
+            target = random.choice(candidates)
+            log(f"操作: 换人 {target + 1}")
+            send_line(conn, {"kind": "switch", "pet_index": target})
+            return
     usable = [
         i for i, skill in enumerate(pet["skills"])
         if skill.get("power") is not None
@@ -226,9 +289,9 @@ def auto_action(conn, state, side):
         and skill.get("energy_cost", 0) <= pet["energy"]
     ]
     if usable:
-        idx = random.choice(usable)
-        log(f"操作: 技能{idx + 1}")
-        send_line(conn, {"kind": "skill", "skill_index": idx})
+        best = max(usable, key=lambda i: pet["skills"][i].get("display_power") or pet["skills"][i].get("power") or 0)
+        log(f"操作: 技能{best + 1}")
+        send_line(conn, {"kind": "skill", "skill_index": best})
     else:
         log("操作: 聚能")
         send_line(conn, {"kind": "charge"})

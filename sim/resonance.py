@@ -15,9 +15,9 @@ from .typechart import type_multiplier
 ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RESONANCE_PATH = ROOT / "data" / "resonance.json"
 
-HEAL = 0
-WISH = 1
-EVOLVE = 2
+WISH = 0
+EVOLVE = 1
+HEAL = 2
 
 
 def load_magics():

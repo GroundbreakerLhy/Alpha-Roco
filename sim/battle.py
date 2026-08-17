@@ -191,10 +191,7 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
                 incoming.energy = max(0, incoming.energy - loss)
                 logs.append(f"  降灵印记：{incoming.name} 入场失去 {loss} 能量")
             return logs
-        idx = _first_alive_index(state, side)
-        if idx is not None and idx != current:
-            state.active[side] = idx
-            logs.append(f"{side} 换人无效，自动换上 {team[idx].name}")
+        logs.append(f"{side} 换人目标无效")
         return logs
 
     opponent_side = "B" if side == "A" else "A"
@@ -244,7 +241,8 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
         buffs.add_buff(pet, buffs.BuffType.ATK, gain)
         buffs.add_buff(pet, buffs.BuffType.SPATK, gain)
         logs.append(f"  龙噬印记：双攻+{gain * 10}%")
-    state.revealed[side].add(skill.skill_id)
+    if skill.skill_id != -1:
+        state.revealed[side].add(skill.skill_id)
     logs.append(f"{side} {pet.name} 使用 {skill.name}")
 
     if opponent is None:
@@ -451,9 +449,14 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     return state
 
 
-def pet_to_dict(pet: BattlePet, opponent: BattlePet | None = None, typechart: dict | None = None) -> dict:
+def pet_to_dict(pet: BattlePet, opponent: BattlePet | None = None, typechart: dict | None = None,
+                hide_wish: bool = False) -> dict:
+    skills_source = pet.skills
+    if hide_wish and pet.wish_original_skill is not None:
+        skills_source = list(pet.skills)
+        skills_source[0] = pet.wish_original_skill
     skills = []
-    for i, skill in enumerate(pet.skills):
+    for i, skill in enumerate(skills_source):
         item = {
             "index": i,
             "skill_id": skill.skill_id,
@@ -478,6 +481,7 @@ def pet_to_dict(pet: BattlePet, opponent: BattlePet | None = None, typechart: di
         "level": pet.level,
         "stats": pet.stats,
         "attributes": pet.attributes,
+        "lord_bloodline": pet.lord_bloodline,
         "speed_range": pet.speed_range,
         "defense_cooldowns": sorted(pet.defense_cooldowns),
         "buffs": [
@@ -497,7 +501,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         opponent = state.teams[opponent_side][opponent_idx] if opponent_idx >= 0 else None
         side_list = []
         for pet in state.teams[side]:
-            d = pet_to_dict(pet, opponent, typechart)
+            d = pet_to_dict(pet, opponent, typechart, hide_wish=(view_side is not None and side != view_side))
             if view_side is not None and side == view_side:
                 mark_energy_bonus = 0
                 positive = marks.get_mark(state, side, marks.POSITIVE)
@@ -512,7 +516,11 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
             if view_side is not None and side != view_side:
                 revealed_ids = state.revealed[side]
                 d["skills"] = [
-                    {"name": skill["name"], "energy_cost": skill["energy_cost"]}
+                    {
+                        "name": skill["name"],
+                        "energy_cost": skill["energy_cost"],
+                        "display_power": skill.get("display_power"),
+                    }
                     for skill in d["skills"] if skill["skill_id"] in revealed_ids
                 ]
             side_list.append(d)

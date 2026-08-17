@@ -85,10 +85,14 @@ def get_lord_forms(spirit) -> list:
 
 
 def can_lordize(pet) -> bool:
+    if not pet.lord_bloodline:
+        return False
     spirit = get_spirit_by_id(pet.spirit_id)
     if spirit is None:
         return False
-    return has_lord_form(spirit) and get_lord_form(spirit) is not None
+    if not has_lord_form(spirit):
+        return False
+    return get_lord_form(spirit) is not None
 
 
 def lordize(pet, branch: int = 0) -> bool:

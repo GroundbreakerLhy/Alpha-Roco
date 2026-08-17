@@ -83,6 +83,20 @@ def read_replacement(f, conn, state, side):
         send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
 
 
+def is_valid_normal_switch(raw, state, side):
+    if raw is None or raw.get("kind") != "switch":
+        return True
+    idx = raw.get("pet_index")
+    if idx is None or state.active[side] < 0:
+        return False
+    team = state.teams[side]
+    if not (0 <= idx < len(team)):
+        return False
+    if idx == state.active[side]:
+        return False
+    return team[idx].hp > 0
+
+
 def is_valid_skill_energy(raw, state, side):
     if raw is None or raw.get("kind") != "skill":
         return True
@@ -106,9 +120,9 @@ def read_action_with_energy(f, conn, state, side):
         raw = recv_line(f)
         if raw is None:
             return None
-        if is_valid_skill_energy(raw, state, side):
+        if is_valid_skill_energy(raw, state, side) and is_valid_normal_switch(raw, state, side):
             return raw
-        send_line(conn, {"type": "error", "message": "技能不可用，请重新选择"})
+        send_line(conn, {"type": "error", "message": "行动不可用，请重新选择"})
 
 
 def make_pet(side, name, skill_names, nature, spirits):
@@ -131,6 +145,7 @@ def make_team(side, team_config, spirits):
             nature=cfg.get("nature", -1),
             skill_names=cfg.get("skills"),
             bloodline=cfg.get("bloodline"),
+            lord_bloodline=cfg.get("lord_bloodline", False),
         ))
     return team
 
