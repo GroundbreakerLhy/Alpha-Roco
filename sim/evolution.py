@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .data_loader import calc_all_stats, get_attributes, load_spirits, round_half_up
+from .enums import LORD_BLOODLINE
+from .traits import rebind
 
 
 def get_spirit_by_id(spirit_id: int):
@@ -69,6 +71,7 @@ def evolve(pet) -> bool:
     pet.stats = new_stats
     pet.max_hp = new_stats["hp"]
     pet.hp = min(pet.max_hp, round_half_up(old_hp * pet.max_hp / old_max_hp))
+    rebind(pet)
     return True
 
 
@@ -85,7 +88,7 @@ def get_lord_forms(spirit) -> list:
 
 
 def can_lordize(pet) -> bool:
-    if not pet.lord_bloodline:
+    if pet.bloodline != LORD_BLOODLINE:
         return False
     spirit = get_spirit_by_id(pet.spirit_id)
     if spirit is None:
@@ -122,6 +125,7 @@ def lordize(pet, branch: int = 0) -> bool:
     pet.stats = new_stats
     pet.max_hp = new_stats["hp"]
     pet.hp = min(pet.max_hp, round_half_up(old_hp * pet.max_hp / old_max_hp))
+    rebind(pet)
     return True
 
 
@@ -149,4 +153,5 @@ def apply_cute(pet) -> bool:
     pet.stats = new_stats
     pet.max_hp = new_stats["hp"]
     pet.hp = min(pet.max_hp, round_half_up(old_hp * pet.max_hp / old_max_hp))
+    rebind(pet)
     return True

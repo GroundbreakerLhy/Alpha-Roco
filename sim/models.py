@@ -50,13 +50,14 @@ class BattlePet:
     overload_current: dict = field(default_factory=dict)
     ivs: dict = field(default_factory=dict)
     nature: int | None = None
-    bloodline: int | None = None
-    lord_bloodline: bool = False
+    bloodline: int | None = None  # 血脉编号：0-17 元素血脉；18=首领血脉（enums.LORD_BLOODLINE）。一只精灵只有一种血脉
     defense_cooldowns: set = field(default_factory=set)
     defense_used_this_turn: set = field(default_factory=set)
     has_acted_since_entry: bool = False
     bursts: list = field(default_factory=list)
     wish_original_skill: Optional[BattleSkill] = None
+    trait_id: Optional[int] = None
+    trait_state: dict = field(default_factory=dict)
 
     @property
     def alive(self) -> bool:
@@ -94,6 +95,7 @@ class BattleState:
     turn: int = 0
     log: list = field(default_factory=list)
     winner: Optional[str] = None
+    entry_done: bool = False
 
     @property
     def pets(self) -> dict:

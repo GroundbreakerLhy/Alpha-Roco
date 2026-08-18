@@ -16,8 +16,7 @@ import random
 import socket
 from pathlib import Path
 
-from sim import burst
-from sim.battle import create_battle, create_team_battle, state_to_dict, step
+from sim.battle import can_use_skill, create_battle, create_team_battle, state_to_dict, step, switch_in
 from sim.data_loader import find_spirit, load_spirits, make_battle_pet
 from sim.models import Action
 
@@ -73,12 +72,9 @@ def read_replacement(f, conn, state, side):
         if is_valid_switch(raw, state, side):
             state.active[side] = raw["pet_index"]
             pet = state.teams[side][state.active[side]]
-            pet.has_acted_since_entry = False
-            positive_mark = state.marks[side]["positive"]
-            if positive_mark is not None and positive_mark["id"] == 6:
-                burst.add_burst(pet, "attack_power_flat", 10 * positive_mark["stacks"])
             state.log.append(f"{side} 换上 {pet.name}")
             log(f"{side} 换上 {pet.name}")
+            switch_in(state, side, pet, state.log, thorn=False)
             return raw
         send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
 
@@ -108,11 +104,7 @@ def is_valid_skill_energy(raw, state, side):
         return False
     pet = team[state.active[side]]
     skill = pet.skills[idx]
-    if pet.energy < skill.energy_cost:
-        return False
-    if skill.category == 2 and skill.skill_id in pet.defense_cooldowns:
-        return False
-    return True
+    return can_use_skill(state, side, skill, skill_index=idx)
 
 
 def read_action_with_energy(f, conn, state, side):
@@ -145,9 +137,17 @@ def make_team(side, team_config, spirits):
             nature=cfg.get("nature", -1),
             skill_names=cfg.get("skills"),
             bloodline=cfg.get("bloodline"),
-            lord_bloodline=cfg.get("lord_bloodline", False),
         ))
     return team
+
+
+def load_default_team(name):
+    """服务端加载 data/<name> 的默认队伍（当一方给队、另一方没给时补齐）。"""
+    path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / name
+    if not path.exists():
+        raise SystemExit(f"找不到默认队伍：{path}")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)["team"]
 
 
 def main():
@@ -196,6 +196,14 @@ def main():
 
     team_a = raw_config_a.get("team") if raw_config_a else None
     team_b = raw_config_b.get("team") if raw_config_b else None
+
+    # 一方给了队伍、另一方没给时：缺失方由服务端加载默认队，不回退 1v1
+    if team_a and not team_b:
+        team_b = load_default_team("test_team_b.json")
+        lead_b = 0
+    elif team_b and not team_a:
+        team_a = load_default_team("test_team.json")
+        lead_a = 0
 
     if team_a and team_b:
         pets_a = make_team("A", team_a, spirits)

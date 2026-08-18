@@ -31,4 +31,9 @@ class SkillCategory(IntEnum):
     STATUS = 3
 
 
+# 血脉编号：0-17 为元素血脉（与 Element 一致，见 spirits.json bloodline）；
+# 首领血脉单独编号，接在元素之后。
+LORD_BLOODLINE = 18
+
+
 ACTION_KINDS = ("skill", "charge")

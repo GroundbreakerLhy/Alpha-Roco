@@ -1,0 +1,82 @@
+{
+  "team": [
+    {
+      "spirit": "水泡壳",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 3
+    },
+    {
+      "spirit": "深蓝鲸",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 3
+    },
+    {
+      "spirit": "利灯鱼",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 3
+    },
+    {
+      "spirit": "冰钻布鲁斯",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 6
+    },
+    {
+      "spirit": "獠牙猪",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 6
+    },
+    {
+      "spirit": "雪灵",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 6
+    }
+  ]
+}

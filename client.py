@@ -28,6 +28,12 @@ LOG_FILES = []
 AUTO_MODE = False
 MY_SIDE = None
 
+# 元素 0-17 名称（与 sim/enums.Element 一致）
+ELEMENT_NAMES = ["普通", "草", "火", "水", "光", "地", "冰", "龙", "电", "毒",
+                 "虫", "武", "翼", "萌", "幽", "恶", "机械", "幻"]
+# 首领血脉编号（与 sim/enums.LORD_BLOODLINE 一致）
+LORD_BLOODLINE = 18
+
 
 def log(msg):
     print(msg)
@@ -36,9 +42,11 @@ def log(msg):
         f.flush()
 
 
-def load_team(side):
-    name = "test_team.json" if side == "A" else "test_team_b.json"
-    path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / name
+def load_team(team_name):
+    """按名字加载 data/<team_name>.json 的队伍（如 --team 1abc）。"""
+    path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / f"{team_name}.json"
+    if not path.exists():
+        raise SystemExit(f"找不到队伍文件：{path}")
     with open(path, encoding="utf-8") as f:
         return json.load(f)["team"]
 
@@ -55,8 +63,8 @@ def choose_lead(team):
 
 
 def choose_resonance():
-    print("选择共鸣魔法 (0=愿力冲击, 1=进化之力, 2=光合治愈, 回车=无):")
     while True:
+        print("选择共鸣魔法 (0=愿力冲击, 1=进化之力, 2=光合治愈, 回车=无):")
         value = input("请输入: ").strip()
         if value == "":
             return None
@@ -85,40 +93,65 @@ def print_state(state):
             marker = ">" if i == active_idx else " "
             speed_text = str(pet['stats']['speed'])
             if side == MY_SIDE:
-                speed = pet['stats']['speed']
-                for buff in pet.get('buffs', []):
-                    if buff['type'] == 'speed':
-                        speed += buff['value'] * 10
-                neg_mark = state.get('marks', {}).get(side, {}).get('negative')
-                if neg_mark is not None and neg_mark['id'] == 3:
-                    speed -= 10 * neg_mark['stacks']
-                speed_text = str(speed)
+                # 服务端已下发真实速度（含特性修正），直接使用
+                eff = pet.get('eff_speed')
+                if eff is not None:
+                    speed_text = str(eff)
+                else:
+                    speed = pet['stats']['speed']
+                    speed_percent = 0
+                    for buff in pet.get('buffs', []):
+                        if buff['type'] == 'speed':
+                            speed += buff['value'] * 10
+                        elif buff['type'] == 'speed_percent':
+                            speed_percent += buff['value']
+                    neg_mark = state.get('marks', {}).get(side, {}).get('negative')
+                    if neg_mark is not None and neg_mark['id'] == 3:
+                        speed -= 10 * neg_mark['stacks']
+                    speed = int(speed * (1.0 + speed_percent * 0.1))
+                    speed_text = str(speed)
             elif pet.get('speed_range'):
-                speed_mod = 0
-                for buff in pet.get('buffs', []):
-                    if buff['type'] == 'speed':
-                        speed_mod += buff['value'] * 10
-                neg_mark = state.get('marks', {}).get(side, {}).get('negative')
-                if neg_mark is not None and neg_mark['id'] == 3:
-                    speed_mod -= 10 * neg_mark['stacks']
-                speed_text = f"{pet['speed_range'][0] + speed_mod}~{pet['speed_range'][1] + speed_mod}"
+                eff_range = pet.get('eff_speed_range')
+                if eff_range is not None:
+                    # 服务端已下发真实速度范围（含特性修正）
+                    speed_text = f"{eff_range[0]}~{eff_range[1]}"
+                else:
+                    speed_mod = 0
+                    speed_percent = 0
+                    for buff in pet.get('buffs', []):
+                        if buff['type'] == 'speed':
+                            speed_mod += buff['value'] * 10
+                        elif buff['type'] == 'speed_percent':
+                            speed_percent += buff['value']
+                    neg_mark = state.get('marks', {}).get(side, {}).get('negative')
+                    if neg_mark is not None and neg_mark['id'] == 3:
+                        speed_mod -= 10 * neg_mark['stacks']
+                    lo = int((pet['speed_range'][0] + speed_mod) * (1.0 + speed_percent * 0.1))
+                    hi = int((pet['speed_range'][1] + speed_mod) * (1.0 + speed_percent * 0.1))
+                    speed_text = f"{lo}~{hi}"
             if side == MY_SIDE:
                 hp_text = f"HP {pet['hp']}/{pet['max_hp']}"
             else:
                 pct = round(pet['hp'] / pet['max_hp'] * 100) if pet['max_hp'] else 0
                 hp_text = f"HP {pct}%"
             log(f" {marker} #{i + 1} {pet['name']} {hp_text} 能量 {pet['energy']} 速 {speed_text}")
+            # 同类型同时长的 buff 合并显示（如助燃多次触发的 atk x2 合并为 atk x6）
+            merged = {}
             for buff in pet.get("buffs", []):
-                log(f"     buff {buff['type']} x{buff['value']} ({buff['duration']})")
+                key = (buff['type'], buff['duration'])
+                merged[key] = merged.get(key, 0) + buff['value']
+            for (btype, dur), value in sorted(merged.items()):
+                log(f"     buff {btype} x{value} ({dur})")
             for skill in pet["skills"]:
+                elem = ELEMENT_NAMES[skill['element']] if skill.get('element') is not None else '?'
                 if "desc" not in skill:
                     display = skill.get('display_power')
                     display_text = f" 显示威力 {display}" if display is not None else ""
-                    log(f"     对方用过: {skill['name']} 能耗{skill['energy_cost']}{display_text}")
+                    log(f"     对方用过: {skill['name']} [{elem}] 能耗{skill['energy_cost']}{display_text}")
                     continue
                 display = skill.get('display_power')
                 display_text = f" 显示威力 {display}" if display is not None else ""
-                log(f"     技能{skill['index'] + 1}: {skill['name']} 能耗{skill['energy_cost']}{display_text} "
+                log(f"     技能{skill['index'] + 1}: {skill['name']} [{elem}] 能耗{skill['energy_cost']}{display_text} "
                     f"{'物攻' if skill['category'] == 0 else '魔攻' if skill['category'] == 1 else '其他'} | {skill['desc']}")
             if not pet["skills"]:
                 log("     （技能不可见）")
@@ -201,7 +234,7 @@ def prompt_action(conn, state):
             magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
             if magic_id == 1:
                 pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
-                if not pet.get("lord_bloodline"):
+                if pet.get("bloodline") != LORD_BLOODLINE:
                     log("当前精灵不是首领血脉，无法首领化")
                     continue
                 magic_branch = choose_lord_branch(state)
@@ -215,9 +248,7 @@ def prompt_action(conn, state):
             idx = int(action) - 1
             pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
             skill = pet["skills"][idx]
-            if skill["energy_cost"] > pet["energy"]:
-                log(f"能量不足：{skill['name']} 需要 {skill['energy_cost']}，当前 {pet['energy']}")
-                continue
+            # 能量不足不拦截也不预警：可能由特性兜底（如石头大餐），直接发送由服务端裁决
             if skill.get("category") == 2 and skill.get("skill_id") in pet.get("defense_cooldowns", []):
                 log(f"防御技能冷却中：{skill['name']}")
                 continue
@@ -311,11 +342,13 @@ def main():
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--nature", type=int, default=-1)
     parser.add_argument("--auto", action="store_true")
+    parser.add_argument("--team", default=None,
+                        help="队伍文件名（data/<name>.json，如 1abc）；缺省则不发送队伍，走服务端默认 1v1")
     args = parser.parse_args()
     # random.seed(42)
     global AUTO_MODE
     AUTO_MODE = args.auto
-    team = None
+    team = load_team(args.team) if args.team else None
 
     conn = socket.create_connection((args.host, args.port))
     f = conn.makefile("r", encoding="utf-8")
@@ -336,7 +369,6 @@ def main():
             global MY_SIDE
             MY_SIDE = side
             my_side = side
-            team = load_team(side)
             logs_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "logs" / "battle"
             logs_dir.mkdir(parents=True, exist_ok=True)
             log_name = "clientA.log" if side == "A" else "clientB.log"
@@ -344,7 +376,10 @@ def main():
             LOG_FILES.extend([client_log])
 
             log(f"你是 {side} 方")
-            if args.auto:
+            if team is None:
+                lead = 0
+                resonance = None
+            elif args.auto:
                 lead = random.randrange(len(team))
                 log(f"自动选择首发：{lead + 1}")
                 resonance = None

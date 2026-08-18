@@ -115,6 +115,15 @@
       "immune": []
     },
     {
+      "id": "speed_percent",
+      "desc": "每层提升10%速度。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 10,
+      "immune": []
+    },
+    {
       "id": "skill_power_flat",
       "desc": "每层增加10点技能威力。",
       "type": "both",

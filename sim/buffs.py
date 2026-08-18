@@ -20,7 +20,8 @@ class BuffType:
     SKILL_POWER_PERCENT = "skill_power_percent" # 技能威力_百分比
     LIFESTEAL = "lifesteal"                     # 吸血
     HIT_COUNT_PERCENT = "hit_count_percent"     # 连击数_百分比
-    SPEED = "speed"                             # 速度
+    SPEED = "speed"                             # 速度_固定值（每层+10）
+    SPEED_PERCENT = "speed_percent"             # 速度_百分比（每层+10%）
     SKILL_POWER_FLAT = "skill_power_flat"       # 技能威力_固定值
     HIT_COUNT_FLAT = "hit_count_flat"           # 连击数_固定值
     ENERGY_COST = "energy_cost"                 # 能耗
@@ -49,6 +50,7 @@ SIGNED_TYPES = {
     BuffType.SKILL_POWER_PERCENT,
     BuffType.HIT_COUNT_PERCENT,
     BuffType.SPEED,
+    BuffType.SPEED_PERCENT,
     BuffType.SKILL_POWER_FLAT,
     BuffType.HIT_COUNT_FLAT,
     BuffType.OVERLOAD,
@@ -122,10 +124,24 @@ class Buff:
     source_side: str = ""
     source_pet: str = ""
     expire_turn: int | None = None
+    source_kind: str = ""   # "" = 普通增益/减益；"trait" = 特性效果（不算增益）
+
+    def is_gain(self) -> bool:
+        """是否属于"增益"（特性来源不算）。"""
+        if self.source_kind == "trait":
+            return False
+        return classify_buff(self.buff_type, self.value) in ("buff", "both")
+
+    def is_loss(self) -> bool:
+        """是否属于"减益"（特性来源不算）。"""
+        if self.source_kind == "trait":
+            return False
+        return classify_buff(self.buff_type, self.value) in ("debuff", "both")
 
 
 def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMAL,
-             current_turn: int | None = None, source_side: str = "", source_pet: str = "") -> None:
+             current_turn: int | None = None, source_side: str = "", source_pet: str = "",
+             source_kind: str = "") -> None:
     if value == 0:
         return
 
@@ -151,6 +167,7 @@ def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMA
             duration=duration,
             source_side=source_side,
             source_pet=source_pet,
+            source_kind=source_kind,
         ))
         return
 
@@ -174,6 +191,7 @@ def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMA
         source_side=source_side,
         source_pet=source_pet,
         expire_turn=expire_turn,
+        source_kind=source_kind,
     ))
 
     if buff_type == BuffType.LIGHTNING and get_buff_value(pet, BuffType.LIGHTNING) >= 2:
@@ -344,7 +362,9 @@ def _apply_lock(pet) -> None:
 
 
 def get_speed_value(pet, mark_speed_bonus: int = 0) -> int:
-    return pet.stats["speed"] + get_buff_value(pet, BuffType.SPEED) * 10 + mark_speed_bonus
+    base = pet.stats["speed"] + get_buff_value(pet, BuffType.SPEED) * 10 + mark_speed_bonus
+    percent = get_buff_value(pet, BuffType.SPEED_PERCENT)
+    return int(base * (1.0 + percent * 0.1))
 
 
 def get_stat_multiplier(pet, stat: str) -> float:

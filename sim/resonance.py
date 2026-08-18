@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from . import buffs, counter, evolution
+from .enums import LORD_BLOODLINE
 from .data_loader import load_typechart, round_half_up
 from .models import BattleSkill
 from .damage import level_coefficient
@@ -47,13 +48,13 @@ def _heal(state, side: str) -> None:
     pet = state.teams[side][state.active[side]]
     heal = int(pet.max_hp * 0.5)
     pet.hp = min(pet.max_hp, pet.hp + heal)
-    state.log.append(f"{side} {pet.name} 使用光合治愈，回复 {heal} 生命")
+    state.log.append(f"{side} {pet.name} 使用光合治愈")
 
 
 def _evolve(state, side: str, branch: int = 0) -> bool:
     pet = state.teams[side][state.active[side]]
     if evolution.lordize(pet, branch):
-        state.log.append(f"{side} {pet.name} 使用进化之力，首领化了")
+        state.log.append(f"{side} {pet.name} 使用进化之力")
         return True
     state.log.append(f"{side} {pet.name} 无法首领化")
     return False
@@ -67,10 +68,13 @@ def use_magic(state, side: str, magic_id: int, opponent_is_status: bool = False,
     elif magic_id == WISH:
         pet = state.teams[side][state.active[side]]
         category = 0 if pet.stats["atk"] >= pet.stats["spatk"] else 1
+        # 愿力冲击属性 = 精灵血脉；首领血脉（18）不是元素，退回主属性
+        blood = pet.bloodline if pet.bloodline != LORD_BLOODLINE else None
+        element = blood if blood is not None else (pet.attributes[0] if pet.attributes else 0)
         wish_skill = BattleSkill(
             skill_id=-1,
             name="愿力冲击",
-            element=pet.bloodline if pet.bloodline is not None else 0,
+            element=element,
             category=category,
             power=200 if opponent_is_status else 80,
             energy_cost=0,
@@ -79,7 +83,7 @@ def use_magic(state, side: str, magic_id: int, opponent_is_status: bool = False,
         wish_skill.counter_target = "status"
         pet.wish_original_skill = pet.skills[0]
         pet.skills[0] = wish_skill
-        state.log.append(f"{side} {pet.name} 首位技能变为愿力冲击")
+        state.log.append(f"{side} {pet.name} 使用愿力冲击")
     elif magic_id == EVOLVE:
         if not _evolve(state, side, branch):
             return False

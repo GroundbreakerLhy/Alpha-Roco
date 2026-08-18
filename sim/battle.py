@@ -5,10 +5,11 @@ from __future__ import annotations
 import random
 import re
 
-from . import buffs, burst, counter, marks, resonance, skill_utils, weather
+from . import buffs, burst, counter, marks, resonance, skill_utils, traits, weather
 from .damage import calc_damage, level_coefficient
 from .models import Action, BattlePet, BattleState
 from .data_loader import load_typechart
+from .traits import impl as _traits_impl  # noqa: F401  特性实现接入点（注册 handler）
 from .typechart import type_multiplier
 
 CHARGE_ENERGY = 5
@@ -48,8 +49,9 @@ def _first_alive_index(state: BattleState, side: str):
     return None
 
 
-def _add_energy(pet: BattlePet, amount: int) -> None:
-    pet.energy = min(10, pet.energy + amount)
+def _add_energy(state: BattleState, pet: BattlePet, amount: int) -> int:
+    """回复能量（含特性能量上限修正），返回实际回复量。"""
+    return traits.grant_energy(state, pet, amount)
 
 
 def _parse_reduction(desc: str) -> float:
@@ -79,6 +81,8 @@ def _apply_faint(state: BattleState, side: str) -> None:
     state.active[side] = -1
     state.magic[side] -= 1
     state.log.append(f"{side} {pet.name} 倒下了，剩余魔力 {state.magic[side]}")
+    # 特性：力竭事件（广播；诈死/赎价类特性可在此回调魔力）
+    traits.emit(state, "faint", scope="all", side=side, subject=pet)
     if state.magic[side] <= 0:
         state.winner = "B" if side == "A" else "A"
         state.log.append(f"{state.winner} 获胜")
@@ -113,14 +117,32 @@ def _skill_causes_enemy_leave(skill) -> bool:
     return any(key in desc for key in ("敌方脱离", "敌方紧急脱离", "使敌方精灵返场", "敌方精灵返场"))
 
 
-# 离场换人通用结算：蓄电印记(6)迸发、棘刺印记(1)、降灵印记(5)
+# 入场统一结算：蓄电印记(6)迸发、棘刺印记(1)、降灵印记(5)、特性入场事件
+# thorn=False 用于力竭后的替换（棘刺/降灵只对"离场"生效，力竭不算离场）
+def switch_in(state: BattleState, side: str, incoming: BattlePet, logs: list, thorn: bool = True) -> None:
+    incoming.has_acted_since_entry = False
+    positive_mark = marks.get_mark(state, side, marks.POSITIVE)
+    if positive_mark is not None and positive_mark["id"] == 6:
+        burst.add_burst(incoming, "attack_power_flat", 10 * positive_mark["stacks"])
+    if thorn:
+        negative = marks.get_mark(state, side, marks.NEGATIVE)
+        if negative is not None and negative["id"] == 1:
+            loss = int(incoming.max_hp * 0.06 * negative["stacks"])
+            incoming.hp = max(0, incoming.hp - loss)
+            logs.append(f"  棘刺印记：{incoming.name} 入场失去 {loss} 生命")
+        if negative is not None and negative["id"] == 5:
+            loss = negative["stacks"]
+            incoming.energy = max(0, incoming.energy - loss)
+            logs.append(f"  降灵印记：{incoming.name} 入场失去 {loss} 能量")
+    traits.emit(state, "entry", scope="all", side=side, subject=incoming)
+
+
+# 离场换人通用结算：离场事件广播 + 换人 + 入场结算
 def _force_switch_after_leave(state: BattleState, side: str, logs: list) -> None:
     current_idx = state.active[side]
     if current_idx < 0:
         return
     outgoing = state.teams[side][current_idx]
-    buffs.clear_normal_buffs(outgoing)
-    burst.clear_bursts(outgoing)
     idx = None
     for i, pet in enumerate(state.teams[side]):
         if i != current_idx and pet.hp > 0:
@@ -128,22 +150,14 @@ def _force_switch_after_leave(state: BattleState, side: str, logs: list) -> None
             break
     if idx is None:
         return
-    state.active[side] = idx
     incoming = state.teams[side][idx]
-    incoming.has_acted_since_entry = False
-    positive_mark = marks.get_mark(state, side, marks.POSITIVE)
-    if positive_mark is not None and positive_mark["id"] == 6:
-        burst.add_burst(incoming, "attack_power_flat", 10 * positive_mark["stacks"])
+    # 特性：离场事件（广播，subject=离场精灵，incoming=入场精灵）
+    traits.emit(state, "leave", scope="all", side=side, subject=outgoing, incoming=incoming)
+    buffs.clear_normal_buffs(outgoing)
+    burst.clear_bursts(outgoing)
+    state.active[side] = idx
     logs.append(f"{side} 因脱离换上 {incoming.name}")
-    negative = marks.get_mark(state, side, marks.NEGATIVE)
-    if negative is not None and negative["id"] == 1:
-        loss = int(incoming.max_hp * 0.06 * negative["stacks"])
-        incoming.hp = max(0, incoming.hp - loss)
-        logs.append(f"  棘刺印记：{incoming.name} 入场失去 {loss} 生命")
-    if negative is not None and negative["id"] == 5:
-        loss = negative["stacks"]
-        incoming.energy = max(0, incoming.energy - loss)
-        logs.append(f"  降灵印记：{incoming.name} 入场失去 {loss} 能量")
+    switch_in(state, side, incoming, logs)
 
 
 def _resolve_action(state: BattleState, side: str, action: Action, is_first: bool = False) -> list:
@@ -169,27 +183,14 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
             return logs
         target = action.pet_index
         if target is not None and 0 <= target < len(team) and target != current and team[target].hp > 0:
+            incoming = team[target]
+            # 特性：离场事件（广播，subject=离场精灵，incoming=入场精灵）
+            traits.emit(state, "leave", scope="all", side=side, subject=pet, incoming=incoming)
             buffs.clear_normal_buffs(pet)
             burst.clear_bursts(pet)
             state.active[side] = target
-            incoming = team[target]
-            incoming.has_acted_since_entry = False
-            positive_mark = marks.get_mark(state, side, marks.POSITIVE)
-            if positive_mark is not None and positive_mark["id"] == 6:
-                burst.add_burst(incoming, "attack_power_flat", 10 * positive_mark["stacks"])
             logs.append(f"{side} 换上 {incoming.name}")
-            # 印记 6：蓄电印记 —— 入场获得迸发
-            # 印记 1：棘刺印记 —— 入场失去6%最大生命/层
-            # 印记 5：降灵印记 —— 入场失去1能量/层
-            negative = marks.get_mark(state, side, marks.NEGATIVE)
-            if negative is not None and negative["id"] == 1:
-                loss = int(incoming.max_hp * 0.06 * negative["stacks"])
-                incoming.hp = max(0, incoming.hp - loss)
-                logs.append(f"  棘刺印记：{incoming.name} 入场失去 {loss} 生命")
-            if negative is not None and negative["id"] == 5:
-                loss = negative["stacks"]
-                incoming.energy = max(0, incoming.energy - loss)
-                logs.append(f"  降灵印记：{incoming.name} 入场失去 {loss} 能量")
+            switch_in(state, side, incoming, logs)
             return logs
         logs.append(f"{side} 换人目标无效")
         return logs
@@ -204,36 +205,49 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
     if action.kind == "charge":
         pet.has_acted_since_entry = True
         active_bursts = burst.take_bursts(pet)
-        _add_energy(pet, CHARGE_ENERGY)
-        logs.append(f"{side} {pet.name} 聚能，回复 {CHARGE_ENERGY} 能量")
+        gained = _add_energy(state, pet, CHARGE_ENERGY)
+        logs.append(f"{side} {pet.name} 聚能，回复 {gained} 能量")
+        traits.emit(state, "charge", scope="all", side=side, subject=pet,
+                    energy_gain=gained, is_first=is_first)
         return logs
 
     if action.kind != "skill" or action.skill_index is None:
-        _add_energy(pet, CHARGE_ENERGY)
+        _add_energy(state, pet, CHARGE_ENERGY)
         logs.append(f"{side} {pet.name} 行动无效，改为聚能")
         return logs
 
     if not (0 <= action.skill_index < len(pet.skills)):
-        _add_energy(pet, CHARGE_ENERGY)
+        _add_energy(state, pet, CHARGE_ENERGY)
         logs.append(f"{side} {pet.name} 技能索引无效，改为聚能")
         return logs
 
     skill = pet.skills[action.skill_index]
-    # 印记 2：蓄势印记 —— 全技能能耗+1/层；印记 11：湿润印记 —— 全技能能耗-1/层
-    # 天气：沙暴使地属性技能能耗-2
-    mark_energy_bonus = weather.sandstorm_energy_modifier(state.weather, skill.element)
-    positive_mark = marks.get_mark(state, side, marks.POSITIVE)
-    if positive_mark is not None and positive_mark["id"] == 2:
-        mark_energy_bonus += positive_mark["stacks"]
-    if positive_mark is not None and positive_mark["id"] == 11:
-        mark_energy_bonus -= positive_mark["stacks"]
-    total_cost = max(0, skill.energy_cost + buffs.get_energy_cost_modifier(pet) + mark_energy_bonus)
-    if pet.energy < total_cost:
-        logs.append(f"{side} {pet.name} 能量不足，无法使用 {skill.name}")
+    if not traits.query_skill_usable(state, pet, skill, skill_index=action.skill_index):
+        logs.append(f"{side} {pet.name} 无法使用 {skill.name}（特性限制）")
         return logs
+
+    total_cost = current_skill_cost(state, side, skill)
+    # 迸发：本次技能能耗修正（如生物电，不消耗迸发本身）
+    for b in pet.bursts:
+        if b["type"] == "energy_cost_flat":
+            total_cost = max(0, total_cost - b["value"])
+    if pet.energy < total_cost:
+        # 特性：能量不足兜底（如消耗生命代替能量）
+        shortfall = traits.query_energy_shortfall(state, pet, total_cost - pet.energy, skill)
+        if shortfall > 0:
+            pet.energy += shortfall
+        else:
+            logs.append(f"{side} {pet.name} 能量不足，无法使用 {skill.name}")
+            return logs
 
     pet.energy -= total_cost
     active_bursts = burst.take_bursts(pet)
+    # 迸发：攻击后给敌方施加能耗+（如超负荷）
+    for active_burst in active_bursts:
+        if active_burst["type"] == "enemy_energy_cost" and opponent is not None:
+            buffs.add_buff(opponent, buffs.BuffType.ENERGY_COST, active_burst["value"],
+                           buffs.DurationKind.NORMAL, state.turn, side, pet.name)
+            logs.append(f"  {opponent.name} 全技能能耗+{active_burst['value']}")
     # 印记 9：龙噬印记 —— 释放3能耗技能后双攻+30%/层
     positive_mark = marks.get_mark(state, side, marks.POSITIVE)
     if positive_mark is not None and positive_mark["id"] == 9 and total_cost == 3:
@@ -244,14 +258,22 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
     if skill.skill_id != -1:
         state.revealed[side].add(skill.skill_id)
     logs.append(f"{side} {pet.name} 使用 {skill.name}")
+    # 特性：技能开始
+    traits.emit(state, "skill_start", scope="all", side=side, subject=pet, target=opponent,
+                action=action, skill=skill, skill_index=action.skill_index,
+                energy_cost=total_cost, is_first=is_first)
 
     if opponent is None:
         logs.append("  对方没有在场精灵")
         return logs
 
+    total_damage = 0
+    applied_damage = 0
+    hit_count = 1
     if skill.category in (0, 1) and skill.power is not None:
+        skill_element = traits.query_skill_element(state, pet, skill)
         # 天气：雨天使水系技能威力提升至150%
-        extra_power_percent = 50.0 if weather.get_weather_id(state) == weather.RAIN and skill.element == 3 else 0.0
+        extra_power_percent = 50.0 if weather.get_weather_id(state) == weather.RAIN and skill_element == 3 else 0.0
         # 印记 0：攻击印记 —— 全技能威力+10%/层
         # 印记 2：蓄势印记 —— 全技能威力+30%/层
         # 印记 12：风气印记 —— 先手攻击时技能威力+20%/层
@@ -267,25 +289,62 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
         for active_burst in active_bursts:
             if active_burst["type"] == "attack_power_flat":
                 extra_power_flat += active_burst["value"]
+            if active_burst["type"] == "attack_power_percent":
+                extra_power_percent += active_burst["value"]
         pet.has_acted_since_entry = True
+        # 特性：威力/属性/连击修正汇总
+        extra_power_percent, extra_power_flat = traits.query_power(
+            state, pet, opponent, extra_power_percent, extra_power_flat,
+            is_first=is_first, skill=skill)
         result = calc_damage(
             pet, opponent, skill, load_typechart(),
             opponent.defense_reduction,
             extra_power_percent=extra_power_percent,
             extra_power_flat=extra_power_flat,
+            element=skill_element,
+            state=state,
+            is_first=is_first,
         )
         hit_flat, hit_percent = buffs.get_hit_count_bonus(pet)
-        hit_count = max(1, 1 + hit_flat + int(1 * hit_percent / 100))
+        t_flat, t_percent, t_forced = traits.query_hit_count(state, pet, opponent)
+        hit_flat += t_flat
+        hit_percent += t_percent
+        if t_forced is not None:
+            hit_count = max(1, t_forced)
+        else:
+            hit_count = max(1, 1 + hit_flat + int(1 * hit_percent / 100))
         total_damage = result["damage"] * hit_count
         if total_damage > 0:
-            opponent.hp = max(0, opponent.hp - total_damage)
-            logs.append(f"  造成 {total_damage} 伤害")
-            lifesteal = buffs.get_lifesteal(pet)
-            if lifesteal > 0:
-                heal = int(total_damage * lifesteal)
-                if heal > 0:
-                    pet.hp = min(pet.max_hp, pet.hp + heal)
-                    logs.append(f"  吸血回复 {heal}")
+            prevented = False
+            if total_damage >= opponent.hp:
+                # 特性：致命伤害判定（免死类）
+                prevented = traits.emit_lethal(state, side, opponent, total_damage,
+                                               attacker=pet, skill=skill, is_first=is_first)
+            if not prevented:
+                opponent.hp = max(0, opponent.hp - total_damage)
+                applied_damage = total_damage
+                logs.append(f"  造成 {applied_damage} 伤害")
+                traits.emit(state, "attack", scope="all", side=side, subject=pet, target=opponent,
+                            skill=skill, damage=applied_damage, hit_count=hit_count,
+                            is_first=is_first, type_mult=result["type_multiplier"])
+                traits.emit(state, "take_damage", scope="all", side=opponent_side, subject=opponent,
+                            target=pet, skill=skill, damage=applied_damage, hit_count=hit_count,
+                            is_first=is_first)
+                lifesteal = buffs.get_lifesteal(pet) + traits.query_lifesteal(state, pet, opponent, skill=skill)
+                if lifesteal > 0:
+                    heal = int(applied_damage * lifesteal)
+                    if heal > 0:
+                        base_heal = heal
+                        heal = traits.query_heal(state, pet, heal, source="lifesteal")
+                        pet.hp = min(pet.max_hp, pet.hp + heal)
+                        logs.append(f"  吸血回复 {heal}")
+                        traits.emit(state, "heal", scope="all", side=side, subject=pet,
+                                    heal=heal, base_heal=base_heal, source="lifesteal")
+                if opponent.hp <= 0:
+                    traits.emit(state, "kill", scope="all", side=side, subject=opponent, target=pet,
+                                skill=skill, damage=applied_damage, hit_count=hit_count)
+            else:
+                logs.append(f"  {opponent.name} 的特性使其免疫了致命伤害")
         else:
             logs.append("  没有造成伤害")
 
@@ -320,21 +379,31 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
         pet.defense_reduction = reduction
         pet.defense_used_this_turn.add(skill.skill_id)
         logs.append(f"  防御，减伤 {int(reduction * 100)}%")
+        traits.emit(state, "defense", scope="all", side=side, subject=pet,
+                    skill=skill, is_first=is_first)
     else:
         pet.has_acted_since_entry = True
         active_bursts = burst.take_bursts(pet)
         logs.append("  非伤害技能：效果暂未实现")
+        traits.emit(state, "status_skill", scope="all", side=side, subject=pet,
+                    skill=skill, is_first=is_first)
 
     if _skill_causes_self_leave(skill):
         _force_switch_after_leave(state, side, logs)
     if _skill_causes_enemy_leave(skill) and opponent is not None:
         _force_switch_after_leave(state, opponent_side, logs)
 
+    # 特性：技能结束（含离场结算后）
+    traits.emit(state, "skill_end", scope="all", side=side, subject=pet, target=opponent,
+                action=action, skill=skill, skill_index=action.skill_index,
+                energy_cost=total_cost, is_first=is_first,
+                damage_dealt=applied_damage, hit_count=hit_count)
+
     return logs
 
 
-# 印记 3：减速印记 —— 每层速度-10
-def _current_skill_cost(state: BattleState, side: str, skill) -> int:
+# 技能实际能耗（印记 2/11、天气沙暴、buff、特性共同修正）
+def current_skill_cost(state: BattleState, side: str, skill) -> int:
     pet = _active_pet(state, side)
     if pet is None:
         return 0
@@ -344,7 +413,23 @@ def _current_skill_cost(state: BattleState, side: str, skill) -> int:
         bonus += positive["stacks"]
     if positive is not None and positive["id"] == 11:
         bonus -= positive["stacks"]
-    return max(0, skill.energy_cost + buffs.get_energy_cost_modifier(pet) + bonus)
+    base = max(0, skill.energy_cost + buffs.get_energy_cost_modifier(pet) + bonus)
+    return max(0, base + traits.query_energy_cost(state, pet, skill))
+
+
+def can_use_skill(state: BattleState, side: str, skill, skill_index: int | None = None) -> bool:
+    """技能是否可用（能耗/防御冷却/特性限制），供服务端校验与客户端提示。"""
+    pet = _active_pet(state, side)
+    if pet is None:
+        return False
+    if pet.energy < current_skill_cost(state, side, skill):
+        # 特性兜底：能量不足但特性可补充（如石头大餐消耗生命代替能量）
+        gap = current_skill_cost(state, side, skill) - pet.energy
+        if traits.query_energy_shortfall(state, pet, gap, skill) <= 0:
+            return False
+    if skill.category == 2 and skill.skill_id in pet.defense_cooldowns:
+        return False
+    return traits.query_skill_usable(state, pet, skill, skill_index=skill_index)
 
 
 def _resolve_repeated(state: BattleState, side: str, action: Action, is_first: bool) -> list:
@@ -361,14 +446,24 @@ def _resolve_repeated(state: BattleState, side: str, action: Action, is_first: b
         key = None
 
     count = max(1, pet.overload_current.get(key, 0)) if key is not None else 1
+    # 迸发：本次行动技能使用次数+1（入场后首次行动，如噼啪！）
+    if action.kind == "skill":
+        for b in pet.bursts:
+            if b["type"] == "skill_use_count":
+                count += b["value"]
     for _ in range(count):
         if state.winner is not None or state.active[side] < 0:
             break
         if action.kind == "skill":
             skill = pet.skills[action.skill_index]
-            if pet.energy < _current_skill_cost(state, side, skill):
-                logs.append(f"{side} {pet.name} 能量不足，停止重复使用")
-                break
+            if pet.energy < current_skill_cost(state, side, skill):
+                shortfall = traits.query_energy_shortfall(
+                    state, pet, current_skill_cost(state, side, skill) - pet.energy, skill)
+                if shortfall > 0:
+                    pet.energy += shortfall
+                else:
+                    logs.append(f"{side} {pet.name} 能量不足，停止重复使用")
+                    break
         logs.extend(_resolve_action(state, side, action, is_first))
         if state.winner is not None or state.active[side] < 0:
             break
@@ -383,7 +478,8 @@ def _effective_speed(state: BattleState, side: str) -> int:
     negative = marks.get_mark(state, side, marks.NEGATIVE)
     if negative is not None and negative["id"] == 3:
         mark_speed_bonus = -10 * negative["stacks"]
-    return buffs.get_speed_value(pet, mark_speed_bonus)
+    base = buffs.get_speed_value(pet, mark_speed_bonus)
+    return base + traits.query_speed(state, pet)
 
 
 def round_end_order(state: BattleState) -> list:
@@ -396,6 +492,10 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
 
     state.turn += 1
     state.log = []
+
+    # 战斗开始为首发精灵补发入场事件；随后广播回合开始事件（双方行动已选定）
+    traits.ensure_entry(state)
+    traits.on_turn_start(state, action_a, action_b)
 
     for team in state.teams.values():
         for pet in team:
@@ -429,17 +529,16 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
 
     remaining = {side: action for side, action in actions.items() if action.kind != "switch"}
     if not remaining:
+        # 双方都只换人：无行动，直接进入回合结束结算
         _settle_defense_cooldowns(state)
         marks.on_round_end(state)
         buffs.on_round_end(state)
         resonance.on_round_end(state)
         weather.on_round_end(state)
+        traits.on_round_end(state)
         for team in state.teams.values():
             for pet in team:
                 pet.overload_current.clear()
-    for team in state.teams.values():
-        for pet in team:
-            pet.overload_current.clear()
         for side in ("A", "B"):
             _apply_faint(state, side)
         if state.winner is not None:
@@ -459,8 +558,12 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         forced = counter.forced_first(state, remaining["A"], remaining["B"])
     if forced == "A":
         first, second = "A", "B"
+        traits.emit(state, "counter", scope="all", side="A",
+                    subject=_active_pet(state, "A"), action=remaining["A"], is_counter=True)
     elif forced == "B":
         first, second = "B", "A"
+        traits.emit(state, "counter", scope="all", side="B",
+                    subject=_active_pet(state, "B"), action=remaining["B"], is_counter=True)
     elif a_speed > b_speed:
         first, second = "A", "B"
     elif b_speed > a_speed:
@@ -485,6 +588,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     buffs.on_round_end(state)
     resonance.on_round_end(state)
     weather.on_round_end(state)
+    traits.on_round_end(state)
     for team in state.teams.values():
         for pet in team:
             pet.overload_current.clear()
@@ -531,7 +635,7 @@ def pet_to_dict(pet: BattlePet, opponent: BattlePet | None = None, typechart: di
         "level": pet.level,
         "stats": pet.stats,
         "attributes": pet.attributes,
-        "lord_bloodline": pet.lord_bloodline,
+        "bloodline": pet.bloodline,
         "speed_range": pet.speed_range,
         "defense_cooldowns": sorted(pet.defense_cooldowns),
         "buffs": [
@@ -559,17 +663,51 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                     mark_energy_bonus += positive["stacks"]
                 if positive is not None and positive["id"] == 11:
                     mark_energy_bonus -= positive["stacks"]
+                # 己方真实速度：buff/印记/特性修正全部计入（流沙统治者+50、变形活画等）
+                mark_speed_bonus = 0
+                negative = marks.get_mark(state, side, marks.NEGATIVE)
+                if negative is not None and negative["id"] == 3:
+                    mark_speed_bonus = -10 * negative["stacks"]
+                d["eff_speed"] = buffs.get_speed_value(pet, mark_speed_bonus) + traits.query_speed(state, pet)
                 for skill_item in d["skills"]:
                     skill_obj = next((s for s in pet.skills if s.skill_id == skill_item["skill_id"]), None)
                     if skill_obj is not None:
-                        skill_item["energy_cost"] = skill_utils.actual_energy_cost(pet, skill_obj, mark_energy_bonus)
+                        # 己方显示真实能耗：buff/印记/特性修正全部计入（缩壳-2、冰封敌方光环+1 等）
+                        cost = skill_utils.actual_energy_cost(pet, skill_obj, mark_energy_bonus)
+                        skill_item["energy_cost"] = max(0, cost + traits.query_energy_cost(state, pet, skill_obj))
+                        # 己方显示真实威力：含特性威力/属性改写修正（目空/涂鸦/展翅等；
+                        # 顺风/破空等先手条件按非先手计算，实际出招时另算）
+                        # 对方力竭/缺席（active<0）时无法计算显示威力，保持 None
+                        if opponent is not None:
+                            extra_percent, extra_flat = traits.query_power(
+                                state, pet, opponent, 0, 0, is_first=False, skill=skill_obj)
+                            skill_item["display_power"] = calc_damage(
+                                pet, opponent, skill_obj, typechart,
+                                extra_power_percent=extra_percent,
+                                extra_power_flat=extra_flat,
+                                element=traits.query_skill_element(state, pet, skill_obj),
+                                state=state,
+                            )["display_power"]
             if view_side is not None and side != view_side:
+                # 对方速度范围也显示真实范围（含 buff/印记/特性速度修正，如流沙统治者+50）
+                mark_speed_bonus = 0
+                negative = marks.get_mark(state, side, marks.NEGATIVE)
+                if negative is not None and negative["id"] == 3:
+                    mark_speed_bonus = -10 * negative["stacks"]
+                flat = (buffs.get_buff_value(pet, buffs.BuffType.SPEED) * 10
+                        + mark_speed_bonus + traits.query_speed(state, pet))
+                percent = buffs.get_buff_value(pet, buffs.BuffType.SPEED_PERCENT)
+                d["eff_speed_range"] = [
+                    int((pet.speed_range[0] + flat) * (1.0 + percent * 0.1)),
+                    int((pet.speed_range[1] + flat) * (1.0 + percent * 0.1)),
+                ]
                 revealed_ids = state.revealed[side]
                 d["skills"] = [
                     {
                         "name": skill["name"],
                         "energy_cost": skill["energy_cost"],
                         "display_power": skill.get("display_power"),
+                        "element": skill.get("element"),  # 原始属性（不做特性改写）
                     }
                     for skill in d["skills"] if skill["skill_id"] in revealed_ids
                 ]

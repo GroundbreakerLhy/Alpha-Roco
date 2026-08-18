@@ -1,0 +1,82 @@
+{
+  "team": [
+    {
+      "spirit": "嗜波螺",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 5
+    },
+    {
+      "spirit": "斑枭",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 12
+    },
+    {
+      "spirit": "画间沉铁兽",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 0
+    },
+    {
+      "spirit": "窃光蚊",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 15
+    },
+    {
+      "spirit": "学院呱呱",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 11
+    },
+    {
+      "spirit": "混乱鱿彩",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 14
+    }
+  ]
+}

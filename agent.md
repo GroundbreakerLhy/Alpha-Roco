@@ -8,16 +8,14 @@
 
 ```bash
 # 终端 1
-python server.py --port 5000
+python server.py
 
 # 终端 2
-python client.py --port 5000
+python client.py --team team00x.json
 
-# 终端 3
-python client.py --port 5000
+# 终端 3 自动战斗
+python client.py --auto --team <team098.json|team099.json>
 ```
-
-客户端支持 `--auto` 自动战斗模式。
 
 ## 目录结构
 
@@ -33,8 +31,11 @@ data/
   marks.json              # 印记规则
   weather.json            # 天气规则
   resonance.json          # 共鸣魔法
-  test_team.json          # A 默认队伍
-  test_team_b.json        # B 默认队伍
+  traits.json             # 精灵特性
+  test_team.json          # 默认 A 队（规范格式参照）
+  test_team_b.json        # 默认 B 队
+  team001.json~team009.json  # 特性展示队：6只一队、规范格式（spirit/nature/ivs/bloodline），
+  team099.json/team098.json  # 陪练对手队
 sim/
   __init__.py
   battle.py               # 战斗主循环、状态序列化
@@ -51,6 +52,10 @@ sim/
   burst.py                # 迸发效果：入场后首次行动消耗
   evolution.py            # 进化链、萌化退化
   typechart.py            # 属性克制查询
+  traits/                 # 特性系统（接口已定稿，见 traits/README.md）
+    base.py               # TraitContext / TraitHandler（事件+修正钩子）
+    registry.py           # trait_id -> handler 注册表（未实现=no-op）
+    impl/                 # 具体特性 handler（逐个实现中，当前为空）
 ```
 
 ## 当前已实现机制
@@ -72,7 +77,9 @@ sim/
 - 精灵倒下后的换人不占用回合，先换人再进入下一回合
 - 已经死亡的精灵不能被换上场
 - 主客场：开局随机决定，只影响行动后的减益/印记/特性结算顺序，不影响技能先后手
-- 对方技能初始不可见，使用后显示名称、原始能耗和当前显示威力；己方技能显示实际能耗（含 buff/印记修正）；双方 buff/印记互相可见
+- 血脉：一只精灵只有一种血脉，`bloodline` 字段存编号——元素血脉 0-17（与 Element 一致），
+  首领血脉 18（`enums.LORD_BLOODLINE`）；首领血脉精灵战斗中可用进化之力首领化（rebind 换特性）
+- 对方技能初始不可见，使用后显示名称、原始能耗和当前显示威力；己方显示真实数值（能耗/威力/速度均含 buff/印记/特性修正，如缩壳-2、流沙统治者+50、目空+25%）；双方 buff/印记互相可见
 - 对方速度始终显示范围
 - 对方血量显示百分比
 - 客户端操作：X 聚能，1-4 技能，E1-E6 换人，esc 逃跑
@@ -119,7 +126,8 @@ sim/
 
 - 技能效果注册表（skill_effects）
 - 技能实际施加 buff / 印记 / 特性
-- 特性模块
+- 特性 handler 逐个实现（接口已定稿并接入引擎，见 `sim/traits/README.md`；
+  进度：第 0 批 11 个 + 第 1 批 42 个 = 53/231，`report()` 可查）
 
 
 代码要求：
