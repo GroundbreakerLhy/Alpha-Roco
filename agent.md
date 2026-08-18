@@ -29,26 +29,28 @@ data/
   skills.json             # 技能数据
   typechart.json          # 属性克制
   natures.json            # 性格
-  buff.json               # 增益/减益规则（仅 desc 用自然语言，其他为代码字段）
+  buff.json               # 增益/减益规则
+  marks.json              # 印记规则
+  weather.json            # 天气规则
+  resonance.json          # 共鸣魔法
   test_team.json          # A 默认队伍
   test_team_b.json        # B 默认队伍
 sim/
+  __init__.py
   battle.py               # 战斗主循环、状态序列化
   models.py               # BattlePet / BattleSkill / BattleState / Action
   damage.py               # 伤害计算
   data_loader.py          # 数据加载、面板计算
   buffs.py                # 增益/减益、纯减益、回合结束结算
   marks.py                # 印记系统：正/负面各一槽，新印记顶掉同类旧印记
+  counter.py              # 应对机制：counter_target 标记可应对类型，应对成功强制先手
+  skill_utils.py          # 技能判断：类型/能耗/属性/counter 接口 has_counter_effect
+  enums.py                # 共享枚举与常量
   weather.py              # 天气系统：雨天/暴风雪/沙暴/雷鸣
   resonance.py            # 共鸣魔法：光合治愈/愿力冲击/进化之力
   burst.py                # 迸发效果：入场后首次行动消耗
   evolution.py            # 进化链、萌化退化
   typechart.py            # 属性克制查询
-logs/
-  battle/
-    server.log
-    clientA.log
-    clientB.log
 ```
 
 ## 当前已实现机制
@@ -76,7 +78,7 @@ logs/
 - 客户端操作：X 聚能，1-4 技能，E1-E6 换人，esc 逃跑
 - 能量上限 10，能量不足不允许选择技能，不自动聚能，不占回合
 - 伤害计算已接入 buff 修正：物攻/魔攻/物抗/魔抗/技能威力/连击/吸血
-- 过载基础结构：overload_next / overload_current
+- 过载：临时 buff，下一回合消失；有 N 层过载时，下一回合同一技能/聚能最多使用 N 次，直到能量耗尽；回合结束清空 overload_current
 - 萌化已实现，逻辑在 evolution.py
 - 印记系统基础已实现：每方一个正面印记槽和一个负面印记槽，同种印记可叠层，上限 99；获得不同种同类印记会替换旧印记
 - 脱离/离场机制已实现：技能含“自己脱离/紧急脱离/自己离场”等会让己方立即换人；“敌方脱离/敌方紧急脱离/使敌方精灵返场”会让对方立即换人；换人发生在当回合各种结算之前，并触发棘刺/降灵等离场印记
@@ -117,12 +119,7 @@ logs/
 
 - 技能效果注册表（skill_effects）
 - 技能实际施加 buff / 印记 / 特性
-- 印记模块
 - 特性模块
-- 天气 / 场地
-- 血脉
-- 过载实际接入技能使用次数
-- 萌化与进化链进一步校验
 
 
 代码要求：

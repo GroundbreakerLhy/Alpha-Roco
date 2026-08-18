@@ -334,6 +334,47 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
 
 
 # 印记 3：减速印记 —— 每层速度-10
+def _current_skill_cost(state: BattleState, side: str, skill) -> int:
+    pet = _active_pet(state, side)
+    if pet is None:
+        return 0
+    bonus = weather.sandstorm_energy_modifier(state.weather, skill.element)
+    positive = marks.get_mark(state, side, marks.POSITIVE)
+    if positive is not None and positive["id"] == 2:
+        bonus += positive["stacks"]
+    if positive is not None and positive["id"] == 11:
+        bonus -= positive["stacks"]
+    return max(0, skill.energy_cost + buffs.get_energy_cost_modifier(pet) + bonus)
+
+
+def _resolve_repeated(state: BattleState, side: str, action: Action, is_first: bool) -> list:
+    logs = []
+    pet = _active_pet(state, side)
+    if pet is None:
+        return logs
+    if action.kind == "skill":
+        skill = pet.skills[action.skill_index]
+        key = skill.skill_id
+    elif action.kind == "charge":
+        key = "charge"
+    else:
+        key = None
+
+    count = max(1, pet.overload_current.get(key, 0)) if key is not None else 1
+    for _ in range(count):
+        if state.winner is not None or state.active[side] < 0:
+            break
+        if action.kind == "skill":
+            skill = pet.skills[action.skill_index]
+            if pet.energy < _current_skill_cost(state, side, skill):
+                logs.append(f"{side} {pet.name} 能量不足，停止重复使用")
+                break
+        logs.extend(_resolve_action(state, side, action, is_first))
+        if state.winner is not None or state.active[side] < 0:
+            break
+    return logs
+
+
 def _effective_speed(state: BattleState, side: str) -> int:
     pet = _active_pet(state, side)
     if pet is None:
@@ -393,6 +434,12 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         buffs.on_round_end(state)
         resonance.on_round_end(state)
         weather.on_round_end(state)
+        for team in state.teams.values():
+            for pet in team:
+                pet.overload_current.clear()
+    for team in state.teams.values():
+        for pet in team:
+            pet.overload_current.clear()
         for side in ("A", "B"):
             _apply_faint(state, side)
         if state.winner is not None:
@@ -422,13 +469,13 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         first, second = ("A", "B") if random.random() < 0.5 else ("B", "A")
 
     if first in remaining:
-        state.log.extend(_resolve_action(state, first, remaining[first], is_first=True))
+        state.log.extend(_resolve_repeated(state, first, remaining[first], is_first=True))
         _apply_faint(state, "B" if first == "A" else "A")
         if state.winner is not None:
             return state
 
     if second in remaining and state.active[second] >= 0:
-        state.log.extend(_resolve_action(state, second, remaining[second], is_first=False))
+        state.log.extend(_resolve_repeated(state, second, remaining[second], is_first=False))
         _apply_faint(state, "B" if second == "A" else "A")
         if state.winner is not None:
             return state
@@ -438,6 +485,9 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     buffs.on_round_end(state)
     resonance.on_round_end(state)
     weather.on_round_end(state)
+    for team in state.teams.values():
+        for pet in team:
+            pet.overload_current.clear()
     for side in ("A", "B"):
         _apply_faint(state, side)
     if state.winner is not None:

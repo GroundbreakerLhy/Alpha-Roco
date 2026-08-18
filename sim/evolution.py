@@ -98,6 +98,16 @@ def can_lordize(pet) -> bool:
 def lordize(pet, branch: int = 0) -> bool:
     if not can_lordize(pet):
         return False
+    # 萌化后再次首领化：只恢复上一阶段普通形态，不进入首领形态
+    cute_buffs = [b for b in pet.buffs if b.buff_type == "cute"]
+    if cute_buffs:
+        if not evolve(pet):
+            return False
+        buff = cute_buffs[0]
+        buff.value -= 1
+        if buff.value <= 0:
+            pet.buffs.remove(buff)
+        return True
     spirit = get_spirit_by_id(pet.spirit_id)
     lords = get_lord_forms(spirit)
     if not lords:
