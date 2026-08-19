@@ -134,10 +134,21 @@ def switch_in(state: BattleState, side: str, incoming: BattlePet, logs: list, th
             loss = negative["stacks"]
             incoming.energy = max(0, incoming.energy - loss)
             logs.append(f"  降灵印记：{incoming.name} 入场失去 {loss} 能量")
+        _apply_dark_surge(state, side, incoming, logs)
     traits.emit(state, "entry", scope="all", side=side, subject=incoming)
 
 
 # 离场换人通用结算：离场事件广播 + 换人 + 入场结算
+def _apply_dark_surge(state, side: str, incoming, logs: list) -> None:
+    negative = marks.get_mark(state, side, marks.NEGATIVE)
+    if negative is None or negative["id"] != 13:
+        return
+    for _ in range(5):
+        debuff_type = random.choice(["atk", "spatk", "def", "spdef", "speed"])
+        buffs.add_buff(incoming, debuff_type, -1)
+    logs.append(f"  暗涌印记：{incoming.name} 获得5层随机属性减益")
+
+
 def _force_switch_after_leave(state: BattleState, side: str, logs: list) -> None:
     current_idx = state.active[side]
     if current_idx < 0:
@@ -158,6 +169,29 @@ def _force_switch_after_leave(state: BattleState, side: str, logs: list) -> None
     state.active[side] = idx
     logs.append(f"{side} 因脱离换上 {incoming.name}")
     switch_in(state, side, incoming, logs)
+
+
+def trait_leave_switch(state: BattleState, side: str, incoming: BattlePet, logs: list) -> None:
+    """特性请求的脱离换人（如警惕：回合结束能量为0，玩家选择后调用）。
+
+    与 _force_switch_after_leave 等价，但由服务端传入玩家选定的 incoming。
+    """
+    outgoing = state.teams[side][state.active[side]]
+    traits.emit(state, "leave", scope="all", side=side, subject=outgoing, incoming=incoming)
+    buffs.clear_normal_buffs(outgoing)
+    burst.clear_bursts(outgoing)
+    state.active[side] = state.teams[side].index(incoming)
+    logs.append(f"{side} 因特性脱离换上 {incoming.name}")
+    switch_in(state, side, incoming, logs)
+
+
+def _resolve_trait_leave(state: BattleState) -> None:
+    """回合结束结算后处理特性请求的脱离（如警惕：能量为0时脱离）。
+
+    特性 handler 已在 on_round_end 里设置 state.pending_switch[side]=True，
+    引擎在此不做换人——由服务端发 choose_replacement 让玩家手动选择上场精灵。
+    本函数保留为空语义占位（如未来有纯引擎自动脱离特性可在此接入）。
+    """
 
 
 def _resolve_action(state: BattleState, side: str, action: Action, is_first: bool = False) -> list:
@@ -247,13 +281,17 @@ def _resolve_action(state: BattleState, side: str, action: Action, is_first: boo
         if active_burst["type"] == "enemy_energy_cost" and opponent is not None:
             buffs.add_buff(opponent, buffs.BuffType.ENERGY_COST, active_burst["value"],
                            buffs.DurationKind.NORMAL, state.turn, side, pet.name)
+            traits.on_buff_gain(state, opponent, buffs.BuffType.ENERGY_COST,
+                                active_burst["value"], side, pet.name)
             logs.append(f"  {opponent.name} 全技能能耗+{active_burst['value']}")
     # 印记 9：龙噬印记 —— 释放3能耗技能后双攻+30%/层
     positive_mark = marks.get_mark(state, side, marks.POSITIVE)
     if positive_mark is not None and positive_mark["id"] == 9 and total_cost == 3:
         gain = 3 * positive_mark["stacks"]
         buffs.add_buff(pet, buffs.BuffType.ATK, gain)
+        traits.on_buff_gain(state, pet, buffs.BuffType.ATK, gain, side, pet.name)
         buffs.add_buff(pet, buffs.BuffType.SPATK, gain)
+        traits.on_buff_gain(state, pet, buffs.BuffType.SPATK, gain, side, pet.name)
         logs.append(f"  龙噬印记：双攻+{gain * 10}%")
     if skill.skill_id != -1:
         state.revealed[side].add(skill.skill_id)
@@ -541,6 +579,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
                 pet.overload_current.clear()
         for side in ("A", "B"):
             _apply_faint(state, side)
+        _resolve_trait_leave(state)
         if state.winner is not None:
             return state
         if state.turn > MAX_TURN:
@@ -558,10 +597,14 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         forced = counter.forced_first(state, remaining["A"], remaining["B"])
     if forced == "A":
         first, second = "A", "B"
+        counter.record_counter(_active_pet(state, "A"),
+                               counter.action_category(state, "B", remaining["B"]))
         traits.emit(state, "counter", scope="all", side="A",
                     subject=_active_pet(state, "A"), action=remaining["A"], is_counter=True)
     elif forced == "B":
         first, second = "B", "A"
+        counter.record_counter(_active_pet(state, "B"),
+                               counter.action_category(state, "A", remaining["A"]))
         traits.emit(state, "counter", scope="all", side="B",
                     subject=_active_pet(state, "B"), action=remaining["B"], is_counter=True)
     elif a_speed > b_speed:
@@ -594,6 +637,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
             pet.overload_current.clear()
     for side in ("A", "B"):
         _apply_faint(state, side)
+    _resolve_trait_leave(state)
     if state.winner is not None:
         return state
 
@@ -639,7 +683,8 @@ def pet_to_dict(pet: BattlePet, opponent: BattlePet | None = None, typechart: di
         "speed_range": pet.speed_range,
         "defense_cooldowns": sorted(pet.defense_cooldowns),
         "buffs": [
-            {"type": buff.buff_type, "value": buff.value, "duration": buff.duration}
+            {"type": buff.buff_type, "value": buff.value, "duration": buff.duration,
+             "source_kind": buff.source_kind}
             for buff in pet.buffs
         ],
         "skills": skills,
@@ -656,6 +701,8 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         side_list = []
         for pet in state.teams[side]:
             d = pet_to_dict(pet, opponent, typechart, hide_wish=(view_side is not None and side != view_side))
+            # 特性效果显示行（客户端 buff 区，如 +双攻 * n (20%/trait)）
+            d["trait_effects"] = traits.describe(state, pet)
             if view_side is not None and side == view_side:
                 mark_energy_bonus = 0
                 positive = marks.get_mark(state, side, marks.POSITIVE)
