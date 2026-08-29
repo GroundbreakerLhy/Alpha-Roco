@@ -1,0 +1,119 @@
+{
+  "resonance": 0,
+  "team": [
+    {
+      "spirit": "迪莫",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "blodline": 6,
+      "skills": [
+        "折射",
+        "棘突",
+        "气泡",
+        "闪燃"
+      ]
+    },
+    {
+      "spirit": "火羽",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "blodline": 8,
+      "skills": [
+        "回旋风暴",
+        "幽灵爆发",
+        "高温回火",
+        "焚烧焙印"
+      ]
+    },
+    {
+      "spirit": "古卷执政官",
+      "nature": 27,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 0
+      },
+      "blodline": 3,
+      "skills": [
+        "透射",
+        "先发制人",
+        "力量增效",
+        "吞噬"
+      ]
+    },
+    {
+      "spirit": "圣代甜甜",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "blodline": 16,
+      "skills": [
+        "打喷喷",
+        "离子震荡",
+        "寒潮",
+        "吹散"
+      ]
+    },
+    {
+      "spirit": "音碟吼",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "blodline": 3,
+      "skills": [
+        "蓄能轰击",
+        "同频",
+        "防反",
+        "金属噪音"
+      ]
+    },
+    {
+      "spirit": "龙鱼",
+      "nature": 12,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "blodline": 16,
+      "skills": [
+        "升龙咆哮",
+        "离子震荡",
+        "超导",
+        "天洪"
+      ]
+    }
+  ]
+}

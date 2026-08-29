@@ -12,6 +12,8 @@ import random
 import socket
 from pathlib import Path
 
+from sim.data_loader import validate_team_config
+
 
 def send_line(conn, obj):
     conn.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
@@ -27,12 +29,51 @@ def read_line(f):
 LOG_FILES = []
 AUTO_MODE = False
 MY_SIDE = None
+ARGS_TEAM_PATH = "data/teams/冻陨2.0.json"
 
 # 元素 0-17 名称（与 sim/enums.Element 一致）
 ELEMENT_NAMES = ["普通", "草", "火", "水", "光", "地", "冰", "龙", "电", "毒",
                  "虫", "武", "翼", "萌", "幽", "恶", "机械", "幻"]
 # 首领血脉编号（与 sim/enums.LORD_BLOODLINE 一致）
 LORD_BLOODLINE = 18
+
+# buff 分类
+BUFF_ALWAYS = {"lifesteal"}
+BUFF_DEBUFF = {"priority_debuff", "poison", "burn", "dizzy", "leech",
+               "freeze", "cute", "lock", "lightning"}
+# buff 类型中文名
+BUFF_NAMES = {
+    "atk": "物攻", "spatk": "魔攻", "def": "物防", "spdef": "魔防",
+    "speed": "速度", "speed_percent": "速度%",
+    "skill_power_percent": "威力%", "skill_power_flat": "威力",
+    "hit_count_percent": "连击%", "hit_count_flat": "连击数",
+    "energy_cost": "能耗", "lifesteal": "吸血", "overload": "过载",
+    "priority": "先手", "priority_debuff": "先手减益",
+    "poison": "中毒", "burn": "灼烧", "dizzy": "眩晕", "leech": "寄生",
+    "freeze": "冻结", "cute": "萌化", "lock": "禁足", "lightning": "引电",
+}
+_BUFF_INFO = None
+
+
+def buff_classify(btype, value):
+    """按类型与层数判断 buff/debuff（与引擎一致）。"""
+    if btype in BUFF_ALWAYS:
+        return "buff"
+    if btype in BUFF_DEBUFF:
+        return "debuff"
+    if btype == "energy_cost":
+        return "buff" if value < 0 else "debuff"
+    return "buff" if value >= 0 else "debuff"
+
+
+def buff_info():
+    """懒加载 data/buff.json：类型 -> {per_layer, unit}（显示每层数值用）。"""
+    global _BUFF_INFO
+    if _BUFF_INFO is None:
+        path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "buff.json"
+        with open(path, encoding="utf-8") as f:
+            _BUFF_INFO = {e["id"]: e for e in json.load(f)["effects"]}
+    return _BUFF_INFO
 
 
 def log(msg):
@@ -43,12 +84,33 @@ def log(msg):
 
 
 def load_team(team_name):
-    """按名字加载 data/<team_name>.json 的队伍（如 --team 1abc）。"""
-    path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / f"{team_name}.json"
-    if not path.exists():
-        raise SystemExit(f"找不到队伍文件：{path}")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)["team"]
+    """加载队伍 JSON。
+
+    支持两种写法：
+      --team data/teams/冻陨2.0.json
+      --team 冻陨2.0
+    都会优先从 data/teams/ 下查找；也兼容旧位置 data/<name>.json。
+    返回完整 JSON 配置（含 team、resonance 等字段）。
+    """
+    root = Path(os.path.dirname(os.path.abspath(__file__)))
+    candidates = []
+    if Path(team_name).is_absolute():
+        candidates.append(Path(team_name))
+    else:
+        candidates.append(root / team_name)
+        if team_name.endswith(".json"):
+            candidates.append(root / "data" / "teams" / team_name)
+            candidates.append(root / "data" / team_name)
+        else:
+            candidates.append(root / "data" / "teams" / f"{team_name}.json")
+            candidates.append(root / "data" / f"{team_name}.json")
+    for path in candidates:
+        if path.is_file():
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            validate_team_config(data, source=f"队伍文件 {path}")
+            return data
+    raise SystemExit(f"找不到队伍文件：{candidates[-1]}")
 
 
 def choose_lead(team):
@@ -60,17 +122,6 @@ def choose_lead(team):
         if value.isdigit() and 1 <= int(value) <= len(team):
             return int(value) - 1
         log("无效编号，请重新输入")
-
-
-def choose_resonance():
-    while True:
-        print("选择共鸣魔法 (0=愿力冲击, 1=进化之力, 2=光合治愈, 回车=无):")
-        value = input("请输入: ").strip()
-        if value == "":
-            return None
-        if value in ("0", "1", "2"):
-            return int(value)
-        print("无效选择，请输入 0/1/2 或直接回车")
 
 
 def print_state(state):
@@ -135,13 +186,19 @@ def print_state(state):
                 pct = round(pet['hp'] / pet['max_hp'] * 100) if pet['max_hp'] else 0
                 hp_text = f"HP {pct}%"
             log(f" {marker} #{i + 1} {pet['name']} {hp_text} 能量 {pet['energy']} 速 {speed_text}")
-            # 同类型同时长的 buff 合并显示（如助燃多次触发的 atk x2 合并为 atk x6）
+            # 特性效果行在最前（服务端算好，如 +双攻 * 3 (20%/trait)）
+            for eff in pet.get("trait_effects") or []:
+                sign = "+" if eff.get("gain", True) else "-"
+                log(f"     {sign}{eff['name']} * {eff['layers']} ({eff['per']}/trait)")
+            # 普通 buff（特性来源的已由 trait_effects 展示，这里跳过）
             merged = {}
             for buff in pet.get("buffs", []):
-                key = (buff['type'], buff['duration'])
-                merged[key] = merged.get(key, 0) + buff['value']
-            for (btype, dur), value in sorted(merged.items()):
-                log(f"     buff {btype} x{value} ({dur})")
+                if buff.get('source_kind') == 'trait':
+                    continue
+                btype = buff['type']
+                merged[btype] = merged.get(btype, 0) + buff['value']
+            for line in render_buffs(merged):
+                log(f"     {line}")
             for skill in pet["skills"]:
                 elem = ELEMENT_NAMES[skill['element']] if skill.get('element') is not None else '?'
                 if "desc" not in skill:
@@ -156,6 +213,46 @@ def print_state(state):
             if not pet["skills"]:
                 log("     （技能不可见）")
     log("=" * 56)
+
+
+def render_buffs(merged):
+    """把普通 buff（type -> 层数）渲染成显示行：统计类联合显示、中文名、格式 +物攻 * 6 (10%/buff)。"""
+    info_map = buff_info()
+    lines = []
+    # 统计类联合：层数相同的 atk/spatk/def/spdef 合并为 双攻/双防/物攻&物防 等
+    stat_family = ("atk", "spatk", "def", "spdef")
+    stats = {t: v for t, v in merged.items() if t in stat_family}
+    if len(stats) >= 2 and len(set(stats.values())) == 1:
+        value = next(iter(stats.values()))
+        types = tuple(sorted(stats))
+        if types == ("atk", "spatk"):
+            name = "双攻"
+        elif types == ("def", "spdef"):
+            name = "双防"
+        elif types == ("atk", "def"):
+            name = "物攻&物防"
+        elif types == ("spatk", "spdef"):
+            name = "魔攻&魔防"
+        else:
+            name = "&".join(BUFF_NAMES[t] for t in types)
+        lines.append((name, value, types[0]))
+        merged = {t: v for t, v in merged.items() if t not in stats}
+    for btype, value in sorted(merged.items()):
+        lines.append((BUFF_NAMES.get(btype, btype), value, btype))
+    out = []
+    for name, value, ctype in lines:
+        tag = buff_classify(ctype, value)
+        sign = "+" if tag == "buff" else "-"
+        info = info_map.get(ctype, {})
+        per = info.get("per_layer")
+        if per is None:
+            per_text = ""
+        elif info.get("unit") == "percent":
+            per_text = f"{per}%"
+        else:
+            per_text = str(per)
+        out.append(f"{sign}{name} * {abs(value)} ({per_text}/{tag})")
+    return out
 
 
 def can_use_resonance(state):
@@ -292,6 +389,9 @@ def prompt_replacement(conn, state):
             if target["hp"] <= 0:
                 log(f"该精灵已无法战斗：{target['name']}")
                 continue
+            if idx == state["active"][MY_SIDE]:
+                log("该精灵已经在场上")
+                continue
             log(f"操作: 换人 {idx_text}")
             send_line(conn, {"kind": "switch", "pet_index": idx})
             return
@@ -329,7 +429,11 @@ def auto_action(conn, state, side):
 
 
 def auto_replace(conn, state, side):
-    alive = [i for i, pet in enumerate(state["teams"][side]) if pet["hp"] > 0]
+    current = state["active"][side]
+    alive = [i for i, pet in enumerate(state["teams"][side])
+             if pet["hp"] > 0 and i != current]
+    if not alive:
+        alive = [i for i, pet in enumerate(state["teams"][side]) if pet["hp"] > 0]
     if alive:
         idx = random.choice(alive)
         log(f"操作: 换人 {idx}")
@@ -342,13 +446,15 @@ def main():
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--nature", type=int, default=-1)
     parser.add_argument("--auto", action="store_true")
-    parser.add_argument("--team", default=None,
-                        help="队伍文件名（data/<name>.json，如 1abc）；缺省则不发送队伍，走服务端默认 1v1")
+    parser.add_argument("--team", default=ARGS_TEAM_PATH,
+                        help="队伍文件路径或 data/teams 下的名字（如 冻陨2.0）；缺省为 data/teams/冻陨2.0.json")
     args = parser.parse_args()
     # random.seed(42)
     global AUTO_MODE
     AUTO_MODE = args.auto
-    team = load_team(args.team) if args.team else None
+    team_data = load_team(args.team) if args.team else None
+    team = team_data.get("team") if team_data else None
+    resonance = team_data.get("resonance") if team_data else None
 
     conn = socket.create_connection((args.host, args.port))
     f = conn.makefile("r", encoding="utf-8")
@@ -382,10 +488,9 @@ def main():
             elif args.auto:
                 lead = random.randrange(len(team))
                 log(f"自动选择首发：{lead + 1}")
-                resonance = None
             else:
                 lead = choose_lead(team)
-                resonance = choose_resonance()
+            # 共鸣魔法不再开局选择，直接从队伍 JSON 的 resonance 字段读取
             send_line(conn, {"type": "config", "nature": args.nature, "team": team, "lead": lead, "resonance": resonance})
         elif msg_type == "choose_replacement":
             awaiting_replacement = True

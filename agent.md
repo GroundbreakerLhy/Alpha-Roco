@@ -11,10 +11,10 @@
 python server.py
 
 # 终端 2
-python client.py --team team00x.json
+python client.py --team data/teams/冻陨2.0.json
 
 # 终端 3 自动战斗
-python client.py --auto --team <team098.json|team099.json>
+python client.py --auto --team data/teams/冻陨2.0.json
 ```
 
 ## 目录结构
@@ -32,10 +32,8 @@ data/
   weather.json            # 天气规则
   resonance.json          # 共鸣魔法
   traits.json             # 精灵特性
-  test_team.json          # 默认 A 队（规范格式参照）
-  test_team_b.json        # 默认 B 队
-  team001.json~team009.json  # 特性展示队：6只一队、规范格式（spirit/nature/ivs/bloodline），
-  team099.json/team098.json  # 陪练对手队
+  teams/                  # 队伍文件（如 冻陨2.0.json）
+    xxx.json              # 格式：{"team": [...], "resonance": 0/1/2 可选}
 sim/
   __init__.py
   battle.py               # 战斗主循环、状态序列化
@@ -83,6 +81,7 @@ sim/
 - 对方速度始终显示范围
 - 对方血量显示百分比
 - 客户端操作：X 聚能，1-4 技能，E1-E6 换人，esc 逃跑
+- 共鸣魔法写在队伍 JSON 的 `resonance` 字段里（0=愿力冲击，1=进化之力，2=光合治愈），不再开局选择
 - 能量上限 10，能量不足不允许选择技能，不自动聚能，不占回合
 - 伤害计算已接入 buff 修正：物攻/魔攻/物抗/魔抗/技能威力/连击/吸血
 - 过载：临时 buff，下一回合消失；有 N 层过载时，下一回合同一技能/聚能最多使用 N 次，直到能量耗尽；回合结束清空 overload_current

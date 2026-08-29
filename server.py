@@ -16,8 +16,9 @@ import random
 import socket
 from pathlib import Path
 
-from sim.battle import can_use_skill, create_battle, create_team_battle, state_to_dict, step, switch_in
-from sim.data_loader import find_spirit, load_spirits, make_battle_pet
+from sim.battle import (can_use_skill, create_battle, create_team_battle, state_to_dict,
+                        step, switch_in, trait_leave_switch)
+from sim.data_loader import find_spirit, load_spirits, make_battle_pet, validate_team_config
 from sim.models import Action
 
 
@@ -77,6 +78,20 @@ def read_replacement(f, conn, state, side):
             switch_in(state, side, pet, state.log, thorn=False)
             return raw
         send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
+
+
+def read_trait_replacement(f, conn, state, side):
+    """特性请求的脱离换人（警惕等）：玩家必须选一只与当前不同的存活精灵。"""
+    while True:
+        raw = recv_line(f)
+        if raw is None:
+            return None
+        if is_valid_switch(raw, state, side) and raw["pet_index"] != state.active[side]:
+            incoming = state.teams[side][raw["pet_index"]]
+            trait_leave_switch(state, side, incoming, state.log)
+            log(f"{side} 因特性脱离换上 {incoming.name}")
+            return raw
+        send_line(conn, {"type": "error", "message": "请选择一只存活且不同的上场精灵 (switch <0-5>)"})
 
 
 def is_valid_normal_switch(raw, state, side):
@@ -142,12 +157,29 @@ def make_team(side, team_config, spirits):
 
 
 def load_default_team(name):
-    """服务端加载 data/<name> 的默认队伍（当一方给队、另一方没给时补齐）。"""
-    path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / name
-    if not path.exists():
-        raise SystemExit(f"找不到默认队伍：{path}")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)["team"]
+    """服务端加载默认队伍。
+
+    兼容旧位置 data/<name> 和新位置 data/teams/<name>；
+    name 可以带或不带 .json。
+    """
+    root = Path(os.path.dirname(os.path.abspath(__file__)))
+    candidates = []
+    if Path(name).is_absolute():
+        candidates.append(Path(name))
+    else:
+        candidates.append(root / name)
+        candidates.append(root / "data" / name)
+        candidates.append(root / "data" / "teams" / name)
+        if not name.endswith(".json"):
+            candidates.append(root / "data" / f"{name}.json")
+            candidates.append(root / "data" / "teams" / f"{name}.json")
+    for path in candidates:
+        if path.is_file():
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            validate_team_config(data, source=f"默认队伍文件 {path}")
+            return data
+    raise SystemExit(f"找不到默认队伍：{candidates[-1]}")
 
 
 def main():
@@ -196,13 +228,24 @@ def main():
 
     team_a = raw_config_a.get("team") if raw_config_a else None
     team_b = raw_config_b.get("team") if raw_config_b else None
+    resonance_a = raw_config_a.get("resonance") if raw_config_a else None
+    resonance_b = raw_config_b.get("resonance") if raw_config_b else None
+
+    if team_a is not None:
+        validate_team_config({"team": team_a, "resonance": resonance_a}, source="A 方队伍配置")
+    if team_b is not None:
+        validate_team_config({"team": team_b, "resonance": resonance_b}, source="B 方队伍配置")
 
     # 一方给了队伍、另一方没给时：缺失方由服务端加载默认队，不回退 1v1
     if team_a and not team_b:
-        team_b = load_default_team("test_team_b.json")
+        team_b_data = load_default_team("test_team_b.json")
+        team_b = team_b_data["team"]
+        resonance_b = team_b_data.get("resonance")
         lead_b = 0
     elif team_b and not team_a:
-        team_a = load_default_team("test_team.json")
+        team_a_data = load_default_team("test_team.json")
+        team_a = team_a_data["team"]
+        resonance_a = team_a_data.get("resonance")
         lead_a = 0
 
     if team_a and team_b:
@@ -213,8 +256,8 @@ def main():
             state.active["A"] = lead_a
         if 0 <= lead_b < len(pets_b):
             state.active["B"] = lead_b
-        state.resonance_magic["A"] = raw_config_a.get("resonance") if raw_config_a else None
-        state.resonance_magic["B"] = raw_config_b.get("resonance") if raw_config_b else None
+        state.resonance_magic["A"] = resonance_a
+        state.resonance_magic["B"] = resonance_b
     else:
         pets = {
             "A": make_pet("A", args.spirit_a, args.skills_a.split(","), nature_a, spirits),
@@ -269,10 +312,24 @@ def main():
             for line in state.log:
                 log(line)
 
-            payload_a = {"type": "state", "state": state_to_dict(state, view_side="A")}
-            payload_b = {"type": "state", "state": state_to_dict(state, view_side="B")}
-            send_line(conn_a, payload_a)
-            send_line(conn_b, payload_b)
+            # 特性请求换人（警惕等）：不占用回合，处理完重新发 state 并继续
+            trait_switched = False
+            for side, conn, f in (("A", conn_a, f_a), ("B", conn_b, f_b)):
+                if state.pending_switch[side]:
+                    state.pending_switch[side] = False
+                    send_line(conn, {"type": "choose_replacement"})
+                    raw = read_trait_replacement(f, conn, state, side)
+                    if raw is None:
+                        log("client disconnected")
+                        break
+                    trait_switched = True
+            else:
+                payload_a = {"type": "state", "state": state_to_dict(state, view_side="A")}
+                payload_b = {"type": "state", "state": state_to_dict(state, view_side="B")}
+                send_line(conn_a, payload_a)
+                send_line(conn_b, payload_b)
+                if trait_switched:
+                    continue
 
     if state.winner is not None:
         log(f"winner: {state.winner}")

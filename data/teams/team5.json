@@ -1,0 +1,119 @@
+{
+  "resonance": 1,
+  "team": [
+    {
+      "spirit": "白金独角兽",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 18,
+      "skills": [
+        "虹光冲击",
+        "折射",
+        "气泡",
+        "追打"
+      ]
+    },
+    {
+      "spirit": "水灵",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 3,
+      "skills": [
+        "水泡盾",
+        "天洪",
+        "润泽",
+        "气泡"
+      ]
+    },
+    {
+      "spirit": "冰钻布鲁斯",
+      "nature": 1,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 5,
+      "skills": [
+        "先发制人",
+        "力量增效",
+        "冰雹",
+        "跺地"
+      ]
+    },
+    {
+      "spirit": "海枝枝",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 16,
+      "skills": [
+        "天洪",
+        "离子震荡",
+        "嘲弄",
+        "恐吓"
+      ]
+    },
+    {
+      "spirit": "混乱鱿彩",
+      "nature": 1,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 10,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 5,
+      "skills": [
+        "跺地",
+        "超级糖果",
+        "天旋地转",
+        "力量增效"
+      ]
+    },
+    {
+      "spirit": "彩蝶鲨",
+      "nature": 20,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed":120
+      },
+      "bloodline": 14,
+      "skills": [
+        "灵媒",
+        "天洪",
+        "贮藏",
+        "血气"
+      ]
+    }
+  ]
+}
