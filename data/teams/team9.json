@@ -1,0 +1,119 @@
+{
+  "resonance": 1,
+  "team": [
+    {
+      "spirit": "火神",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 18,
+      "skills": [
+        "吹火",
+        "诋毁",
+        "闪燃",
+        "火云车"
+      ]
+    },
+    {
+      "spirit": "帕帕斯卡",
+      "nature": 1,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": null,
+      "skills": [
+        "铜铁洪流",
+        "轴承支撑",
+        "倾泻",
+        "轮班"
+      ]
+    },
+    {
+      "spirit": "霹需迪迪",
+      "nature": 20,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 4,
+      "skills": [
+        "色散",
+        "取念",
+        "镜像反射",
+        "落雷"
+      ]
+    },
+    {
+      "spirit": "翠顶夫人",
+      "nature": 29,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 16,
+      "skills": [
+        "力量增效",
+        "水环",
+        "水刃",
+        "俯冲猛击"
+      ]
+    },
+    {
+      "spirit": "岚鸟",
+      "nature": 1,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 18,
+      "skills": [
+        "水刃",
+        "撕咬",
+        "先发制人",
+        "羽化加速"
+      ]
+    },
+    {
+      "spirit": "寂灭骨龙",
+      "nature": 27,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 14,
+      "skills": [
+        "隼鳞",
+        "偷袭",
+        "力量增效",
+        "报复"
+      ]
+    }
+  ]
+}

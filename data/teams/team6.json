@@ -1,0 +1,119 @@
+{
+  "resonance": 1,
+  "team": [
+    {
+      "spirit": "古卷执政官",
+      "nature": 11,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 0,
+      "skills": [
+        "先发制人",
+        "湮灭",
+        "大爆炸",
+        "彗星"
+      ]
+    },
+    {
+      "spirit": "火神",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 18,
+      "skills": [
+        "火云车",
+        "吹火",
+        "压扁",
+        "诋毁"
+      ]
+    },
+    {
+      "spirit": "火羽",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 4,
+      "skills": [
+        "高温回火",
+        "持续高温",
+        "虹光冲击",
+        "焚烧烙印"
+      ]
+    },
+    {
+      "spirit": "烈火守护",
+      "nature": 29,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 10,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 2,
+      "skills": [
+        "反击拳",
+        "撕咬",
+        "有效预防",
+        "先发制人"
+      ]
+    },
+    {
+      "spirit": "卡瓦重（火山附近的样子）",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 10,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 2,
+      "skills": [
+        "火焰切刺",
+        "筛管奔流",
+        "取念",
+        "晒太阳"
+      ]
+    },
+    {
+      "spirit": "燃薪虫",
+      "nature": 27,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 10
+      },
+      "bloodline": null,
+      "skills": [
+        "高温回火",
+        "复写",
+        "引燃",
+        "藤绞"
+      ]
+    }
+  ]
+}

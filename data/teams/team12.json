@@ -1,0 +1,119 @@
+{
+  "resonance": 1,
+  "team": [
+    {
+      "spirit": "卡瓦重（雪山附近的样子）",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 2,
+      "skills": [
+        "筛管奔流",
+        "暴风雪",
+        "火焰冲锋",
+        "力量增效"
+      ]
+    },
+    {
+      "spirit": "海枝枝（杏黄百合）",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 14,
+      "skills": [
+        "润泽",
+        "灵媒",
+        "天洪",
+        "嘲弄"
+      ]
+    },
+    {
+      "spirit": "岚鸟",
+      "nature": 22,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 18,
+      "skills": [
+        "水刃",
+        "撕咬",
+        "俯冲猛击",
+        "先发制人"
+      ]
+    },
+    {
+      "spirit": "火羽",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 4,
+      "skills": [
+        "怒火",
+        "回旋风暴",
+        "焚烧烙印",
+        "幽灵爆发"
+      ]
+    },
+    {
+      "spirit": "恶魔狼",
+      "nature": 1,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 18,
+      "skills": [
+        "先发制人",
+        "惊吓盒子",
+        "蝙蝠",
+        "火焰切割"
+      ]
+    },
+    {
+      "spirit": "古卷执政官",
+      "nature": 29,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 15,
+      "skills": [
+        "蓄能轰击",
+        "大爆炸",
+        "先发制人",
+        "嗜痛"
+      ]
+    }
+  ]
+}

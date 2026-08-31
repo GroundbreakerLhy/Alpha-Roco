@@ -1,0 +1,119 @@
+{
+  "resonance": 2,
+  "team": [
+    {
+      "spirit": "炮米花",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 2,
+      "skills": [
+        "炎枪",
+        "撒花",
+        "暖气",
+        "高温回火"
+      ]
+    },
+    {
+      "spirit": "烈火守护",
+      "nature": 27,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 2,
+      "skills": [
+        "力量增效",
+        "先发制人",
+        "撕咬",
+        "反击拳"
+      ]
+    },
+    {
+      "spirit": "火焰猿",
+      "nature": 27,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 2,
+      "skills": [
+        "爆米花爆破",
+        "焚烧烙印",
+        "地刺",
+        "吹火"
+      ]
+    },
+    {
+      "spirit": "龙鱼",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 16,
+      "skills": [
+        "天洪",
+        "超导",
+        "升龙咆哮",
+        "龙吟"
+      ]
+    },
+    {
+      "spirit": "古卷执政官",
+      "nature": 29,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 0,
+      "skills": [
+        "先发制人",
+        "吓退",
+        "蓄能轰击",
+        "湮灭"
+      ]
+    },
+    {
+      "spirit": "火羽",
+      "nature": 10,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 4,
+      "skills": [
+        "怒火",
+        "持续高温",
+        "回旋风暴",
+        "虹光冲击"
+      ]
+    }
+  ]
+}
