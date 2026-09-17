@@ -3,4 +3,5 @@
 .vscode/
 logs/
 scripts/
+__pycache__/
 :memory:.ses
