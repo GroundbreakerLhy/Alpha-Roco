@@ -604,7 +604,7 @@
         3385,
         3386
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -629,7 +629,7 @@
         3259
       ],
       "done": true,
-      "tested": true
+      "tested": false
     },
     {
       "id": 200118,
@@ -916,7 +916,7 @@
         3191,
         3192
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1519,7 +1519,7 @@
         3211,
         3412
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1596,7 +1596,7 @@
         3118,
         3526
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1739,7 +1739,7 @@
         3484,
         3547
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1926,7 +1926,7 @@
         3729,
         3730
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1937,7 +1937,7 @@
         3736,
         3737
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2233,7 +2233,7 @@
       "spiritIds": [
         3499
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2323,7 +2323,7 @@
       "spiritIds": [
         3527
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2333,7 +2333,7 @@
       "spiritIds": [
         3528
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2423,7 +2423,7 @@
       "spiritIds": [
         5017
       ],
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2684,12 +2684,6 @@
         200241
       ],
       "note": "200095 与 200241 同时在场时的回合结束效果触发次数尚未测试，后续需要确认。"
-    },
-    {
-      "traitIds": [
-        200262
-      ],
-      "note": "200262 哨兵当前判断敌方技能是否足够击败自己时，暂未考虑敌方当前能量、技能冷却和敌方特性限制。"
     }
   ]
 }
