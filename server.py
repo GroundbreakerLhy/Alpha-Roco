@@ -12,12 +12,12 @@ Then run two clients:
 import argparse
 import json
 import os
-import random
 import socket
 from pathlib import Path
 
-from sim.battle import (can_use_skill, create_battle, create_team_battle, state_to_dict,
-                        step, switch_in, trait_leave_switch)
+from sim.battle import (apply_drive, can_use_skill, create_team_battle,
+                        resume_after_leave, state_to_dict, step, switch_in,
+                        trait_leave_switch)
 from sim.data_loader import find_spirit, load_spirits, make_battle_pet, validate_team_config
 from sim.models import Action
 
@@ -75,7 +75,8 @@ def read_replacement(f, conn, state, side):
             pet = state.teams[side][state.active[side]]
             state.log.append(f"{side} 换上 {pet.name}")
             log(f"{side} 换上 {pet.name}")
-            switch_in(state, side, pet, state.log, thorn=False)
+            switch_in(state, side, pet, state.log, thorn=False, active_switch=False)
+            apply_drive(state, side)
             return raw
         send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
 
@@ -89,9 +90,26 @@ def read_trait_replacement(f, conn, state, side):
         if is_valid_switch(raw, state, side) and raw["pet_index"] != state.active[side]:
             incoming = state.teams[side][raw["pet_index"]]
             trait_leave_switch(state, side, incoming, state.log)
+            apply_drive(state, side)
             log(f"{side} 因特性脱离换上 {incoming.name}")
             return raw
         send_line(conn, {"type": "error", "message": "请选择一只存活且不同的上场精灵 (switch <0-5>)"})
+
+
+def read_leave_replacement(f, conn, state, side):
+    """技能脱离的换人（移花接木/吓退等）：只读取并校验玩家选择，不执行换人。
+
+    真正的入场与回合续接由 battle.resume_after_leave 完成。
+    必须选一只存活、且不是刚离场那只（paused_turn["leaver_index"]）的精灵。
+    """
+    leaver_index = state.paused_turn.get("leaver_index", -1) if state.paused_turn else -1
+    while True:
+        raw = recv_line(f)
+        if raw is None:
+            return None
+        if is_valid_switch(raw, state, side) and raw["pet_index"] != leaver_index:
+            return raw
+        send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
 
 
 def is_valid_normal_switch(raw, state, side):
@@ -115,9 +133,12 @@ def is_valid_skill_energy(raw, state, side):
     if idx is None or state.active[side] < 0:
         return False
     team = state.teams[side]
-    if not (0 <= idx < len(team[state.active[side]].skills)):
-        return False
     pet = team[state.active[side]]
+    if not (0 <= idx < len(pet.skills)):
+        # 进化之力在本回合行动前生效，允许校验尚未出现在当前状态快照中的新增3个技能。
+        if raw.get("magic_id") == 1 and 0 <= idx < len(pet.skills) + 3:
+            return True
+        return False
     skill = pet.skills[idx]
     return can_use_skill(state, side, skill, skill_index=idx)
 
@@ -131,12 +152,6 @@ def read_action_with_energy(f, conn, state, side):
             return raw
         send_line(conn, {"type": "error", "message": "行动不可用，请重新选择"})
 
-
-def make_pet(side, name, skill_names, nature, spirits):
-    spirit = find_spirit(name, spirits)
-    if spirit is None:
-        raise SystemExit(f"找不到精灵：{name}")
-    return make_battle_pet(spirit, side, skill_names=skill_names, nature=nature)
 
 
 def make_team(side, team_config, spirits):
@@ -156,42 +171,13 @@ def make_team(side, team_config, spirits):
     return team
 
 
-def load_default_team(name):
-    """服务端加载默认队伍。
-
-    兼容旧位置 data/<name> 和新位置 data/teams/<name>；
-    name 可以带或不带 .json。
-    """
-    root = Path(os.path.dirname(os.path.abspath(__file__)))
-    candidates = []
-    if Path(name).is_absolute():
-        candidates.append(Path(name))
-    else:
-        candidates.append(root / name)
-        candidates.append(root / "data" / name)
-        candidates.append(root / "data" / "teams" / name)
-        if not name.endswith(".json"):
-            candidates.append(root / "data" / f"{name}.json")
-            candidates.append(root / "data" / "teams" / f"{name}.json")
-    for path in candidates:
-        if path.is_file():
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            validate_team_config(data, source=f"默认队伍文件 {path}")
-            return data
-    raise SystemExit(f"找不到默认队伍：{candidates[-1]}")
-
 
 def main():
     parser = argparse.ArgumentParser(description="Headless Roco 6v6 server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--spirit-a", default="岚鸟")
-    parser.add_argument("--spirit-b", default="奇丽花")
-    parser.add_argument("--skills-a", default="扇风,啄击,先发制人,俯冲猛击")
-    parser.add_argument("--skills-b", default="棘突,叶绿光束,刺藤,仙人掌刺击")
+
     args = parser.parse_args()
-    # random.seed(42)
 
     logs_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "logs" / "battle"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -221,8 +207,7 @@ def main():
     log("waiting for client configs...")
     raw_config_a = recv_line(f_a)
     raw_config_b = recv_line(f_b)
-    nature_a = raw_config_a.get("nature", -1) if raw_config_a else -1
-    nature_b = raw_config_b.get("nature", -1) if raw_config_b else -1
+
     lead_a = raw_config_a.get("lead", 0) if raw_config_a else 0
     lead_b = raw_config_b.get("lead", 0) if raw_config_b else 0
 
@@ -236,34 +221,18 @@ def main():
     if team_b is not None:
         validate_team_config({"team": team_b, "resonance": resonance_b}, source="B 方队伍配置")
 
-    # 一方给了队伍、另一方没给时：缺失方由服务端加载默认队，不回退 1v1
-    if team_a and not team_b:
-        team_b_data = load_default_team("test_team_b.json")
-        team_b = team_b_data["team"]
-        resonance_b = team_b_data.get("resonance")
-        lead_b = 0
-    elif team_b and not team_a:
-        team_a_data = load_default_team("test_team.json")
-        team_a = team_a_data["team"]
-        resonance_a = team_a_data.get("resonance")
-        lead_a = 0
+    if not team_a or not team_b:
+        raise SystemExit("双方客户端都必须提交队伍配置")
 
-    if team_a and team_b:
-        pets_a = make_team("A", team_a, spirits)
-        pets_b = make_team("B", team_b, spirits)
-        state = create_team_battle(pets_a, pets_b)
-        if 0 <= lead_a < len(pets_a):
-            state.active["A"] = lead_a
-        if 0 <= lead_b < len(pets_b):
-            state.active["B"] = lead_b
-        state.resonance_magic["A"] = resonance_a
-        state.resonance_magic["B"] = resonance_b
-    else:
-        pets = {
-            "A": make_pet("A", args.spirit_a, args.skills_a.split(","), nature_a, spirits),
-            "B": make_pet("B", args.spirit_b, args.skills_b.split(","), nature_b, spirits),
-        }
-        state = create_battle(pets["A"], pets["B"])
+    pets_a = make_team("A", team_a, spirits)
+    pets_b = make_team("B", team_b, spirits)
+    state = create_team_battle(pets_a, pets_b)
+    if 0 <= lead_a < len(pets_a):
+        state.active["A"] = lead_a
+    if 0 <= lead_b < len(pets_b):
+        state.active["B"] = lead_b
+    state.resonance_magic["A"] = resonance_a
+    state.resonance_magic["B"] = resonance_b
 
     send_line(conn_a, {"type": "state", "state": state_to_dict(state, view_side="A")})
     send_line(conn_b, {"type": "state", "state": state_to_dict(state, view_side="B")})
@@ -311,6 +280,22 @@ def main():
 
             for line in state.log:
                 log(line)
+
+            # 技能脱离（移花接木/吓退等）：回合中暂停等待选人，选人后续完本回合。
+            # 与特性 pending_switch 的区别：它在回合中生效、离场精灵跳过回合末结算。
+            while state.paused_turn is not None and state.winner is None:
+                lside = state.paused_turn["leave_side"]
+                lconn, lf = (conn_a, f_a) if lside == "A" else (conn_b, f_b)
+                send_line(lconn, {"type": "choose_replacement"})
+                raw = read_leave_replacement(lf, lconn, state, lside)
+                if raw is None:
+                    log("client disconnected")
+                    break
+                incoming = state.teams[lside][raw["pet_index"]]
+                before = len(state.log)
+                state = resume_after_leave(state, lside, incoming)
+                for line in state.log[before:]:
+                    log(line)
 
             # 特性请求换人（警惕等）：不占用回合，处理完重新发 state 并继续
             trait_switched = False
