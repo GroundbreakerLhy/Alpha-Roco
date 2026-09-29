@@ -29,3 +29,9 @@ from . import taken  # noqa: F401  第 1 批：受击修正
 from . import hit_count  # noqa: F401  第 1 批：连击修正
 from . import lifesteal  # noqa: F401  第 1 批：吸血修正
 from . import restrict  # noqa: F401  第 1 批：技能位限制
+from . import freeze  # noqa: F401  冰冻增益类（buff_gain）
+from . import lethal  # noqa: F401  致命伤害保护（on_lethal）
+from . import buff_gain  # noqa: F401  增益响应类（on_buff_gain）
+from . import resource  # noqa: F401  资源转移类（on_heal / on_energy_gain）
+from . import counter  # noqa: F401  应对类（on_counter）
+from . import morph  # noqa: F401  巧变类（morph_pool 填充）

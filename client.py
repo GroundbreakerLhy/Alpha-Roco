@@ -2,7 +2,7 @@
 """Headless battle client.
 
 Run:
-  python client.py --port 5000
+  python client.py --port 5000 --team data/teams/冻陨2.0.json
 """
 
 import argparse
@@ -29,7 +29,6 @@ def read_line(f):
 LOG_FILES = []
 AUTO_MODE = False
 MY_SIDE = None
-ARGS_TEAM_PATH = "data/teams/冻陨2.0.json"
 
 # 元素 0-17 名称（与 sim/enums.Element 一致）
 ELEMENT_NAMES = ["普通", "草", "火", "水", "光", "地", "冰", "龙", "电", "毒",
@@ -51,6 +50,7 @@ BUFF_NAMES = {
     "priority": "先手", "priority_debuff": "先手减益",
     "poison": "中毒", "burn": "灼烧", "dizzy": "眩晕", "leech": "寄生",
     "freeze": "冻结", "cute": "萌化", "lock": "禁足", "lightning": "引电",
+    "freeze_immune": "免疫冻结", "burn_immune": "免疫灼烧", "leech_immune": "免疫寄生",
 }
 _BUFF_INFO = None
 
@@ -316,7 +316,9 @@ def prompt_action(conn, state):
     magic_id = None
     magic_branch = 0
     while True:
-        action = input("输入 (W1=共鸣, X=聚能, 1-4=技能, E<0-9>=换人, esc=逃跑): ").strip()
+        current_pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
+        skill_limit = min(7, len(current_pet.get("skills", [])) + (3 if magic_id == 1 else 0))
+        action = input(f"输入 (W1=共鸣, X=聚能, 1-{skill_limit}=技能, E<0-9>=换人, esc=逃跑): ").strip()
         lower = action.lower()
         if lower == "w":
             show_resonance_info(state)
@@ -341,14 +343,15 @@ def prompt_action(conn, state):
             log("操作: 聚能")
             send_line(conn, {"kind": "charge", "magic_id": magic_id, "magic_branch": magic_branch})
             return
-        if action in ("1", "2", "3", "4"):
+        if action.isdigit() and 1 <= int(action) <= skill_limit:
             idx = int(action) - 1
             pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
-            skill = pet["skills"][idx]
-            # 能量不足不拦截也不预警：可能由特性兜底（如石头大餐），直接发送由服务端裁决
-            if skill.get("category") == 2 and skill.get("skill_id") in pet.get("defense_cooldowns", []):
-                log(f"防御技能冷却中：{skill['name']}")
-                continue
+            # 进化之力追加的技能尚未出现在本地快照中，冷却检查交由服务端/引擎处理。
+            if idx < len(pet["skills"]):
+                skill = pet["skills"][idx]
+                if skill.get("skill_id") in pet.get("skill_cooldowns", []):
+                    log(f"技能冷却中：{skill['name']}")
+                    continue
             log(f"操作: 技能{int(action)}")
             send_line(conn, {"kind": "skill", "skill_index": idx, "magic_id": magic_id, "magic_branch": magic_branch})
             return
@@ -370,7 +373,7 @@ def prompt_action(conn, state):
             log("操作: 逃跑")
             send_line(conn, {"kind": "flee", "magic_id": magic_id, "magic_branch": magic_branch})
             return
-        log("无效输入，请输入 W1 / X / 1-4 / E<0-9> / esc")
+        log(f"无效输入，请输入 W1 / X / 1-{skill_limit} / E<0-9> / esc")
 
 
 def prompt_replacement(conn, state):
@@ -446,15 +449,17 @@ def main():
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--nature", type=int, default=-1)
     parser.add_argument("--auto", action="store_true")
-    parser.add_argument("--team", default=ARGS_TEAM_PATH,
-                        help="队伍文件路径或 data/teams 下的名字（如 冻陨2.0）；缺省为 data/teams/冻陨2.0.json")
+    parser.add_argument("--team",
+                        help="必须指定队伍文件路径或 data/teams 下的名字（如 冻陨2.0）")
     args = parser.parse_args()
+    if not args.team:
+        parser.error("必须通过 --team 指定队伍文件，例如 --team data/teams/冻陨2.0.json")
     # random.seed(42)
     global AUTO_MODE
     AUTO_MODE = args.auto
-    team_data = load_team(args.team) if args.team else None
-    team = team_data.get("team") if team_data else None
-    resonance = team_data.get("resonance") if team_data else None
+    team_data = load_team(args.team)
+    team = team_data.get("team")
+    resonance = team_data.get("resonance")
 
     conn = socket.create_connection((args.host, args.port))
     f = conn.makefile("r", encoding="utf-8")

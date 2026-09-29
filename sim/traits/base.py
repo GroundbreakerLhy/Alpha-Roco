@@ -107,6 +107,12 @@ class TraitHandler:
 
     # ================= 事件钩子 =================
 
+    def on_battle_start(self, ctx: TraitContext) -> None:
+        """战斗创建完成后的初始化事件，双方所有精灵都会收到。"""
+
+    def on_evolution(self, ctx: TraitContext) -> None:
+        """首领化完成（subject=完成进化的精灵）。"""
+
     def on_turn_start(self, ctx: TraitContext) -> None:
         """回合开始（双方行动已选定，ctx.action_a/action_b 可用）。"""
 
@@ -118,6 +124,9 @@ class TraitHandler:
 
     def on_charge(self, ctx: TraitContext) -> None:
         """聚能（ctx.energy_gain=回复量）。"""
+
+    def on_windup(self, ctx: TraitContext) -> None:
+        """进入蓄力状态（首次选择蓄力技能、支付能耗后；ctx.skill=蓄力技能）。"""
 
     def on_skill_start(self, ctx: TraitContext) -> None:
         """技能开始：扣除能耗后、效果结算前。"""
@@ -236,6 +245,10 @@ class TraitHandler:
         """技能可用性（ctx.skill_index=槽位，正位宝剑类按槽位限制）：返回 True/False 强制，None 不干预。"""
         return None
 
+    def allow_any_skill_in_windup(self, ctx: TraitContext) -> bool:
+        """蓄力状态下是否允许使用任意携带技能（嫉妒 200174）；默认 False（引擎默认只允许已蓄力技能）。"""
+        return False
+
     def modify_skill_element(self, ctx: TraitContext, skill: BattleSkill) -> Optional[int]:
         """技能属性改写（"普通系技能变为翼系"类）：返回新属性 id 或 None。"""
         return None
@@ -247,3 +260,18 @@ class TraitHandler:
     def modify_poison_repeats(self, ctx: TraitContext) -> int:
         """中毒效果额外触发次数（在 buffs.py 结算中毒时查询）。"""
         return 0
+
+    def modify_burn_growth(self, ctx: TraitContext) -> bool:
+        """是否将灼烧回合结束时的衰减改为增长。"""
+        return False
+
+    # ================= 显示 =================
+
+    def display(self, state, pet) -> list | None:
+        """当前特性效果的显示行（服务端序列化给客户端 buff 区）。
+
+        返回 [{"name": 中文名, "layers": 层数, "per": 单层增益文本, "gain": True/False}]；
+        None/[] = 无显示。层数与单层增益由特性自己定义
+        （如助燃：层数=火系技能使用次数，每层+20% 双攻）。
+        """
+        return None

@@ -3,6 +3,7 @@
 - 200075 目空       携带的非光系技能，威力+25%。
 - 200077 勇敢       携带的能耗大于3的技能，威力+40%。
 - 200088 挺起胸脯    携带的能耗为1的技能，威力+50%。
+- 200098 共鸣       携带的「虫鸣」技能威力+20。
 - 200106 观星       敌方每有1层星陨印记，自己的地系技能威力+20%。
 - 200117 冰钻       敌方携带技能总能耗每有1点，自己攻击时威力+10%。
 - 200120 冻土       每携带1个冰系技能进入战斗，地系技能威力+10%。
@@ -12,6 +13,7 @@
 - 200243 变形活画    行动时，敌方每有1层增益，本次行动技能威力+10%，速度+5（modify_speed 也在本文件）。
 - 200251 血型吸引    敌方每携带1种系别的技能，自己攻击时威力+10（固定值）。
 - 200267 涂鸦       使用非本系技能时威力+50%。
+- 280009 夺目       额外获得三个未携带系别的随机技能，且非光系技能威力+25%。
 - 280011 坠星       敌方每有1层星陨印记，自己的技能威力+20%。
 - 280023 破空       若先于敌方攻击，本次技能威力+75%。
 
@@ -22,8 +24,12 @@
 
 from __future__ import annotations
 
+import random
+
 from ... import buffs as B
+from ...data_loader import load_skills, load_spirits
 from ...enums import LORD_BLOODLINE, Element as E
+from ...models import BattleSkill
 from ..registry import register
 from ..base import TraitHandler
 
@@ -31,6 +37,7 @@ LIGHT = E.LIGHT    # 4 光
 EARTH = E.EARTH    # 5 地
 ICE = E.ICE        # 6 冰
 STAR_MARK = 7      # 星陨印记
+CHIRP_SKILL_ID = 7130160  # 虫鸣
 
 
 def _self(ctx):
@@ -82,6 +89,59 @@ class MuKong(TraitHandler):
         return (25.0, 0.0)
 
 
+# ---------------- 280009 夺目 ----------------
+class Dazzle(MuKong):
+    trait_id = 280009
+    name = "夺目"
+    desc = "额外获得三个未携带的随机技能，且非光系技能威力+25%。"
+    implemented = True
+
+    def _add_extra_skills(self, ctx):
+        if ctx.state_of("extra_skills_added", False):
+            return
+
+        carried_elements = {skill.element for skill in ctx.actor.skills}
+        carried_ids = {skill.skill_id for skill in ctx.actor.skills}
+        spirit = next(
+            (raw for raw in load_spirits() if raw.get("id") == ctx.actor.spirit_id),
+            None,
+        )
+        if spirit is None:
+            ctx.set_state("extra_skills_added", True)
+            return
+
+        # 夺目只从自身技能池的普通技能和技能石技能中抽取。
+        pools = spirit.get("skills", {})
+        learnable_ids = dict.fromkeys(
+            pools.get("normal", []) + pools.get("skillstone", [])
+        )
+        skill_map = {raw["id"]: raw for raw in load_skills()}
+        candidates = [
+            skill_map[skill_id]
+            for skill_id in learnable_ids
+            if skill_id in skill_map
+            and skill_id not in carried_ids
+            and skill_map[skill_id].get("element") not in carried_elements
+            and 0 <= skill_map[skill_id].get("element", -1) <= int(E.FANTASY)
+        ]
+        for raw in random.sample(candidates, min(3, len(candidates))):
+            ctx.actor.skills.append(BattleSkill(
+                skill_id=raw["id"],
+                name=raw["name"],
+                element=raw["element"],
+                category=raw["category"],
+                power=raw.get("power"),
+                energy_cost=raw.get("energyCost", 0),
+                desc=raw.get("desc", ""),
+            ))
+        ctx.set_state("extra_skills_added", True)
+
+    def on_evolution(self, ctx):
+        if ctx.subject is not ctx.actor:
+            return
+        self._add_extra_skills(ctx)
+
+
 # ---------------- 200077 勇敢 ----------------
 class Brave(TraitHandler):
     trait_id = 200077
@@ -109,6 +169,21 @@ class PuffChest(TraitHandler):
             return (0.0, 0.0)
         if ctx.skill.energy_cost == 1:
             return (50.0, 0.0)
+        return (0.0, 0.0)
+
+
+# ---------------- 200098 共鸣 ----------------
+class Resonance(TraitHandler):
+    trait_id = 200098
+    name = "共鸣"
+    desc = "携带的「虫鸣」技能威力+20。"
+    implemented = True
+
+    def modify_power(self, ctx):
+        if not _self(ctx) or ctx.skill is None:
+            return (0.0, 0.0)
+        if ctx.skill.skill_id == CHIRP_SKILL_ID:
+            return (0.0, 20.0)
         return (0.0, 0.0)
 
 
@@ -272,7 +347,7 @@ class BreakSky(TraitHandler):
 
 
 def register_batch1_power() -> None:
-    for cls in (ShunFeng, MuKong, Brave, PuffChest, StarGaze, IceDrill, FrozenSoil,
+    for cls in (ShunFeng, MuKong, Dazzle, Brave, PuffChest, Resonance, StarGaze, IceDrill, FrozenSoil,
                 FluffyStarlight, MoonlightJudgment, LivingCanvas, BloodTypeAttraction,
                 Graffiti, FallingStar, BreakSky):
         register(cls())

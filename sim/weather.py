@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import buffs
+from . import buffs, traits
 
 RAIN = 0
 BLIZZARD = 1
@@ -58,6 +58,7 @@ def on_round_end(state) -> None:
             pet = state.teams[side][state.active[side]]
             if pet.hp > 0:
                 buffs.add_buff(pet, buffs.BuffType.FREEZE, 1, buffs.DurationKind.PERMANENT)
+                traits.on_buff_gain(state, pet, buffs.BuffType.FREEZE, 1)
                 state.log.append(f"暴风雪：{pet.name} 获得1层冻结")
 
     if weather_id == THUNDERSTORM:

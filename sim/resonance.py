@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from . import buffs, counter, evolution
+from . import buffs, counter, evolution, traits
 from .enums import LORD_BLOODLINE
 from .data_loader import load_typechart, round_half_up
 from .models import BattleSkill
@@ -46,8 +46,9 @@ def can_use(state, side: str, magic_id: int) -> bool:
 
 def _heal(state, side: str) -> None:
     pet = state.teams[side][state.active[side]]
-    heal = int(pet.max_hp * 0.5)
+    heal = int(pet.max_hp * 0.15)
     pet.hp = min(pet.max_hp, pet.hp + heal)
+    pet.light_heal_rounds = 3
     state.log.append(f"{side} {pet.name} 使用光合治愈")
 
 
@@ -55,6 +56,8 @@ def _evolve(state, side: str, branch: int = 0) -> bool:
     pet = state.teams[side][state.active[side]]
     if evolution.lordize(pet, branch):
         state.log.append(f"{side} {pet.name} 使用进化之力")
+        traits.emit(state, "evolution", scope="self", side=side,
+                    subject=pet, pet=pet)
         return True
     state.log.append(f"{side} {pet.name} 无法首领化")
     return False
@@ -96,6 +99,10 @@ def use_magic(state, side: str, magic_id: int, opponent_is_status: bool = False,
 def on_round_end(state) -> None:
     for side in ("A", "B"):
         for pet in state.teams[side]:
+            if pet.light_heal_rounds > 0 and pet.hp > 0:
+                heal = int(pet.max_hp * 0.15)
+                pet.hp = min(pet.max_hp, pet.hp + heal)
+                pet.light_heal_rounds -= 1
             if pet.wish_original_skill is not None:
                 pet.skills[0] = pet.wish_original_skill
                 pet.wish_original_skill = None

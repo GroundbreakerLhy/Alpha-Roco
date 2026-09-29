@@ -27,8 +27,10 @@ __all__ = [
     "emit_lethal",
     "rebind",
     "ensure_entry",
+    "on_battle_start",
     "on_turn_start",
     "on_round_end",
+    "on_buff_gain",
     "query_stat_multiplier",
     "query_power",
     "query_energy_cost",
@@ -41,6 +43,7 @@ __all__ = [
     "query_heal",
     "query_energy_gain",
     "query_energy_shortfall",
+    "query_burn_growth",
     "query_skill_usable",
     "query_skill_element",
     "grant_energy",
@@ -145,8 +148,22 @@ def ensure_entry(state: BattleState) -> None:
             emit(state, "entry", scope="all", side=side, subject=state.teams[side][idx])
 
 
+def on_battle_start(state: BattleState) -> None:
+    """战斗创建完成后的初始化事件。"""
+    emit(state, "battle_start", scope="all")
+
+
 def on_turn_start(state: BattleState, action_a: Action | None = None, action_b: Action | None = None) -> None:
     emit(state, "turn_start", scope="all", action_a=action_a, action_b=action_b)
+
+
+def describe(state: BattleState, pet: BattlePet) -> list:
+    """当前精灵特性的显示行（供序列化，客户端 buff 区展示）。"""
+    handler = get_handler(pet.trait_id)
+    if handler is None:
+        return []
+    result = handler.display(state, pet)
+    return list(result) if result else []
 
 
 def on_round_end(state: BattleState) -> None:
@@ -162,8 +179,21 @@ def on_round_end(state: BattleState) -> None:
             continue
         ctx = _make_ctx(state, owner, "round_end_repeats", active=True)
         repeats += handler.modify_round_end_repeats(ctx)
-    for _ in range(max(1, repeats)):
+    for _ in range(max(0, repeats)):
         emit(state, "round_end", scope="all")
+
+
+def on_buff_gain(state: BattleState, pet: BattlePet, buff_type: str, value: int,
+                 source_side: str = "", source_pet: str = "",
+                 source_kind: str = "", **kw) -> None:
+    """精灵获得 buff（含特性施加）：广播 buff_gain，供增益/冻结响应类特性使用。
+
+    引擎在 buffs.add_buff 调用处（battle.py / weather.py）调用；
+    ctx.extra 携带 buff_type/value/source_side/source_pet/source_kind。
+    """
+    emit(state, "buff_gain", scope="all", side=pet.side, subject=pet,
+         buff_type=buff_type, value=value,
+         source_side=source_side, source_pet=source_pet, source_kind=source_kind, **kw)
 
 
 # ==================== 修正查询 ====================
@@ -270,6 +300,8 @@ def query_damage_taken(state: BattleState, pet: BattlePet, attacker: BattlePet |
 def query_hit_count(state: BattleState, pet: BattlePet, opponent: BattlePet | None) -> tuple:
     """连击修正，返回 (固定值增量, 百分比增量, 强制值|None)。
 
+    多个"连击数固定为N"光环同时存在时取较大值（无差别过滤固定2 优先于
+    强制过滤固定1），保证双方查询结果一致、与遍历顺序无关。
     ctx 约定：ctx.target=被查询精灵，ctx.subject=敌方。"""
     flat = 0
     percent = 0
@@ -284,7 +316,7 @@ def query_hit_count(state: BattleState, pet: BattlePet, opponent: BattlePet | No
         percent += p
         fv = handler.force_hit_count(ctx)
         if fv is not None:
-            forced = fv
+            forced = fv if forced is None else max(forced, fv)
     return flat, percent, forced
 
 
@@ -367,6 +399,37 @@ def query_skill_usable(state: BattleState, pet: BattlePet, skill: BattleSkill,
         if r is not None:
             return r
     return True
+
+
+def query_windup_any(state: BattleState, pet: BattlePet) -> bool:
+    """蓄力状态下是否允许使用任意携带技能（嫉妒 200174）；默认 False。"""
+    for owner in _modifier_pets(state, pet):
+        handler = get_handler(owner.trait_id)
+        if handler is None:
+            continue
+        ctx = _make_ctx(state, owner, "allow_any_skill_in_windup", target=pet)
+        if handler.allow_any_skill_in_windup(ctx):
+            return True
+    return False
+
+
+def query_burn_growth(state: BattleState, pet: BattlePet) -> bool:
+    """查询当前在场特性是否将目标精灵的灼烧衰减改为增长。"""
+    for side in ("A", "B"):
+        idx = state.active[side]
+        if idx < 0:
+            continue
+        owner = state.teams[side][idx]
+        handler = get_handler(owner.trait_id)
+        if handler is None:
+            continue
+        fn = getattr(handler, "modify_burn_growth", None)
+        if fn is None:
+            continue
+        ctx = _make_ctx(state, owner, "modify_burn_growth", target=pet)
+        if fn(ctx):
+            return True
+    return False
 
 
 def query_skill_element(state: BattleState, pet: BattlePet, skill: BattleSkill) -> int:

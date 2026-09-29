@@ -33,6 +33,9 @@ class BuffType:
     DIZZY = "dizzy"                             # 眩晕
     LEECH = "leech"                             # 寄生
     FREEZE = "freeze"                           # 冰冻
+    FREEZE_IMMUNE = "freeze_immune"             # 免疫冻结（特性给予，如吉利丁片 200253）
+    BURN_IMMUNE = "burn_immune"                 # 免疫灼烧（特性给予，如美拉德反应 200254）
+    LEECH_IMMUNE = "leech_immune"               # 免疫寄生（特性给予，如茶多酚 200202）
     CUTE = "cute"                               # 萌化
     LOCK = "lock"                               # 禁足
     LIGHTNING = "lightning"                     # 引电
@@ -40,7 +43,23 @@ class BuffType:
 
 ALWAYS_BUFF_TYPES = {
     BuffType.LIFESTEAL,
+    BuffType.FREEZE_IMMUNE,
+    BuffType.BURN_IMMUNE,
+    BuffType.LEECH_IMMUNE,
 }
+
+# 类减益 -> 免疫该减益的 buff 类型（特性给予的免疫，如吉利丁片/美拉德反应/茶多酚）
+IMMUNE_BUFF_FOR = {
+    BuffType.FREEZE: BuffType.FREEZE_IMMUNE,
+    BuffType.BURN: BuffType.BURN_IMMUNE,
+    BuffType.LEECH: BuffType.LEECH_IMMUNE,
+}
+
+
+def is_immune_to(pet, buff_type: str) -> bool:
+    """该精灵是否免疫指定减益（特性给予的免疫 buff）。"""
+    immune_type = IMMUNE_BUFF_FOR.get(buff_type)
+    return immune_type is not None and get_buff_value(pet, immune_type) > 0
 
 SIGNED_TYPES = {
     BuffType.ATK,
@@ -148,6 +167,10 @@ def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMA
     if buff_type == BuffType.LIFESTEAL and value < 0:
         return
 
+    # 免疫（特性给予，如吉利丁片免疫冻结/美拉德反应免疫灼烧）：不获得该减益
+    if is_immune_to(pet, buff_type):
+        return
+
     if buff_type != BuffType.LOCK and buff_type != BuffType.CUTE:
         current = get_buff_value(pet, buff_type)
         new_total = max(-99, min(99, current + value))
@@ -178,7 +201,10 @@ def add_buff(pet, buff_type: str, value: int, duration: str = DurationKind.NORMA
                 break
             applied += 1
         if applied > 0:
-            pet.buffs.append(Buff(buff_type=BuffType.CUTE, value=applied, duration=DurationKind.PERMANENT))
+            pet.buffs.append(Buff(buff_type=BuffType.CUTE, value=applied,
+                                  duration=DurationKind.PERMANENT,
+                                  source_side=source_side, source_pet=source_pet,
+                                  source_kind=source_kind))
         return
 
     if buff_type == BuffType.FREEZE:
@@ -289,32 +315,46 @@ def on_round_end(state) -> None:
             if pet.hp <= 0:
                 continue
 
-            _apply_poison(pet, typechart)
-            _apply_burn(pet, typechart)
+            _apply_poison(pet, typechart, state)
+            _apply_burn(pet, typechart, state)
             _apply_leech(pet, state, typechart)
-            _apply_freeze(pet, typechart)
+            _apply_freeze(pet)
             _apply_dizzy(pet)
             _apply_lock(pet)
             expire_temporary_buffs(pet, state.turn)
 
 
-def _apply_poison(pet, typechart) -> None:
+def _apply_poison(pet, typechart, state=None) -> None:
     layers = get_buff_value(pet, BuffType.POISON)
     if layers <= 0 or _immune(pet, 9):
         return
     mult = type_multiplier(9, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.03 * layers * mult)
     _apply_damage(pet, damage)
+    if damage > 0 and state is not None:
+        from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
+        traits.emit(state, "dot_damage", scope="all", side=pet.side, subject=pet,
+                    damage=damage, dot_type="poison")
 
 
-def _apply_burn(pet, typechart) -> None:
+def _apply_burn(pet, typechart, state=None) -> None:
     layers = get_buff_value(pet, BuffType.BURN)
     if layers <= 0 or _immune(pet, 2):
+        return
+    # 免疫灼烧（特性给予）：不受灼烧效果
+    if is_immune_to(pet, BuffType.BURN):
         return
     mult = type_multiplier(2, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
     _apply_damage(pet, damage)
-    new_layers = layers // 2
+    if state is not None:
+        from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
+        if traits.query_burn_growth(state, pet):
+            new_layers = layers * 2
+        else:
+            new_layers = layers // 2
+    else:
+        new_layers = layers // 2
     remove_buff(pet, BuffType.BURN)
     if new_layers > 0:
         pet.buffs.append(Buff(buff_type=BuffType.BURN, value=new_layers, duration=DurationKind.NORMAL))
@@ -324,6 +364,9 @@ def _apply_leech(pet, state, typechart) -> None:
     layers = get_buff_value(pet, BuffType.LEECH)
     if layers <= 0 or _immune(pet, 1):
         return
+    # 免疫寄生（特性给予）：不受寄生效果
+    if is_immune_to(pet, BuffType.LEECH):
+        return
     mult = type_multiplier(1, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
     _apply_damage(pet, damage)
@@ -332,13 +375,16 @@ def _apply_leech(pet, state, typechart) -> None:
         source.hp = min(source.max_hp, source.hp + damage)
 
 
-def _apply_freeze(pet, typechart) -> None:
+def _apply_freeze(pet) -> None:
     layers = get_buff_value(pet, BuffType.FREEZE)
     if layers <= 0 or _immune(pet, 6):
         return
-    mult = type_multiplier(6, pet.attributes, typechart)
-    damage = int(pet.max_hp * 0.05 * layers * mult)
-    _apply_damage(pet, damage)
+    # 免疫冻结（特性给予）：不受冻结效果
+    if is_immune_to(pet, BuffType.FREEZE):
+        return
+    threshold = int(pet.max_hp * 0.05 * layers)
+    if threshold >= pet.hp:
+        pet.hp = 0
 
 
 def _apply_dizzy(pet) -> None:

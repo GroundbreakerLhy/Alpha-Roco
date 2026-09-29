@@ -69,11 +69,14 @@ def info(trait_id: int | None) -> dict | None:
 
 
 def report() -> dict:
-    """实现进度统计（开发用）。"""
-    _load_defaults()
-    done = [h for h in _REGISTRY.values() if h.implemented]
+    """进度统计：以 data/traits.json 的 done/tested 标志为准（唯一进度依据）。"""
+    raws = _raw_traits()
+    done = [t for t in raws if t.get("done")]
+    tested = [t for t in raws if t.get("tested")]
     return {
-        "total": len(_REGISTRY),
-        "implemented": len(done),
-        "ids": sorted(h.trait_id for h in done),
+        "total": len(raws),
+        "done": len(done),
+        "tested": len(tested),
+        "done_ids": sorted(t["id"] for t in done),
+        "tested_ids": sorted(t["id"] for t in tested),
     }

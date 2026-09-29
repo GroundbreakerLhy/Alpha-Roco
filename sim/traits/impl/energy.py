@@ -4,6 +4,8 @@
 - 200112 倾轧       携带的技能受能耗变化效果的影响翻倍。
 - 200113 对流       自己的能耗增加变为能耗降低；能耗降低变为能耗增加。
 - 200123 冰封       在场时，敌方全技能能耗+1（敌方光环，query 会查敌方在场精灵）。
+- 200104 石天平     若使用技能能耗高于敌方，回合结束敌方失去能耗之差的能量。
+- 200114 洄游       每次进入蓄力状态，获得全技能能耗永久-2（PERMANENT，下场不消失）。
 - 200224 消波块     每携带1个水系技能进入战斗，地系技能能耗-1。
 - 200252 留学生     自己全技能能耗+2（"可以学习全部攻击技能石"未建模，暂不实现）。
 - 200215 多人宿舍   自己的能量可以超过能量上限（上限+999，视为无实际限制）。
@@ -18,6 +20,7 @@ ctx.target.side != ctx.actor.side 判断是否对敌方生效；自身类用 ctx
 from __future__ import annotations
 
 from ... import buffs as B
+from ... import skill_utils
 from ...enums import Element as E
 from ..registry import register
 from ..base import TraitHandler
@@ -81,9 +84,51 @@ class Convection(TraitHandler):
     implemented = True
 
     def modify_energy_cost(self, ctx):
-        if not _self(ctx):
+        # 翻转"全部能耗变化"（buff + 印记 蓄势/湿润 + 天气沙暴）：
+        # 最终能耗 = 原始 + M + (-2M) = 原始 - M，即 M 的正负号被翻转。
+        if not _self(ctx) or ctx.skill is None:
             return 0
-        return -2 * B.get_buff_value(ctx.target, B.BuffType.ENERGY_COST)
+        total = skill_utils.energy_modifier_before_traits(ctx.state, ctx.target, ctx.skill)
+        return -2 * total
+
+
+# ---------------- 200104 石天平 ----------------
+class StoneBalance(TraitHandler):
+    trait_id = 200104
+    name = "石天平"
+    desc = "若使用技能能耗高于敌方，回合结束敌方失去能耗之差的能量。"
+    implemented = True
+
+    def _skill_cost_of(self, state, side, action):
+        if action is None or action.kind != "skill" or action.skill_index is None:
+            return 0
+        idx = state.active[side]
+        if idx < 0:
+            return 0
+        team = state.teams[side]
+        if not (0 <= action.skill_index < len(team[idx].skills)):
+            return 0
+        return team[idx].skills[action.skill_index].energy_cost
+
+    def on_turn_start(self, ctx):
+        # 记录本回合双方行动技能的能耗（聚能/换人记 0）
+        my_side = ctx.actor.side
+        opp_side = "B" if my_side == "A" else "A"
+        my_action = ctx.action_a if my_side == "A" else ctx.action_b
+        opp_action = ctx.action_a if opp_side == "A" else ctx.action_b
+        ctx.set_state("my_cost", self._skill_cost_of(ctx.state, my_side, my_action))
+        ctx.set_state("opp_cost", self._skill_cost_of(ctx.state, opp_side, opp_action))
+
+    def on_round_end(self, ctx):
+        if not ctx.is_active():
+            return
+        diff = ctx.state_of("my_cost", 0) - ctx.state_of("opp_cost", 0)
+        if diff <= 0:
+            return
+        enemy = ctx.opponent()
+        if enemy is None:
+            return
+        enemy.energy = max(0, enemy.energy - diff)
 
 
 # ---------------- 200123 冰封 ----------------
@@ -99,6 +144,28 @@ class IceSeal(TraitHandler):
         if ctx.target.side != ctx.actor.side:
             return 1
         return 0
+
+
+# ---------------- 200114 洄游 ----------------
+class Migration(TraitHandler):
+    trait_id = 200114
+    name = "洄游"
+    desc = "每次进入蓄力状态，获得全技能能耗永久-2。"
+    implemented = True
+
+    def on_windup(self, ctx):
+        if ctx.subject is not ctx.actor:
+            return
+        # 永久：PERMANENT 时长（下场不消失），每次进入蓄力叠加一层
+        B.add_buff(ctx.actor, B.BuffType.ENERGY_COST, -2, B.DurationKind.PERMANENT,
+                   source_kind="trait")
+        ctx.add_state("windups", 1)
+
+    def display(self, state, pet):
+        n = pet.trait_state.get("windups", 0)
+        if n <= 0:
+            return None
+        return [{"name": "能耗", "layers": n, "per": "2", "gain": True}]
 
 
 # ---------------- 200224 消波块 ----------------
@@ -173,8 +240,8 @@ class GrandFeast(TraitHandler):
 
 
 def register_batch1_energy() -> None:
-    for cls in (ShrinkShell, Overwhelm, Convection, IceSeal, WaveBreaker,
-                ExchangeStudent, SharedDorm, StoneFeast, GrandFeast):
+    for cls in (ShrinkShell, Overwhelm, Convection, StoneBalance, Migration, IceSeal,
+                WaveBreaker, ExchangeStudent, SharedDorm, StoneFeast, GrandFeast):
         register(cls())
 
 

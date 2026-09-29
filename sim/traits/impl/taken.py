@@ -1,6 +1,8 @@
-"""第 1 批-d：受到伤害修正（modify_damage_taken）+ 展翅的属性改写。
+"""第 1 批-d：受到伤害修正（modify_damage_taken）+ 展翅的属性改写 + 刺肤反击。
 
 - 200074 偏振       受到自己携带技能系别的攻击伤害-40%。
+- 200103 刺肤       每受到1次攻击伤害，对攻击自己的精灵造成50威力物理伤害（on_take_damage）。
+- 200239 扎手       每受到1次技能攻击（不含连击），敌方获得1层棘刺印记。
 - 200127 展翅       在场时，自己携带的普通系技能变为翼系技能；若后于对手行动，自己受到的伤害+25%。
 - 200157 惊吓       能量等于0的精灵，无法对自己造成伤害。
 - 200232 逐魂鸟     能耗小于等于1的攻击技能，无法对自己造成伤害。
@@ -9,11 +11,18 @@
 
 语义说明：受击查询只查被查询精灵自身。ctx.skill=攻击技能，ctx.subject=攻击方，ctx.is_first=是否先手。
 惊吓/逐魂鸟返回 -1.0（乘数归零=免疫）。
+刺肤：on_take_damage 事件只在受到实际伤害（damage>0）时广播；反击伤害按普通系物理 50 威力
+计算（吃攻防/克制/减伤修正），直接扣血，不广播 attack/take_damage（特性效果不写日志、不连锁）。
 """
 
 from __future__ import annotations
 
+from ... import buffs as B
+from ... import marks as M
+from ...damage import calc_damage
+from ...data_loader import load_typechart
 from ...enums import Element as E
+from ...models import BattleSkill
 from ..registry import register
 from ..base import TraitHandler
 
@@ -42,6 +51,52 @@ class Polarization(TraitHandler):
         if ctx.skill.element in _own_skill_elements(ctx.actor):
             return -0.4
         return 0.0
+
+
+# ---------------- 200103 刺肤 ----------------
+class ThornSkin(TraitHandler):
+    trait_id = 200103
+    name = "刺肤"
+    desc = "每受到1次攻击伤害，对攻击自己的精灵造成50威力物理伤害。"
+    implemented = True
+
+    def on_take_damage(self, ctx):
+        # 自己受到实际伤害（damage>0 才广播本事件）；攻击者=ctx.target
+        if ctx.subject is not ctx.actor or ctx.damage <= 0:
+            return
+        attacker = ctx.target
+        if attacker is None or attacker.hp <= 0 or attacker.side == ctx.actor.side:
+            return
+        skill = BattleSkill(skill_id=-1, name="刺肤", element=NORMAL, category=0,
+                            power=50, energy_cost=0, desc="")
+        # 连击每段各反伤一次；反伤把攻击者打死则后续段停止
+        for _ in range(max(1, ctx.hit_count)):
+            if attacker.hp <= 0:
+                break
+            result = calc_damage(ctx.actor, attacker, skill, load_typechart(),
+                                 extra_power_percent=0.0, extra_power_flat=0.0,
+                                 state=ctx.state)
+            dmg = result["damage"]
+            if dmg > 0:
+                attacker.hp = max(0, attacker.hp - dmg)
+
+
+# ---------------- 200239 扎手 ----------------
+class ThornTouch(TraitHandler):
+    trait_id = 200239
+    name = "扎手"
+    desc = "每受到1次技能攻击（不含连击），敌方获得1层棘刺印记。"
+    implemented = True
+
+    def on_take_damage(self, ctx):
+        if ctx.subject is not ctx.actor:
+            return
+        if ctx.skill is None or ctx.skill.category not in (0, 1):
+            return
+        attacker = ctx.target
+        if attacker is None or attacker.side == ctx.actor.side:
+            return
+        M.add_mark(ctx.state, attacker.side, 1, 1)
 
 
 # ---------------- 200127 展翅 ----------------
@@ -127,8 +182,8 @@ class FullPolarization(TraitHandler):
 
 
 def register_batch1_taken() -> None:
-    for cls in (Polarization, SpreadWings, Frighten, SoulChaser,
-                AbsoluteOrder, FullPolarization):
+    for cls in (Polarization, ThornSkin, ThornTouch, SpreadWings, Frighten,
+                SoulChaser, AbsoluteOrder, FullPolarization):
         register(cls())
 
 
