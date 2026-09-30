@@ -11,7 +11,14 @@ action category, and the countering side is forced first.
 from __future__ import annotations
 
 from .models import Action, BattlePet, BattleState
-from .skill_utils import ATTACK, DEFENSE, NON_SKILL, STATUS, category_of, counter_target_of
+from .skill_utils import (
+    ATTACK,
+    DEFENSE,
+    NON_SKILL,
+    STATUS,
+    category_of,
+    counter_target_of,
+)
 
 
 def action_category(state: BattleState, side: str, action: Action) -> str:
@@ -56,11 +63,14 @@ def forced_first(state: BattleState, action_a: Action, action_b: Action):
 
 # ==================== 应对统计（按精灵） ====================
 
+
 def record_counter(pet: BattlePet, target_category: str) -> None:
     """记录一次应对成功：累计次数+1，并统计应对的种类（应对了攻击/防御/状态）。"""
     pet.counter_stats["count"] += 1
     if target_category:
-        pet.counter_stats["types"][target_category] = pet.counter_stats["types"].get(target_category, 0) + 1
+        pet.counter_stats["types"][target_category] = (
+            pet.counter_stats["types"].get(target_category, 0) + 1
+        )
 
 
 def get_counter_count(pet: BattlePet, target_category: str = "") -> int:

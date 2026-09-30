@@ -42,15 +42,15 @@ from ...enums import Element as E
 from ..base import TraitHandler
 from ..registry import register
 
-WATER = E.WATER    # 3 水
-FIRE = E.FIRE      # 2 火
-GRASS = E.GRASS    # 1 草
+WATER = E.WATER  # 3 水
+FIRE = E.FIRE  # 2 火
+GRASS = E.GRASS  # 1 草
 POISON = E.POISON  # 9 毒
-WING = E.WING      # 12 翼
-DARK = E.DARK      # 15 恶
-ICE = E.ICE        # 6 冰
-POISON_MARK = 4    # 中毒印记
-STAR_MARK = 7      # 星陨印记
+WING = E.WING  # 12 翼
+DARK = E.DARK  # 15 恶
+ICE = E.ICE  # 6 冰
+POISON_MARK = 4  # 中毒印记
+STAR_MARK = 7  # 星陨印记
 
 
 # ---------------- 200191 最好的伙伴 ----------------
@@ -141,8 +141,16 @@ class Detonation(TraitHandler):
         if ctx.skill.element != FIRE:
             return
         # 永久：PERMANENT 时长（下场不消失）
-        B.add_buff(ctx.actor, B.BuffType.ATK, 3, B.DurationKind.PERMANENT, source_kind="trait")
-        B.add_buff(ctx.actor, B.BuffType.SPATK, 3, B.DurationKind.PERMANENT, source_kind="trait")
+        B.add_buff(
+            ctx.actor, B.BuffType.ATK, 3, B.DurationKind.PERMANENT, source_kind="trait"
+        )
+        B.add_buff(
+            ctx.actor,
+            B.BuffType.SPATK,
+            3,
+            B.DurationKind.PERMANENT,
+            source_kind="trait",
+        )
         ctx.add_state("uses", 1)
 
     def display(self, state, pet):
@@ -199,9 +207,14 @@ class Alkaloid(TraitHandler):
         target = ctx.target
         if target is None or target.side == ctx.actor.side:
             return
-        B.add_buff(target, B.BuffType.POISON, 2,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            B.BuffType.POISON,
+            2,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200096 鼓气 ----------------
@@ -254,9 +267,14 @@ class GreedyAlgorithm(TraitHandler):
         target = ctx.opponent()
         if target is None:
             return
-        B.add_buff(target, B.BuffType.BURN, 6,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            B.BuffType.BURN,
+            6,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200205 月牙雪糕 ----------------
@@ -278,6 +296,7 @@ class CrescentIceCream(TraitHandler):
         if frozen <= 0:
             return
         from ... import marks
+
         marks.add_mark(ctx.state, target.side, STAR_MARK, frozen)
 
 
@@ -331,9 +350,14 @@ class VenomGland(TraitHandler):
         target = ctx.target
         if target is None or target.side == ctx.actor.side:
             return
-        B.add_buff(target, B.BuffType.POISON, 4,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            B.BuffType.POISON,
+            4,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200150 灵魂灼伤 ----------------
@@ -350,14 +374,25 @@ class SoulBurn(TraitHandler):
         if target is None or target.side == ctx.actor.side:
             return
         if ctx.skill.element == ICE:
-            B.add_buff(target, B.BuffType.BURN, 4,
-                       source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                       source_kind="debuff")
+            B.add_buff(
+                target,
+                B.BuffType.BURN,
+                4,
+                source_side=ctx.actor.side,
+                source_pet=ctx.actor.name,
+                source_kind="debuff",
+            )
             ctx.add_state("burns", 1)
         elif ctx.skill.element == FIRE:
-            B.add_buff(target, B.BuffType.FREEZE, 2, B.DurationKind.PERMANENT,
-                       source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                       source_kind="debuff")
+            B.add_buff(
+                target,
+                B.BuffType.FREEZE,
+                2,
+                B.DurationKind.PERMANENT,
+                source_side=ctx.actor.side,
+                source_pet=ctx.actor.name,
+                source_kind="debuff",
+            )
 
 
 # ---------------- 200111 溶解扩散 ----------------
@@ -378,9 +413,14 @@ class DissolveSpread(TraitHandler):
         n_poison = sum(1 for s in ctx.actor.skills if s.element == POISON)
         if n_poison <= 0:
             return
-        B.add_buff(target, B.BuffType.POISON, n_poison,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            B.BuffType.POISON,
+            n_poison,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200115 扩散侵蚀 ----------------
@@ -399,13 +439,19 @@ class SpreadErosion(TraitHandler):
         if target is None or target.side == ctx.actor.side:
             return
         from ... import marks
+
         stacks = marks.get_stacks(ctx.state, target.side, POISON_MARK)
         layers = stacks * 2
         if layers <= 0:
             return
-        B.add_buff(target, B.BuffType.POISON, layers,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            B.BuffType.POISON,
+            layers,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200300 上锁 ----------------
@@ -456,7 +502,10 @@ class Sentinel(TraitHandler):
             if not T.query_skill_usable(ctx.state, opponent, skill, skill_index=i):
                 continue
             # 真实能耗（含天气/印记/buff/特性修正）；不探测"能量不足兜底"以免产生副作用
-            if skill_utils.true_energy_cost(ctx.state, opponent, skill) > opponent.energy:
+            if (
+                skill_utils.true_energy_cost(ctx.state, opponent, skill)
+                > opponent.energy
+            ):
                 continue
             usable.append((i, skill))
         return usable
@@ -473,11 +522,14 @@ class Sentinel(TraitHandler):
         )
         hit_flat, hit_percent = B.get_hit_count_bonus(opponent)
         trait_flat, trait_percent, forced = T.query_hit_count(
-            ctx.state, opponent, ctx.actor)
+            ctx.state, opponent, ctx.actor
+        )
         if forced is not None:
             hit_count = max(1, forced)
         else:
-            hit_count = max(1, 1 + hit_flat + trait_flat + int((hit_percent + trait_percent) / 100))
+            hit_count = max(
+                1, 1 + hit_flat + trait_flat + int((hit_percent + trait_percent) / 100)
+            )
         return result["damage"] * hit_count
 
     def on_turn_start(self, ctx):
@@ -578,9 +630,14 @@ class ConcentratedAlkaloid(TraitHandler):
         target = ctx.target
         if target is None or target.side == ctx.actor.side:
             return
-        B.add_buff(target, B.BuffType.POISON, 2,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            B.BuffType.POISON,
+            2,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200089 碰瓷 ----------------
@@ -602,11 +659,30 @@ class BumpScam(TraitHandler):
 
 
 def register_skill() -> None:
-    for cls in (BestCompanion, Soak, FireFuel, Detonation, OxygenCycle, DeepOxygenCycle,
-                Alkaloid, BumpScam, DrumUp,
-                KaKaDash, VenomGland, SoulBurn, DissolveSpread, SpreadErosion,
-                GreedyAlgorithm, CrescentIceCream, SkillLock, Sentinel, QuickHammer, WindRideCombo,
-                WingAxis, ConcentratedAlkaloid):
+    for cls in (
+        BestCompanion,
+        Soak,
+        FireFuel,
+        Detonation,
+        OxygenCycle,
+        DeepOxygenCycle,
+        Alkaloid,
+        BumpScam,
+        DrumUp,
+        KaKaDash,
+        VenomGland,
+        SoulBurn,
+        DissolveSpread,
+        SpreadErosion,
+        GreedyAlgorithm,
+        CrescentIceCream,
+        SkillLock,
+        Sentinel,
+        QuickHammer,
+        WindRideCombo,
+        WingAxis,
+        ConcentratedAlkaloid,
+    ):
         register(cls())
 
 

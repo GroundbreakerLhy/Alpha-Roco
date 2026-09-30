@@ -34,7 +34,9 @@ class BattleSkill:
     morph_pool: list = field(default_factory=list)  # 巧变随机池：BattleSkill 模板列表
     morph_origin: Optional["BattleSkill"] = None  # 巧变临时技能记录的原技能
     windup: bool = False  # 蓄力技能标记：需要先蓄力1回合才能释放
-    usable: bool = True  # False = 无法主动使用（技能代码定义，如"使用3次翼系技能后自动使用"）
+    usable: bool = (
+        True  # False = 无法主动使用（技能代码定义，如"使用3次翼系技能后自动使用"）
+    )
     # 技能自身的持久运行时状态（永久成长值/使用计数等），由 sim.skills 的效果原语读写
     skill_state: dict = field(default_factory=dict)
 
@@ -58,11 +60,15 @@ class BattlePet:
     overload_current: dict = field(default_factory=dict)
     ivs: dict = field(default_factory=dict)
     nature: int | None = None
-    bloodline: int | None = None  # 血脉编号：0-17 元素血脉；18=首领血脉（enums.LORD_BLOODLINE）。一只精灵只有一种血脉
+    bloodline: int | None = (
+        None  # 血脉编号：0-17 元素血脉；18=首领血脉（enums.LORD_BLOODLINE）。一只精灵只有一种血脉
+    )
     skill_cooldowns: set = field(default_factory=set)
     skill_cooldowns_pending: set = field(default_factory=set)
     has_acted_since_entry: bool = False
-    entry_turn: int = 0  # 最近一次入场的回合（返场免疫判定：本回合入场的精灵免疫返场效果）
+    entry_turn: int = (
+        0  # 最近一次入场的回合（返场免疫判定：本回合入场的精灵免疫返场效果）
+    )
     light_heal_rounds: int = 0  # 光合治愈持续回合数（回合结束回复）
     windup_skill: Optional[BattleSkill] = None  # 当前正在蓄力的技能
     bursts: list = field(default_factory=list)
@@ -72,6 +78,10 @@ class BattlePet:
     # 应对统计（按精灵）：{"count": 累计次数, "types": {"attack": n, "defense": n, "status": n}}
     # 由 counter 模块记录，供"每应对成功N次"类特性读取
     counter_stats: dict = field(default_factory=lambda: {"count": 0, "types": {}})
+    # 本场战斗释放过的技能：{技能 id: 使用次数}（插入序即首次使用顺序，键按技能
+    # 去重——疾风连袭的重放集合按键过滤；"每使用1次X技能"类按次数读取；记录实时
+    # 更新，含迅捷入场自动释放与巧变临时技能）
+    used_skill_counts: dict = field(default_factory=dict)
 
     @property
     def alive(self) -> bool:
@@ -88,24 +98,32 @@ class BattleState:
     active: dict = field(default_factory=lambda: {"A": 0, "B": 0})
     magic: dict = field(default_factory=lambda: {"A": 4, "B": 4})
     revealed: dict = field(default_factory=lambda: {"A": set(), "B": set()})
-    marks: dict = field(default_factory=lambda: {
-        "A": {"positive": None, "negative": None},
-        "B": {"positive": None, "negative": None},
-    })
+    marks: dict = field(
+        default_factory=lambda: {
+            "A": {"positive": None, "negative": None},
+            "B": {"positive": None, "negative": None},
+        }
+    )
     home_side: str = "A"
     weather: int | None = None
-    resonance_magic: dict = field(default_factory=lambda: {
-        "A": None,
-        "B": None,
-    })
-    resonance_usage: dict = field(default_factory=lambda: {
-        "A": {},
-        "B": {},
-    })
-    resonance_cooldown: dict = field(default_factory=lambda: {
-        "A": {},
-        "B": {},
-    })
+    resonance_magic: dict = field(
+        default_factory=lambda: {
+            "A": None,
+            "B": None,
+        }
+    )
+    resonance_usage: dict = field(
+        default_factory=lambda: {
+            "A": {},
+            "B": {},
+        }
+    )
+    resonance_cooldown: dict = field(
+        default_factory=lambda: {
+            "A": {},
+            "B": {},
+        }
+    )
     turn: int = 0
     log: list = field(default_factory=list)
     winner: Optional[str] = None
@@ -119,6 +137,13 @@ class BattleState:
     pending_action_leave: dict = field(default_factory=lambda: {"A": False, "B": False})
     # 回合因脱离暂停：非 None 时 step 已中断等待选人，含续接上下文与应选人的一侧（leave_side）
     paused_turn: Optional[dict] = None
+    # 应对奖励从句的登记（应对判定成功时记入）：延迟到回合末结算的第一步统一生效（B38）。
+    # 元素：{"pet", "skill", "skill_index", "is_first", "counter_category",
+    #        "energy_cost", "damage_dealt", "hit_count"}
+    pending_counters: list = field(default_factory=list)
+    # 命中附加效果的登记（STAGE_HIT）：延迟到回合末结算、紧随应对奖励之后（B39）。
+    # 元素同 pending_counters（counter_category 恒为空，is_counter 恒 False）。
+    pending_hit_effects: list = field(default_factory=list)
 
     @property
     def pets(self) -> dict:

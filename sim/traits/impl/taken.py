@@ -26,8 +26,8 @@ from ...models import BattleSkill
 from ..registry import register
 from ..base import TraitHandler
 
-NORMAL = E.NORMAL    # 0 普通
-WING = E.WING        # 12 翼
+NORMAL = E.NORMAL  # 0 普通
+WING = E.WING  # 12 翼
 
 
 def _self(ctx):
@@ -67,15 +67,28 @@ class ThornSkin(TraitHandler):
         attacker = ctx.target
         if attacker is None or attacker.hp <= 0 or attacker.side == ctx.actor.side:
             return
-        skill = BattleSkill(skill_id=-1, name="刺肤", element=NORMAL, category=0,
-                            power=50, energy_cost=0, desc="")
+        skill = BattleSkill(
+            skill_id=-1,
+            name="刺肤",
+            element=NORMAL,
+            category=0,
+            power=50,
+            energy_cost=0,
+            desc="",
+        )
         # 连击每段各反伤一次；反伤把攻击者打死则后续段停止
         for _ in range(max(1, ctx.hit_count)):
             if attacker.hp <= 0:
                 break
-            result = calc_damage(ctx.actor, attacker, skill, load_typechart(),
-                                 extra_power_percent=0.0, extra_power_flat=0.0,
-                                 state=ctx.state)
+            result = calc_damage(
+                ctx.actor,
+                attacker,
+                skill,
+                load_typechart(),
+                extra_power_percent=0.0,
+                extra_power_flat=0.0,
+                state=ctx.state,
+            )
             dmg = result["damage"]
             if dmg > 0:
                 attacker.hp = max(0, attacker.hp - dmg)
@@ -103,7 +116,9 @@ class ThornTouch(TraitHandler):
 class SpreadWings(TraitHandler):
     trait_id = 200127
     name = "展翅"
-    desc = "在场时，自己携带的普通系技能变为翼系技能；若后于对手行动，自己受到的伤害+25%。"
+    desc = (
+        "在场时，自己携带的普通系技能变为翼系技能；若后于对手行动，自己受到的伤害+25%。"
+    )
     implemented = True
 
     def modify_skill_element(self, ctx, skill):
@@ -182,8 +197,16 @@ class FullPolarization(TraitHandler):
 
 
 def register_batch1_taken() -> None:
-    for cls in (Polarization, ThornSkin, ThornTouch, SpreadWings, Frighten,
-                SoulChaser, AbsoluteOrder, FullPolarization):
+    for cls in (
+        Polarization,
+        ThornSkin,
+        ThornTouch,
+        SpreadWings,
+        Frighten,
+        SoulChaser,
+        AbsoluteOrder,
+        FullPolarization,
+    ):
         register(cls())
 
 

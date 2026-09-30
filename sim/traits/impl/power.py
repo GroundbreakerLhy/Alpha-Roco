@@ -33,10 +33,10 @@ from ...models import BattleSkill
 from ..registry import register
 from ..base import TraitHandler
 
-LIGHT = E.LIGHT    # 4 光
-EARTH = E.EARTH    # 5 地
-ICE = E.ICE        # 6 冰
-STAR_MARK = 7      # 星陨印记
+LIGHT = E.LIGHT  # 4 光
+EARTH = E.EARTH  # 5 地
+ICE = E.ICE  # 6 冰
+STAR_MARK = 7  # 星陨印记
 CHIRP_SKILL_ID = 7130160  # 虫鸣
 
 
@@ -52,6 +52,7 @@ def _enemy_star_stacks(ctx) -> int:
     if enemy is None:
         return 0
     from ... import marks
+
     return marks.get_stacks(ctx.state, enemy.side, STAR_MARK)
 
 
@@ -125,15 +126,17 @@ class Dazzle(MuKong):
             and 0 <= skill_map[skill_id].get("element", -1) <= int(E.FANTASY)
         ]
         for raw in random.sample(candidates, min(3, len(candidates))):
-            ctx.actor.skills.append(BattleSkill(
-                skill_id=raw["id"],
-                name=raw["name"],
-                element=raw["element"],
-                category=raw["category"],
-                power=raw.get("power"),
-                energy_cost=raw.get("energyCost", 0),
-                desc=raw.get("desc", ""),
-            ))
+            ctx.actor.skills.append(
+                BattleSkill(
+                    skill_id=raw["id"],
+                    name=raw["name"],
+                    element=raw["element"],
+                    category=raw["category"],
+                    power=raw.get("power"),
+                    energy_cost=raw.get("energyCost", 0),
+                    desc=raw.get("desc", ""),
+                )
+            )
         ctx.set_state("extra_skills_added", True)
 
     def on_evolution(self, ctx):
@@ -243,9 +246,11 @@ class FluffyStarlight(TraitHandler):
         if not _self(ctx) or ctx.subject is None:
             return (0.0, 0.0)
         # "非本系的系别血脉"：血脉是元素且不在自己属性中（首领血脉 18 不是系别血脉，不触发）
-        if ctx.subject.bloodline is not None \
-                and ctx.subject.bloodline != LORD_BLOODLINE \
-                and ctx.subject.bloodline not in ctx.actor.attributes:
+        if (
+            ctx.subject.bloodline is not None
+            and ctx.subject.bloodline != LORD_BLOODLINE
+            and ctx.subject.bloodline not in ctx.actor.attributes
+        ):
             return (100.0, 0.0)
         return (0.0, 0.0)
 
@@ -347,9 +352,24 @@ class BreakSky(TraitHandler):
 
 
 def register_batch1_power() -> None:
-    for cls in (ShunFeng, MuKong, Dazzle, Brave, PuffChest, Resonance, StarGaze, IceDrill, FrozenSoil,
-                FluffyStarlight, MoonlightJudgment, LivingCanvas, BloodTypeAttraction,
-                Graffiti, FallingStar, BreakSky):
+    for cls in (
+        ShunFeng,
+        MuKong,
+        Dazzle,
+        Brave,
+        PuffChest,
+        Resonance,
+        StarGaze,
+        IceDrill,
+        FrozenSoil,
+        FluffyStarlight,
+        MoonlightJudgment,
+        LivingCanvas,
+        BloodTypeAttraction,
+        Graffiti,
+        FallingStar,
+        BreakSky,
+    ):
         register(cls())
 
 

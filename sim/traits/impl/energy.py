@@ -25,9 +25,9 @@ from ...enums import Element as E
 from ..registry import register
 from ..base import TraitHandler
 
-WATER = E.WATER    # 3 水
-EARTH = E.EARTH    # 5 地
-NO_LIMIT = 999     # 多人宿舍：能量上限视为无实际限制
+WATER = E.WATER  # 3 水
+EARTH = E.EARTH  # 5 地
+NO_LIMIT = 999  # 多人宿舍：能量上限视为无实际限制
 
 
 def _self(ctx):
@@ -88,7 +88,9 @@ class Convection(TraitHandler):
         # 最终能耗 = 原始 + M + (-2M) = 原始 - M，即 M 的正负号被翻转。
         if not _self(ctx) or ctx.skill is None:
             return 0
-        total = skill_utils.energy_modifier_before_traits(ctx.state, ctx.target, ctx.skill)
+        total = skill_utils.energy_modifier_before_traits(
+            ctx.state, ctx.target, ctx.skill
+        )
         return -2 * total
 
 
@@ -157,8 +159,13 @@ class Migration(TraitHandler):
         if ctx.subject is not ctx.actor:
             return
         # 永久：PERMANENT 时长（下场不消失），每次进入蓄力叠加一层
-        B.add_buff(ctx.actor, B.BuffType.ENERGY_COST, -2, B.DurationKind.PERMANENT,
-                   source_kind="trait")
+        B.add_buff(
+            ctx.actor,
+            B.BuffType.ENERGY_COST,
+            -2,
+            B.DurationKind.PERMANENT,
+            source_kind="trait",
+        )
         ctx.add_state("windups", 1)
 
     def display(self, state, pet):
@@ -240,8 +247,19 @@ class GrandFeast(TraitHandler):
 
 
 def register_batch1_energy() -> None:
-    for cls in (ShrinkShell, Overwhelm, Convection, StoneBalance, Migration, IceSeal,
-                WaveBreaker, ExchangeStudent, SharedDorm, StoneFeast, GrandFeast):
+    for cls in (
+        ShrinkShell,
+        Overwhelm,
+        Convection,
+        StoneBalance,
+        Migration,
+        IceSeal,
+        WaveBreaker,
+        ExchangeStudent,
+        SharedDorm,
+        StoneFeast,
+        GrandFeast,
+    ):
         register(cls())
 
 

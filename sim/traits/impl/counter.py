@@ -26,8 +26,13 @@ class DuelSkill(TraitHandler):
     def on_counter(self, ctx):
         if ctx.subject is not ctx.actor:
             return
-        B.add_buff(ctx.actor, B.BuffType.SKILL_POWER_FLAT, 30,
-                   B.DurationKind.PERMANENT, source_kind="trait")
+        B.add_buff(
+            ctx.actor,
+            B.BuffType.SKILL_POWER_FLAT,
+            30,
+            B.DurationKind.PERMANENT,
+            source_kind="trait",
+        )
 
     def display(self, state, pet):
         n = counter.get_counter_count(pet)

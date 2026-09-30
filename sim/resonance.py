@@ -56,14 +56,15 @@ def _evolve(state, side: str, branch: int = 0) -> bool:
     pet = state.teams[side][state.active[side]]
     if evolution.lordize(pet, branch):
         state.log.append(f"{side} {pet.name} 使用进化之力")
-        traits.emit(state, "evolution", scope="self", side=side,
-                    subject=pet, pet=pet)
+        traits.emit(state, "evolution", scope="self", side=side, subject=pet, pet=pet)
         return True
     state.log.append(f"{side} {pet.name} 无法首领化")
     return False
 
 
-def use_magic(state, side: str, magic_id: int, opponent_is_status: bool = False, branch: int = 0) -> bool:
+def use_magic(
+    state, side: str, magic_id: int, opponent_is_status: bool = False, branch: int = 0
+) -> bool:
     if not can_use(state, side, magic_id):
         return False
     if magic_id == HEAL:
@@ -73,7 +74,9 @@ def use_magic(state, side: str, magic_id: int, opponent_is_status: bool = False,
         category = 0 if pet.stats["atk"] >= pet.stats["spatk"] else 1
         # 愿力冲击属性 = 精灵血脉；首领血脉（18）不是元素，退回主属性
         blood = pet.bloodline if pet.bloodline != LORD_BLOODLINE else None
-        element = blood if blood is not None else (pet.attributes[0] if pet.attributes else 0)
+        element = (
+            blood if blood is not None else (pet.attributes[0] if pet.attributes else 0)
+        )
         wish_skill = BattleSkill(
             skill_id=-1,
             name="愿力冲击",
@@ -90,7 +93,9 @@ def use_magic(state, side: str, magic_id: int, opponent_is_status: bool = False,
     elif magic_id == EVOLVE:
         if not _evolve(state, side, branch):
             return False
-    state.resonance_usage[side][magic_id] = state.resonance_usage[side].get(magic_id, 0) + 1
+    state.resonance_usage[side][magic_id] = (
+        state.resonance_usage[side].get(magic_id, 0) + 1
+    )
     if magic_id == WISH:
         state.resonance_cooldown[side][magic_id] = 3
     return True

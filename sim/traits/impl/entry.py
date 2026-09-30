@@ -47,9 +47,9 @@ from ..registry import register
 
 EARTH = E.EARTH  # 5 地
 WATER = E.WATER  # 3 水
-ICE = E.ICE      # 6 冰
-BUG = E.BUG      # 10 虫
-FIRE = E.FIRE    # 2 火
+ICE = E.ICE  # 6 冰
+BUG = E.BUG  # 10 虫
+FIRE = E.FIRE  # 2 火
 
 
 # ---------------- 200149 专注力 ----------------
@@ -66,8 +66,12 @@ class Focus(TraitHandler):
         old = ctx.state_of("buff")
         if old is not None and old in ctx.actor.buffs:
             ctx.actor.buffs.remove(old)
-        buff = B.Buff(buff_type=B.BuffType.ATK, value=10, duration=B.DurationKind.NORMAL,
-                      source_kind="trait")
+        buff = B.Buff(
+            buff_type=B.BuffType.ATK,
+            value=10,
+            duration=B.DurationKind.NORMAL,
+            source_kind="trait",
+        )
         ctx.actor.buffs.append(buff)
         ctx.set_state("buff", buff)
 
@@ -308,7 +312,8 @@ class HydroPropulsion(TraitHandler):
             return
         # 刷新为当前累计数：先移除旧的特性能耗 buff，再加新的（不叠加）
         ctx.actor.buffs = [
-            b for b in ctx.actor.buffs
+            b
+            for b in ctx.actor.buffs
             if not (b.buff_type == B.BuffType.ENERGY_COST and b.source_kind == "trait")
         ]
         B.add_buff(ctx.actor, B.BuffType.ENERGY_COST, -charges, source_kind="trait")
@@ -575,10 +580,14 @@ class RareBeastFlower(TraitHandler):
         B.add_buff(ctx.actor, buff_type, value)
 
     def _enemy_buff(self, ctx, target, buff_type, value):
-        B.add_buff(target, buff_type, value,
-                   source_side=ctx.actor.side,
-                   source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            target,
+            buff_type,
+            value,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
     def on_entry(self, ctx):
         if ctx.subject is not ctx.actor:
@@ -600,24 +609,40 @@ class RareBeastFlower(TraitHandler):
         elif bloodline == E.EARTH:
             self._enemy_buff(ctx, target, B.BuffType.SPEED, -6)
             self._enemy_buff(ctx, target, B.BuffType.HIT_COUNT_FLAT, -3)
-            display.append({"name": "敌方速度", "layers": 6, "per": "10", "gain": False})
-            display.append({"name": "敌方连击数", "layers": 3, "per": "1", "gain": False})
+            display.append(
+                {"name": "敌方速度", "layers": 6, "per": "10", "gain": False}
+            )
+            display.append(
+                {"name": "敌方连击数", "layers": 3, "per": "1", "gain": False}
+            )
         elif bloodline == E.ICE:
-            B.add_buff(target, B.BuffType.FREEZE, 2,
-                       source_side=ctx.actor.side,
-                       source_pet=ctx.actor.name,
-                       source_kind="debuff")
-            display.append({"name": "敌方冻结", "layers": 2, "per": "5%", "gain": False})
+            B.add_buff(
+                target,
+                B.BuffType.FREEZE,
+                2,
+                source_side=ctx.actor.side,
+                source_pet=ctx.actor.name,
+                source_kind="debuff",
+            )
+            display.append(
+                {"name": "敌方冻结", "layers": 2, "per": "5%", "gain": False}
+            )
         elif bloodline == E.CUTE:
             self._enemy_buff(ctx, target, B.BuffType.ATK, -6)
             self._enemy_buff(ctx, target, B.BuffType.SPATK, -6)
-            display.append({"name": "敌方双攻", "layers": 6, "per": "10%", "gain": False})
+            display.append(
+                {"name": "敌方双攻", "layers": 6, "per": "10%", "gain": False}
+            )
         elif bloodline == E.FIRE:
             self._enemy_buff(ctx, target, B.BuffType.BURN, 6)
-            display.append({"name": "敌方灼烧", "layers": 6, "per": "2%", "gain": False})
+            display.append(
+                {"name": "敌方灼烧", "layers": 6, "per": "2%", "gain": False}
+            )
         elif bloodline == E.DRAGON:
             self._enemy_buff(ctx, target, B.BuffType.SPDEF, -8)
-            display.append({"name": "敌方魔防", "layers": 8, "per": "10%", "gain": False})
+            display.append(
+                {"name": "敌方魔防", "layers": 8, "per": "10%", "gain": False}
+            )
         elif bloodline == E.MECH:
             self._self_buff(ctx, B.BuffType.DEF, 6)
             self._self_buff(ctx, B.BuffType.SPDEF, 6)
@@ -630,20 +655,26 @@ class RareBeastFlower(TraitHandler):
             display.append({"name": "速度", "layers": 10, "per": "10", "gain": True})
         elif bloodline == E.FANTASY:
             M.add_mark(ctx.state, target.side, 7, 2)
-            display.append({"name": "敌方星陨印记", "layers": 2, "per": "1", "gain": False})
+            display.append(
+                {"name": "敌方星陨印记", "layers": 2, "per": "1", "gain": False}
+            )
         elif bloodline == E.GRASS:
             heal = int(ctx.actor.max_hp * 0.2)
             ctx.actor.hp = min(ctx.actor.max_hp, ctx.actor.hp + heal)
             display.append({"name": "回复", "layers": 20, "per": "%", "gain": True})
         elif bloodline == E.POISON:
             self._enemy_buff(ctx, target, B.BuffType.POISON, 2)
-            display.append({"name": "敌方中毒", "layers": 2, "per": "3%", "gain": False})
+            display.append(
+                {"name": "敌方中毒", "layers": 2, "per": "3%", "gain": False}
+            )
         elif bloodline == E.LIGHT:
             self._self_buff(ctx, B.BuffType.SPATK, 8)
             display.append({"name": "魔攻", "layers": 8, "per": "10%", "gain": True})
         elif bloodline == E.BUG:
             self._enemy_buff(ctx, target, B.BuffType.DEF, -8)
-            display.append({"name": "敌方物防", "layers": 8, "per": "10%", "gain": False})
+            display.append(
+                {"name": "敌方物防", "layers": 8, "per": "10%", "gain": False}
+            )
         elif bloodline == E.DARK:
             self._self_buff(ctx, B.BuffType.LIFESTEAL, 5)
             display.append({"name": "吸血", "layers": 5, "per": "10%", "gain": True})
@@ -668,11 +699,30 @@ class RareBeastFlower(TraitHandler):
 
 
 def register_entry() -> None:
-    for cls in (Focus, SlowWarm, LibraryGuardian, Cleanliness, Nightmare, Crackle,
-                CurrentStimulus, CoralBone, EarthVein, Guardian, HydroPropulsion, SteamExpansion,
-                CrystalWater, SwarmCheer,
-                MirrorReflection, HeatDissipation, Thirst, RareBeastFlower, GelatinSheet,
-                MaillardReaction, TeaPolyphenol, QuickCharge):
+    for cls in (
+        Focus,
+        SlowWarm,
+        LibraryGuardian,
+        Cleanliness,
+        Nightmare,
+        Crackle,
+        CurrentStimulus,
+        CoralBone,
+        EarthVein,
+        Guardian,
+        HydroPropulsion,
+        SteamExpansion,
+        CrystalWater,
+        SwarmCheer,
+        MirrorReflection,
+        HeatDissipation,
+        Thirst,
+        RareBeastFlower,
+        GelatinSheet,
+        MaillardReaction,
+        TeaPolyphenol,
+        QuickCharge,
+    ):
         register(cls())
 
 

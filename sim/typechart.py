@@ -1,7 +1,9 @@
 """Type effectiveness lookup."""
 
 
-def type_multiplier(attack_element: int, defender_elements: list, typechart: dict) -> float:
+def type_multiplier(
+    attack_element: int, defender_elements: list, typechart: dict
+) -> float:
     if not defender_elements:
         return 1.0
     if len(defender_elements) == 1:

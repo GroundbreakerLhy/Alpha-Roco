@@ -116,7 +116,7 @@
       "energyCost": 2,
       "power": 70,
       "desc": "造成魔伤，应对状态：本次技能威力变为3倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -160,7 +160,7 @@
       "energyCost": 3,
       "power": 85,
       "desc": "造成物伤，应对状态：本次技能威力变为3倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -171,7 +171,7 @@
       "energyCost": 4,
       "power": 25,
       "desc": "造成魔伤，5连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -270,7 +270,7 @@
       "energyCost": 6,
       "power": 150,
       "desc": "造成物伤，若使用本技能击败敌方，回复6能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -281,7 +281,7 @@
       "energyCost": 6,
       "power": 120,
       "desc": "造成魔伤，每使用1次其他普通系技能，本技能能耗永久-2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -292,7 +292,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "自己获得物攻+100%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -303,7 +303,7 @@
       "energyCost": 0,
       "power": null,
       "desc": "自己获得魔攻+70%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -446,7 +446,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "敌方获得1层萌化。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -556,7 +556,7 @@
       "energyCost": 1,
       "power": 60,
       "desc": "造成魔伤，1连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -644,7 +644,7 @@
       "energyCost": 2,
       "power": 55,
       "desc": "造成物理伤害，先手+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1084,7 +1084,7 @@
       "energyCost": 4,
       "power": null,
       "desc": "自己获得1层光合印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1161,7 +1161,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1370,7 +1370,7 @@
       "energyCost": 1,
       "power": 40,
       "desc": "造成物伤，应对状态：本次技能威力变为4倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1403,7 +1403,7 @@
       "energyCost": 3,
       "power": 85,
       "desc": "造成物伤，每次击败敌方，本技能威力永久+85。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1436,7 +1436,7 @@
       "energyCost": 2,
       "power": 40,
       "desc": "造成魔伤，自己脱离。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1458,7 +1458,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "敌方获得10层灼烧。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1513,7 +1513,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1711,7 +1711,7 @@
       "energyCost": 3,
       "power": 75,
       "desc": "造成魔伤，每次击败敌方，本技能威力永久翻倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1799,7 +1799,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1821,7 +1821,7 @@
       "energyCost": 4,
       "power": 115,
       "desc": "造成物伤，应对状态：本技能能耗永久-3。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1843,7 +1843,7 @@
       "energyCost": 7,
       "power": null,
       "desc": "自己获得魔攻+190%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1865,7 +1865,7 @@
       "energyCost": 4,
       "power": null,
       "desc": "自己获得1层湿润印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1975,7 +1975,7 @@
       "energyCost": 3,
       "power": 20,
       "desc": "造成魔伤，4连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1997,7 +1997,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2129,7 +2129,7 @@
       "energyCost": 4,
       "power": 50,
       "desc": "造成魔伤，携带其他系别技能会给本技能带来不同效果。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2206,7 +2206,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2239,7 +2239,7 @@
       "energyCost": 1,
       "power": 60,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2393,7 +2393,7 @@
       "energyCost": 3,
       "power": 90,
       "desc": "造成魔伤，本技能位于3号位时威力+40，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2602,7 +2602,7 @@
       "energyCost": 2,
       "power": 80,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2811,7 +2811,7 @@
       "energyCost": 4,
       "power": 60,
       "desc": "造成物伤，物防比敌方越高，本次技能威力越高。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2954,7 +2954,7 @@
       "energyCost": 3,
       "power": 85,
       "desc": "造成物伤，敌方获得1层冻结。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3185,7 +3185,7 @@
       "energyCost": 4,
       "power": null,
       "desc": "敌方获得2层减速印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3559,7 +3559,7 @@
       "energyCost": 5,
       "power": 45,
       "desc": "造成物伤，2连击，自己脱离。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3867,7 +3867,7 @@
       "energyCost": 4,
       "power": 110,
       "desc": "造成魔伤，若击败敌方则将中毒转化为中毒印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3878,7 +3878,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "敌方获得5层中毒。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4384,7 +4384,7 @@
       "energyCost": 3,
       "power": 85,
       "desc": "造成物伤，应对状态：本次技能威力变为2倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4417,7 +4417,7 @@
       "energyCost": 2,
       "power": 35,
       "desc": "造成物伤，应对状态：本次技能威力变为10倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4516,7 +4516,7 @@
       "energyCost": 3,
       "power": 65,
       "desc": "造成物伤，应对状态：本次技能威力变为5倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4692,7 +4692,7 @@
       "energyCost": 5,
       "power": 70,
       "desc": "造成物伤，迅捷，应对状态：本次技能威力变为1.5倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4703,7 +4703,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己获得速度+120。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4725,7 +4725,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "获得连击数+100%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4802,7 +4802,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4824,7 +4824,7 @@
       "energyCost": 4,
       "power": 60,
       "desc": "造成物伤，速度比敌方越高，本次技能威力越高。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4879,7 +4879,7 @@
       "energyCost": 0,
       "power": null,
       "desc": "释放自己释放过的迅捷技能，其能耗之和的二分之一加至本技能能耗，每次使用后能耗+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4956,7 +4956,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "造成物伤，自己获得萌化：本次技能威力+60。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5000,7 +5000,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己获得萌化：全技能能耗永久-2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5077,7 +5077,7 @@
       "energyCost": 3,
       "power": 30,
       "desc": "造成魔伤，3连击。自己获得萌化：全技能威力永久+10。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5308,7 +5308,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5495,7 +5495,7 @@
       "energyCost": 3,
       "power": 20,
       "desc": "造成物伤，3连击，若自己的生命低于50%，本次技能连击数+2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5737,7 +5737,7 @@
       "energyCost": 3,
       "power": 40,
       "desc": "造成物伤，2连击，若击败敌方，本技能连击数永久+2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5858,7 +5858,7 @@
       "energyCost": 3,
       "power": 85,
       "desc": "造成魔伤，若击败敌方，自己获得魔攻+70%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -6067,7 +6067,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "自己获得随机16层属性增益，巧变：幻系攻击技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {

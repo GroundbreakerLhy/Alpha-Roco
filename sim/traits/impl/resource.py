@@ -21,8 +21,9 @@ def _bench_pets(ctx):
     """自己场下的存活精灵（非当前出战、hp>0）。"""
     side = ctx.actor.side
     active_idx = ctx.state.active[side]
-    return [p for i, p in enumerate(ctx.state.teams[side])
-            if i != active_idx and p.hp > 0]
+    return [
+        p for i, p in enumerate(ctx.state.teams[side]) if i != active_idx and p.hp > 0
+    ]
 
 
 # ---------------- 200083 腐植循环 ----------------

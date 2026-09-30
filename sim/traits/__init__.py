@@ -59,7 +59,12 @@ def _weather_id(state: BattleState) -> Optional[int]:
     return state.weather["id"] if isinstance(state.weather, dict) else state.weather
 
 
-_CTX_FIELDS = set(TraitContext.__dataclass_fields__.keys()) - {"state", "actor", "event", "extra"}
+_CTX_FIELDS = set(TraitContext.__dataclass_fields__.keys()) - {
+    "state",
+    "actor",
+    "event",
+    "extra",
+}
 
 
 def _make_ctx(state: BattleState, actor: BattlePet, event: str, **kw) -> TraitContext:
@@ -77,7 +82,9 @@ def _make_ctx(state: BattleState, actor: BattlePet, event: str, **kw) -> TraitCo
     return TraitContext(state=state, actor=actor, event=event, extra=extra, **ctx_kw)
 
 
-def _scope_pets(state: BattleState, scope: str, side: str = "", pet: BattlePet | None = None) -> list:
+def _scope_pets(
+    state: BattleState, scope: str, side: str = "", pet: BattlePet | None = None
+) -> list:
     order = ["A", "B"] if state.home_side == "A" else ["B", "A"]
     if scope == "self":
         return [pet] if pet is not None else []
@@ -93,8 +100,15 @@ def _scope_pets(state: BattleState, scope: str, side: str = "", pet: BattlePet |
     return [p for s in order for p in state.teams[s]]
 
 
-def emit(state: BattleState, event: str, scope: str = "all", side: str = "",
-         subject: BattlePet | None = None, pet: BattlePet | None = None, **kw) -> None:
+def emit(
+    state: BattleState,
+    event: str,
+    scope: str = "all",
+    side: str = "",
+    subject: BattlePet | None = None,
+    pet: BattlePet | None = None,
+    **kw,
+) -> None:
     """广播事件。scope: all / side / active / self。"""
     for p in _scope_pets(state, scope, side, pet):
         handler = get_handler(p.trait_id)
@@ -105,14 +119,20 @@ def emit(state: BattleState, event: str, scope: str = "all", side: str = "",
             continue
         active_idx = state.active[p.side]
         ctx = _make_ctx(
-            state, p, event,
+            state,
+            p,
+            event,
             active=(active_idx >= 0 and state.teams[p.side][active_idx] is p),
-            side=side, subject=subject, **kw,
+            side=side,
+            subject=subject,
+            **kw,
         )
         fn(ctx)
 
 
-def emit_lethal(state: BattleState, side: str, defender: BattlePet, damage: int, **kw) -> bool:
+def emit_lethal(
+    state: BattleState, side: str, defender: BattlePet, damage: int, **kw
+) -> bool:
     """致命伤害判定：只询问受击精灵自己的特性，返回 True 表示本次伤害被免除（handler 已改血量）。"""
     handler = get_handler(defender.trait_id)
     if handler is None:
@@ -120,14 +140,23 @@ def emit_lethal(state: BattleState, side: str, defender: BattlePet, damage: int,
     fn = getattr(handler, "on_lethal", None)
     if fn is None:
         return False
-    ctx = _make_ctx(state, defender, "lethal", active=True, side=side,
-                    subject=defender, damage=damage, **kw)
+    ctx = _make_ctx(
+        state,
+        defender,
+        "lethal",
+        active=True,
+        side=side,
+        subject=defender,
+        damage=damage,
+        **kw,
+    )
     return bool(fn(ctx))
 
 
 def rebind(pet: BattlePet) -> None:
     """形态变化（进化/首领化/萌化）后重新绑定特性并重置特性运行时状态。"""
     from ..data_loader import load_spirits
+
     tid = None
     for sp in load_spirits():
         if sp["id"] == pet.spirit_id:
@@ -153,7 +182,9 @@ def on_battle_start(state: BattleState) -> None:
     emit(state, "battle_start", scope="all")
 
 
-def on_turn_start(state: BattleState, action_a: Action | None = None, action_b: Action | None = None) -> None:
+def on_turn_start(
+    state: BattleState, action_a: Action | None = None, action_b: Action | None = None
+) -> None:
     emit(state, "turn_start", scope="all", action_a=action_a, action_b=action_b)
 
 
@@ -183,22 +214,42 @@ def on_round_end(state: BattleState) -> None:
         emit(state, "round_end", scope="all")
 
 
-def on_buff_gain(state: BattleState, pet: BattlePet, buff_type: str, value: int,
-                 source_side: str = "", source_pet: str = "",
-                 source_kind: str = "", **kw) -> None:
+def on_buff_gain(
+    state: BattleState,
+    pet: BattlePet,
+    buff_type: str,
+    value: int,
+    source_side: str = "",
+    source_pet: str = "",
+    source_kind: str = "",
+    **kw,
+) -> None:
     """精灵获得 buff（含特性施加）：广播 buff_gain，供增益/冻结响应类特性使用。
 
     引擎在 buffs.add_buff 调用处（battle.py / weather.py）调用；
     ctx.extra 携带 buff_type/value/source_side/source_pet/source_kind。
     """
-    emit(state, "buff_gain", scope="all", side=pet.side, subject=pet,
-         buff_type=buff_type, value=value,
-         source_side=source_side, source_pet=source_pet, source_kind=source_kind, **kw)
+    emit(
+        state,
+        "buff_gain",
+        scope="all",
+        side=pet.side,
+        subject=pet,
+        buff_type=buff_type,
+        value=value,
+        source_side=source_side,
+        source_pet=source_pet,
+        source_kind=source_kind,
+        **kw,
+    )
 
 
 # ==================== 修正查询 ====================
 
-def _modifier_pets(state: BattleState, pet: BattlePet, include_enemy: bool = False) -> list:
+
+def _modifier_pets(
+    state: BattleState, pet: BattlePet, include_enemy: bool = False
+) -> list:
     """修正查询涉及的特性所有者。
 
     默认只查被查询精灵自身（绝大多数特性是自身效果）。
@@ -242,9 +293,15 @@ def query_stat_multiplier(state: BattleState, pet: BattlePet, stat: str) -> floa
     return total
 
 
-def query_power(state: BattleState, pet: BattlePet, opponent: BattlePet | None,
-                base_percent: float = 0.0, base_flat: float = 0.0,
-                is_first: bool = False, skill: BattleSkill | None = None) -> tuple:
+def query_power(
+    state: BattleState,
+    pet: BattlePet,
+    opponent: BattlePet | None,
+    base_percent: float = 0.0,
+    base_flat: float = 0.0,
+    is_first: bool = False,
+    skill: BattleSkill | None = None,
+) -> tuple:
     """技能威力修正，返回 (百分比增量, 固定值增量)，在 base 之上叠加。
 
     ctx 约定：ctx.target=被查询精灵（攻击方），ctx.subject=敌方。
@@ -255,16 +312,24 @@ def query_power(state: BattleState, pet: BattlePet, opponent: BattlePet | None,
         handler = get_handler(owner.trait_id)
         if handler is None:
             continue
-        ctx = _make_ctx(state, owner, "modify_power", target=pet, subject=opponent,
-                        is_first=is_first, skill=skill)
+        ctx = _make_ctx(
+            state,
+            owner,
+            "modify_power",
+            target=pet,
+            subject=opponent,
+            is_first=is_first,
+            skill=skill,
+        )
         p, f = handler.modify_power(ctx)
         percent += p
         flat += f
     return percent, flat
 
 
-def query_energy_cost(state: BattleState, pet: BattlePet, skill: BattleSkill | None,
-                      base: int = 0) -> int:
+def query_energy_cost(
+    state: BattleState, pet: BattlePet, skill: BattleSkill | None, base: int = 0
+) -> int:
     total = base
     for owner in _modifier_pets(state, pet, include_enemy=True):
         handler = get_handler(owner.trait_id)
@@ -286,18 +351,22 @@ def query_speed(state: BattleState, pet: BattlePet, base: int = 0) -> int:
     return total
 
 
-def query_damage_dealt(state: BattleState, pet: BattlePet, target: BattlePet | None,
-                       **kw) -> float:
+def query_damage_dealt(
+    state: BattleState, pet: BattlePet, target: BattlePet | None, **kw
+) -> float:
     """造成伤害乘数增量；ctx.target=攻击方（被查询），ctx.subject=受击方。"""
     return _query(state, pet, "modify_damage_dealt", subject=target, **kw)
 
 
-def query_damage_taken(state: BattleState, pet: BattlePet, attacker: BattlePet | None,
-                       **kw) -> float:
+def query_damage_taken(
+    state: BattleState, pet: BattlePet, attacker: BattlePet | None, **kw
+) -> float:
     return _query(state, pet, "modify_damage_taken", subject=attacker, **kw)
 
 
-def query_hit_count(state: BattleState, pet: BattlePet, opponent: BattlePet | None) -> tuple:
+def query_hit_count(
+    state: BattleState, pet: BattlePet, opponent: BattlePet | None
+) -> tuple:
     """连击修正，返回 (固定值增量, 百分比增量, 强制值|None)。
 
     多个"连击数固定为N"光环同时存在时取较大值（无差别过滤固定2 优先于
@@ -320,8 +389,12 @@ def query_hit_count(state: BattleState, pet: BattlePet, opponent: BattlePet | No
     return flat, percent, forced
 
 
-def query_lifesteal(state: BattleState, pet: BattlePet, opponent: BattlePet | None,
-                    skill: BattleSkill | None = None) -> float:
+def query_lifesteal(
+    state: BattleState,
+    pet: BattlePet,
+    opponent: BattlePet | None,
+    skill: BattleSkill | None = None,
+) -> float:
     """吸血增量；ctx.target=被查询精灵，ctx.subject=敌方。"""
     return _query(state, pet, "modify_lifesteal", subject=opponent, skill=skill)
 
@@ -354,21 +427,30 @@ def query_energy_gain(state: BattleState, pet: BattlePet, amount: int, **kw) -> 
         handler = get_handler(owner.trait_id)
         if handler is None:
             continue
-        ctx = _make_ctx(state, owner, "modify_energy_gain", target=pet, energy_gain=amount, **kw)
+        ctx = _make_ctx(
+            state, owner, "modify_energy_gain", target=pet, energy_gain=amount, **kw
+        )
         total += handler.modify_energy_gain(ctx)
     return max(0, total)
 
 
-def query_energy_shortfall(state: BattleState, pet: BattlePet, need: int, skill: BattleSkill | None,
-                           **kw) -> int:
+def query_energy_shortfall(
+    state: BattleState, pet: BattlePet, need: int, skill: BattleSkill | None, **kw
+) -> int:
     """能量不足时特性可补充的能量（handler 自行支付代价，如扣血）。"""
     total = 0
     for owner in _modifier_pets(state, pet):
         handler = get_handler(owner.trait_id)
         if handler is None:
             continue
-        ctx = _make_ctx(state, owner, "modify_energy_shortfall", target=pet,
-                        skill=skill, extra={"need": need, **kw})
+        ctx = _make_ctx(
+            state,
+            owner,
+            "modify_energy_shortfall",
+            target=pet,
+            skill=skill,
+            extra={"need": need, **kw},
+        )
         total += handler.modify_energy_shortfall(ctx, need)
     return max(0, total)
 
@@ -381,20 +463,37 @@ def grant_energy(state: BattleState, pet: BattlePet, amount: int, **kw) -> int:
     pet.energy = min(limit, pet.energy + amount)
     gained = pet.energy - before
     if gained > 0:
-        emit(state, "energy_gain", scope="all", side=pet.side, subject=pet,
-             energy_gain=gained, **kw)
+        emit(
+            state,
+            "energy_gain",
+            scope="all",
+            side=pet.side,
+            subject=pet,
+            energy_gain=gained,
+            **kw,
+        )
     return gained
 
 
-def query_skill_usable(state: BattleState, pet: BattlePet, skill: BattleSkill,
-                       skill_index: int | None = None) -> bool:
+def query_skill_usable(
+    state: BattleState,
+    pet: BattlePet,
+    skill: BattleSkill,
+    skill_index: int | None = None,
+) -> bool:
     """技能是否可用：任一相关特性返回强制值即生效；默认 True。"""
     for owner in _modifier_pets(state, pet):
         handler = get_handler(owner.trait_id)
         if handler is None:
             continue
-        ctx = _make_ctx(state, owner, "is_skill_usable", target=pet,
-                        skill=skill, skill_index=skill_index)
+        ctx = _make_ctx(
+            state,
+            owner,
+            "is_skill_usable",
+            target=pet,
+            skill=skill,
+            skill_index=skill_index,
+        )
         r = handler.is_skill_usable(ctx, skill)
         if r is not None:
             return r

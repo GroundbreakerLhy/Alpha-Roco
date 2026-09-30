@@ -22,7 +22,7 @@ POWER_UP = {
     7020890: 10,  # 音波弹
     7020410: 20,  # 音爆
     7070130: 20,  # 金属噪音
-    7170210: 5,   # 午夜噪音
+    7170210: 5,  # 午夜噪音
 }
 
 CHARGE_SKILL_ID = 9999999  # 蓄能：不进巧变随机池
@@ -50,7 +50,8 @@ class DiscSwap(TraitHandler):
             if skill.skill_id not in POWER_UP:
                 continue
             skill.morph_pool = [
-                template for template in skill_pool_for_element(skill.element)
+                template
+                for template in skill_pool_for_element(skill.element)
                 if template.skill_id != skill.skill_id
                 and template.skill_id != CHARGE_SKILL_ID
             ]

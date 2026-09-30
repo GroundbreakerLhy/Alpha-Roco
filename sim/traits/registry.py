@@ -12,7 +12,9 @@ from pathlib import Path
 
 from .base import TraitHandler
 
-ROOT = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT = Path(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 TRAITS_PATH = ROOT / "data" / "traits.json"
 
 _REGISTRY: dict[int, TraitHandler] = {}

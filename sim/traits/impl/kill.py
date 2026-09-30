@@ -20,7 +20,9 @@ from ..registry import register
 class DevilsPrice(TraitHandler):
     trait_id = 200141
     name = "付给恶魔的赎价"
-    desc = "击败敌方精灵时，敌方额外损失1点魔力。被敌方精灵击败时，自己额外损失1点魔力。"
+    desc = (
+        "击败敌方精灵时，敌方额外损失1点魔力。被敌方精灵击败时，自己额外损失1点魔力。"
+    )
     implemented = True
 
     def on_kill(self, ctx):
@@ -89,14 +91,12 @@ class Undying(TraitHandler):
         ctx.actor.hp = ctx.actor.max_hp
         ctx.actor.energy = T.query_energy_limit(ctx.state, ctx.actor)
         ctx.actor.buffs = [
-            buff for buff in ctx.actor.buffs
-            if buff.buff_type == B.BuffType.CUTE
+            buff for buff in ctx.actor.buffs if buff.buff_type == B.BuffType.CUTE
         ]
         ctx.set_state("revive_in", None)
         ctx.set_state("revive_faint_turn", None)
         ctx.set_state("revive_tick_turn", None)
-        T.emit(ctx.state, "revive", scope="all", side=ctx.actor.side,
-               subject=ctx.actor)
+        T.emit(ctx.state, "revive", scope="all", side=ctx.actor.side, subject=ctx.actor)
 
 
 # ---------------- 200211 飓风 ----------------
@@ -108,15 +108,14 @@ class Hurricane(TraitHandler):
 
     def on_battle_start(self, ctx):
         teammates = [
-            pet for pet in ctx.state.teams[ctx.actor.side]
+            pet
+            for pet in ctx.state.teams[ctx.actor.side]
             if pet is not ctx.actor and Element.WING in pet.attributes
         ]
         if not teammates:
             return
         teammate_skill_ids = {
-            skill.skill_id
-            for pet in teammates
-            for skill in pet.skills
+            skill.skill_id for pet in teammates for skill in pet.skills
         }
         for skill in ctx.actor.skills:
             if skill.skill_id in teammate_skill_ids:
@@ -150,8 +149,16 @@ class DemonFeast(TraitHandler):
         if ctx.target is not ctx.actor:
             return
         # 双攻+50% = 物攻/魔攻各 +5 层（每层10%），PERMANENT 下场不消失
-        B.add_buff(ctx.actor, B.BuffType.ATK, 5, B.DurationKind.PERMANENT, source_kind="trait")
-        B.add_buff(ctx.actor, B.BuffType.SPATK, 5, B.DurationKind.PERMANENT, source_kind="trait")
+        B.add_buff(
+            ctx.actor, B.BuffType.ATK, 5, B.DurationKind.PERMANENT, source_kind="trait"
+        )
+        B.add_buff(
+            ctx.actor,
+            B.BuffType.SPATK,
+            5,
+            B.DurationKind.PERMANENT,
+            source_kind="trait",
+        )
         ctx.add_state("kills", 1)
 
     def display(self, state, pet):

@@ -57,7 +57,9 @@ def _type_name(value) -> str:
 def validate_team_config(data, source: str = "队伍配置") -> None:
     """校验队伍 JSON 结构；不合法时抛出带具体原因的 ValueError。"""
     if not isinstance(data, dict):
-        raise ValueError(f"{source} 格式错误：顶层必须是 JSON 对象，实际是 {_type_name(data)}")
+        raise ValueError(
+            f"{source} 格式错误：顶层必须是 JSON 对象，实际是 {_type_name(data)}"
+        )
 
     team = data.get("team")
     if team is None:
@@ -75,38 +77,58 @@ def validate_team_config(data, source: str = "队伍配置") -> None:
         if "spirit" not in pet:
             raise ValueError(f"{label} 缺少 spirit 字段")
         if not isinstance(pet["spirit"], str) or not pet["spirit"].strip():
-            raise ValueError(f"{label} 的 spirit 必须是非空字符串，实际是 {_type_name(pet['spirit'])}")
+            raise ValueError(
+                f"{label} 的 spirit 必须是非空字符串，实际是 {_type_name(pet['spirit'])}"
+            )
 
         if "nature" in pet and pet["nature"] is not None:
             if not isinstance(pet["nature"], int) or isinstance(pet["nature"], bool):
-                raise ValueError(f"{label} 的 nature 必须是整数或 null，实际是 {_type_name(pet['nature'])}")
+                raise ValueError(
+                    f"{label} 的 nature 必须是整数或 null，实际是 {_type_name(pet['nature'])}"
+                )
 
         if "bloodline" in pet and pet["bloodline"] is not None:
-            if not isinstance(pet["bloodline"], int) or isinstance(pet["bloodline"], bool):
-                raise ValueError(f"{label} 的 bloodline 必须是整数或 null，实际是 {_type_name(pet['bloodline'])}")
+            if not isinstance(pet["bloodline"], int) or isinstance(
+                pet["bloodline"], bool
+            ):
+                raise ValueError(
+                    f"{label} 的 bloodline 必须是整数或 null，实际是 {_type_name(pet['bloodline'])}"
+                )
 
         if "ivs" in pet and pet["ivs"] is not None:
             ivs = pet["ivs"]
             if not isinstance(ivs, dict):
-                raise ValueError(f"{label} 的 ivs 必须是对象或 null，实际是 {_type_name(ivs)}")
+                raise ValueError(
+                    f"{label} 的 ivs 必须是对象或 null，实际是 {_type_name(ivs)}"
+                )
             for key in IV_KEYS:
                 if key not in ivs:
                     raise ValueError(f"{label} 的 ivs 缺少 {key}")
             for key, value in ivs.items():
                 if not isinstance(value, int) or isinstance(value, bool):
-                    raise ValueError(f"{label} 的 ivs.{key} 必须是整数，实际是 {_type_name(value)}")
+                    raise ValueError(
+                        f"{label} 的 ivs.{key} 必须是整数，实际是 {_type_name(value)}"
+                    )
 
         if "skills" in pet and pet["skills"] is not None:
             skills = pet["skills"]
             if not isinstance(skills, list):
-                raise ValueError(f"{label} 的 skills 必须是数组或 null，实际是 {_type_name(skills)}")
+                raise ValueError(
+                    f"{label} 的 skills 必须是数组或 null，实际是 {_type_name(skills)}"
+                )
             for j, skill in enumerate(skills):
                 if not isinstance(skill, str):
-                    raise ValueError(f"{label} 的 skills 第 {j + 1} 项必须是字符串，实际是 {_type_name(skill)}")
+                    raise ValueError(
+                        f"{label} 的 skills 第 {j + 1} 项必须是字符串，实际是 {_type_name(skill)}"
+                    )
 
     if "resonance" in data and data["resonance"] is not None:
         resonance = data["resonance"]
-        if not isinstance(resonance, int) or isinstance(resonance, bool) or resonance not in VALID_RESONANCE_IDS:
+        if (
+            not isinstance(resonance, int)
+            or isinstance(resonance, bool)
+            or resonance not in VALID_RESONANCE_IDS
+        ):
             raise ValueError(
                 f"{source} 的 resonance 必须是 0、1、2 或 null，实际是 {_type_name(resonance)}"
             )
@@ -184,7 +206,12 @@ def round_half_up(value: float) -> int:
 
 
 def calc_stat(base_stat: int, iv: int, nature_multiplier: float = 1.0) -> int:
-    return round_half_up((round_half_up(1.1 * (base_stat + 3 * iv)) + 10) * nature_multiplier) + 50
+    return (
+        round_half_up(
+            (round_half_up(1.1 * (base_stat + 3 * iv)) + 10) * nature_multiplier
+        )
+        + 50
+    )
 
 
 def calc_hp(base_hp: int, iv: int, nature_multiplier: float = 1.0) -> int:
@@ -206,12 +233,22 @@ def calc_all_stats(base_stats: dict, ivs=None, nature=None) -> dict:
     }
 
 
-def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
-                    skill_names=None, skill_limit: int = 4, bloodline=None) -> BattlePet:
+def make_battle_pet(
+    spirit,
+    side: str,
+    level: int = 60,
+    ivs=None,
+    nature=None,
+    skill_names=None,
+    skill_limit: int = 4,
+    bloodline=None,
+) -> BattlePet:
     skill_map = build_skill_map()
     skill_ids = [sid for sid in spirit["skills"].get("normal", [])]
     if skill_names is None:
-        selected_ids = [sid for sid in skill_ids if skill_map.get(sid, {}).get("name") != "蓄能"]
+        selected_ids = [
+            sid for sid in skill_ids if skill_map.get(sid, {}).get("name") != "蓄能"
+        ]
         selected_ids = selected_ids[:skill_limit]
     else:
         by_name = {raw["name"]: raw for raw in load_skills()}
@@ -225,15 +262,17 @@ def make_battle_pet(spirit, side: str, level: int = 60, ivs=None, nature=None,
         raw = skill_map.get(sid)
         if raw is None:
             continue
-        skills.append(BattleSkill(
-            skill_id=sid,
-            name=raw["name"],
-            element=raw["element"],
-            category=raw["category"],
-            power=raw.get("power"),
-            energy_cost=raw.get("energyCost", 0),
-            desc=raw.get("desc", ""),
-        ))
+        skills.append(
+            BattleSkill(
+                skill_id=sid,
+                name=raw["name"],
+                element=raw["element"],
+                category=raw["category"],
+                power=raw.get("power"),
+                energy_cost=raw.get("energyCost", 0),
+                desc=raw.get("desc", ""),
+            )
+        )
     stats = calc_all_stats(spirit["stats"], ivs=ivs, nature=nature)
     speed_range = [
         calc_stat(spirit["stats"]["speed"], 0, 0.9),

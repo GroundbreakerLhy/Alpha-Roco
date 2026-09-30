@@ -20,8 +20,8 @@ from ...enums import Element as E
 from ..registry import register
 from ..base import TraitHandler
 
-BUG = E.BUG        # 10 虫
-SANDSTORM = 2      # 天气：沙暴
+BUG = E.BUG  # 10 虫
+SANDSTORM = 2  # 天气：沙暴
 
 
 def _self(ctx):
@@ -157,8 +157,16 @@ class SandRuler(TraitHandler):
 
 
 def register_batch1_stats() -> None:
-    for cls in (Compassion, BraveHeart, Hoard, Conservative, GuardianHeart,
-                ChordResonance, Mourning, SandRuler):
+    for cls in (
+        Compassion,
+        BraveHeart,
+        Hoard,
+        Conservative,
+        GuardianHeart,
+        ChordResonance,
+        Mourning,
+        SandRuler,
+    ):
         register(cls())
 
 

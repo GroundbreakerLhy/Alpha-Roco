@@ -40,9 +40,15 @@ class AddSnowball(TraitHandler):
         subject = _enemy_frozen(ctx)
         if subject is None:
             return
-        B.add_buff(subject, B.BuffType.FREEZE, 2, B.DurationKind.PERMANENT,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            subject,
+            B.BuffType.FREEZE,
+            2,
+            B.DurationKind.PERMANENT,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 # ---------------- 200116 捉迷藏 ----------------
@@ -56,9 +62,14 @@ class HideAndSeek(TraitHandler):
         subject = _enemy_frozen(ctx)
         if subject is None:
             return
-        B.add_buff(subject, B.BuffType.ENERGY_COST, 1,
-                   source_side=ctx.actor.side, source_pet=ctx.actor.name,
-                   source_kind="debuff")
+        B.add_buff(
+            subject,
+            B.BuffType.ENERGY_COST,
+            1,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
+            source_kind="debuff",
+        )
 
 
 def register_freeze() -> None:

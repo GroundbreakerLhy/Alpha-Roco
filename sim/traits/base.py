@@ -249,7 +249,9 @@ class TraitHandler:
         """蓄力状态下是否允许使用任意携带技能（嫉妒 200174）；默认 False（引擎默认只允许已蓄力技能）。"""
         return False
 
-    def modify_skill_element(self, ctx: TraitContext, skill: BattleSkill) -> Optional[int]:
+    def modify_skill_element(
+        self, ctx: TraitContext, skill: BattleSkill
+    ) -> Optional[int]:
         """技能属性改写（"普通系技能变为翼系"类）：返回新属性 id 或 None。"""
         return None
 

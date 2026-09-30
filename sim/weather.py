@@ -57,7 +57,9 @@ def on_round_end(state) -> None:
         for side in order:
             pet = state.teams[side][state.active[side]]
             if pet.hp > 0:
-                buffs.add_buff(pet, buffs.BuffType.FREEZE, 1, buffs.DurationKind.PERMANENT)
+                buffs.add_buff(
+                    pet, buffs.BuffType.FREEZE, 1, buffs.DurationKind.PERMANENT
+                )
                 traits.on_buff_gain(state, pet, buffs.BuffType.FREEZE, 1)
                 state.log.append(f"暴风雪：{pet.name} 获得1层冻结")
 

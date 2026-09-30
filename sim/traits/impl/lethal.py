@@ -69,9 +69,17 @@ class Cocoon(TraitHandler):
         # 广播 buff_gain（CUTE）：供"再获得萌化"响应类特性（如拉拉队长 200288）使用。
         # pre_had=本次获得萌化前是否已处于萌化状态
         from ... import traits as T
-        T.on_buff_gain(ctx.state, ctx.actor, B.BuffType.CUTE, 1,
-                       ctx.actor.side, ctx.actor.name, "debuff",
-                       pre_had=had_cute)
+
+        T.on_buff_gain(
+            ctx.state,
+            ctx.actor,
+            B.BuffType.CUTE,
+            1,
+            ctx.actor.side,
+            ctx.actor.name,
+            "debuff",
+            pre_had=had_cute,
+        )
         return True
 
 

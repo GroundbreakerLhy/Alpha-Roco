@@ -100,8 +100,11 @@ class Vigilance(TraitHandler):
             return
         # 请求换人：服务端发 choose_replacement，玩家手动选择上场精灵
         # （场下无存活精灵时不请求）
-        if not any(p.hp > 0 for i, p in enumerate(ctx.state.teams[ctx.actor.side])
-                   if i != ctx.state.active[ctx.actor.side]):
+        if not any(
+            p.hp > 0
+            for i, p in enumerate(ctx.state.teams[ctx.actor.side])
+            if i != ctx.state.active[ctx.actor.side]
+        ):
             return
         ctx.state.pending_switch[ctx.actor.side] = True
 
@@ -124,8 +127,11 @@ class BusyLife(TraitHandler):
         if not ctx.state_of("defended", False):
             return
         # 本回合用过防御技能：请求换人（服务端发 choose_replacement 玩家手动选）
-        if not any(p.hp > 0 for i, p in enumerate(ctx.state.teams[ctx.actor.side])
-                   if i != ctx.state.active[ctx.actor.side]):
+        if not any(
+            p.hp > 0
+            for i, p in enumerate(ctx.state.teams[ctx.actor.side])
+            if i != ctx.state.active[ctx.actor.side]
+        ):
             return
         ctx.state.pending_switch[ctx.actor.side] = True
         ctx.set_state("defended", False)
@@ -169,6 +175,7 @@ class AccretionDisk(TraitHandler):
         if enemy is None:
             return
         from ... import marks
+
         marks.add_mark(ctx.state, enemy.side, 7, 2)
 
 

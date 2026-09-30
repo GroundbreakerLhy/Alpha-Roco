@@ -15,10 +15,22 @@ import os
 import socket
 from pathlib import Path
 
-from sim.battle import (apply_drive, can_use_skill, create_team_battle,
-                        resume_after_leave, state_to_dict, step, switch_in,
-                        trait_leave_switch)
-from sim.data_loader import find_spirit, load_spirits, make_battle_pet, validate_team_config
+from sim.battle import (
+    apply_drive,
+    can_use_skill,
+    create_team_battle,
+    resume_after_leave,
+    state_to_dict,
+    step,
+    switch_in,
+    trait_leave_switch,
+)
+from sim.data_loader import (
+    find_spirit,
+    load_spirits,
+    make_battle_pet,
+    validate_team_config,
+)
 from sim.models import Action
 
 
@@ -62,7 +74,10 @@ def read_action_with_switch(f, conn, state, side):
             return None
         if state.active[side] >= 0 or is_valid_switch(raw, state, side):
             return raw
-        send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
+        send_line(
+            conn,
+            {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"},
+        )
 
 
 def read_replacement(f, conn, state, side):
@@ -78,7 +93,10 @@ def read_replacement(f, conn, state, side):
             switch_in(state, side, pet, state.log, thorn=False, active_switch=False)
             apply_drive(state, side)
             return raw
-        send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
+        send_line(
+            conn,
+            {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"},
+        )
 
 
 def read_trait_replacement(f, conn, state, side):
@@ -93,7 +111,13 @@ def read_trait_replacement(f, conn, state, side):
             apply_drive(state, side)
             log(f"{side} 因特性脱离换上 {incoming.name}")
             return raw
-        send_line(conn, {"type": "error", "message": "请选择一只存活且不同的上场精灵 (switch <0-5>)"})
+        send_line(
+            conn,
+            {
+                "type": "error",
+                "message": "请选择一只存活且不同的上场精灵 (switch <0-5>)",
+            },
+        )
 
 
 def read_leave_replacement(f, conn, state, side):
@@ -102,14 +126,19 @@ def read_leave_replacement(f, conn, state, side):
     真正的入场与回合续接由 battle.resume_after_leave 完成。
     必须选一只存活、且不是刚离场那只（paused_turn["leaver_index"]）的精灵。
     """
-    leaver_index = state.paused_turn.get("leaver_index", -1) if state.paused_turn else -1
+    leaver_index = (
+        state.paused_turn.get("leaver_index", -1) if state.paused_turn else -1
+    )
     while True:
         raw = recv_line(f)
         if raw is None:
             return None
         if is_valid_switch(raw, state, side) and raw["pet_index"] != leaver_index:
             return raw
-        send_line(conn, {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"})
+        send_line(
+            conn,
+            {"type": "error", "message": "请选择一只存活的上场精灵 (switch <0-5>)"},
+        )
 
 
 def is_valid_normal_switch(raw, state, side):
@@ -148,10 +177,11 @@ def read_action_with_energy(f, conn, state, side):
         raw = recv_line(f)
         if raw is None:
             return None
-        if is_valid_skill_energy(raw, state, side) and is_valid_normal_switch(raw, state, side):
+        if is_valid_skill_energy(raw, state, side) and is_valid_normal_switch(
+            raw, state, side
+        ):
             return raw
         send_line(conn, {"type": "error", "message": "行动不可用，请重新选择"})
-
 
 
 def make_team(side, team_config, spirits):
@@ -160,16 +190,17 @@ def make_team(side, team_config, spirits):
         spirit = find_spirit(cfg["spirit"], spirits)
         if spirit is None:
             raise SystemExit(f"找不到精灵：{cfg['spirit']}")
-        team.append(make_battle_pet(
-            spirit,
-            side,
-            ivs=cfg.get("ivs"),
-            nature=cfg.get("nature", -1),
-            skill_names=cfg.get("skills"),
-            bloodline=cfg.get("bloodline"),
-        ))
+        team.append(
+            make_battle_pet(
+                spirit,
+                side,
+                ivs=cfg.get("ivs"),
+                nature=cfg.get("nature", -1),
+                skill_names=cfg.get("skills"),
+                bloodline=cfg.get("bloodline"),
+            )
+        )
     return team
-
 
 
 def main():
@@ -217,9 +248,13 @@ def main():
     resonance_b = raw_config_b.get("resonance") if raw_config_b else None
 
     if team_a is not None:
-        validate_team_config({"team": team_a, "resonance": resonance_a}, source="A 方队伍配置")
+        validate_team_config(
+            {"team": team_a, "resonance": resonance_a}, source="A 方队伍配置"
+        )
     if team_b is not None:
-        validate_team_config({"team": team_b, "resonance": resonance_b}, source="B 方队伍配置")
+        validate_team_config(
+            {"team": team_b, "resonance": resonance_b}, source="B 方队伍配置"
+        )
 
     if not team_a or not team_b:
         raise SystemExit("双方客户端都必须提交队伍配置")
@@ -250,8 +285,14 @@ def main():
                 replaced = True
         else:
             if replaced:
-                payload_a = {"type": "state", "state": state_to_dict(state, view_side="A")}
-                payload_b = {"type": "state", "state": state_to_dict(state, view_side="B")}
+                payload_a = {
+                    "type": "state",
+                    "state": state_to_dict(state, view_side="A"),
+                }
+                payload_b = {
+                    "type": "state",
+                    "state": state_to_dict(state, view_side="B"),
+                }
                 send_line(conn_a, payload_a)
                 send_line(conn_b, payload_b)
 
@@ -309,8 +350,14 @@ def main():
                         break
                     trait_switched = True
             else:
-                payload_a = {"type": "state", "state": state_to_dict(state, view_side="A")}
-                payload_b = {"type": "state", "state": state_to_dict(state, view_side="B")}
+                payload_a = {
+                    "type": "state",
+                    "state": state_to_dict(state, view_side="A"),
+                }
+                payload_b = {
+                    "type": "state",
+                    "state": state_to_dict(state, view_side="B"),
+                }
                 send_line(conn_a, payload_a)
                 send_line(conn_b, payload_b)
                 if trait_switched:

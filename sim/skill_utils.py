@@ -43,7 +43,9 @@ def actual_energy_cost(pet, skill, mark_energy_bonus: int = 0) -> int:
     """
     if skill is None:
         return 0
-    return max(0, skill.energy_cost + buffs.get_energy_cost_modifier(pet) + mark_energy_bonus)
+    return max(
+        0, skill.energy_cost + buffs.get_energy_cost_modifier(pet) + mark_energy_bonus
+    )
 
 
 def energy_modifier_before_traits(state, pet, skill) -> int:
@@ -54,6 +56,7 @@ def energy_modifier_before_traits(state, pet, skill) -> int:
     if skill is None:
         return 0
     from . import marks, weather
+
     bonus = weather.sandstorm_energy_modifier(state.weather, skill.element)
     positive = marks.get_mark(state, pet.side, marks.POSITIVE)
     if positive is not None and positive["id"] == 2:
@@ -75,10 +78,13 @@ def true_energy_cost(state, pet, skill) -> int:
     if skill is None:
         return 0
     from . import skills, traits
-    total = (skill.energy_cost
-             + energy_modifier_before_traits(state, pet, skill)
-             + traits.query_energy_cost(state, pet, skill)
-             + skills.query_energy_cost(state, pet, skill))
+
+    total = (
+        skill.energy_cost
+        + energy_modifier_before_traits(state, pet, skill)
+        + traits.query_energy_cost(state, pet, skill)
+        + skills.query_energy_cost(state, pet, skill)
+    )
     return max(0, total)
 
 

@@ -10,8 +10,8 @@ from ...enums import Element as E
 from ..registry import register
 from ..base import TraitHandler
 
-WATER = E.WATER    # 3 水
-RAIN = 0           # 天气：雨天
+WATER = E.WATER  # 3 水
+RAIN = 0  # 天气：雨天
 
 
 def _self(ctx):
@@ -28,8 +28,11 @@ class EyeDrops(TraitHandler):
     def modify_lifesteal(self, ctx):
         if not _self(ctx) or ctx.skill is None:
             return 0.0
-        if ctx.weather == RAIN and ctx.skill.element == WATER \
-                and ctx.skill.category in (0, 1):
+        if (
+            ctx.weather == RAIN
+            and ctx.skill.element == WATER
+            and ctx.skill.category in (0, 1)
+        ):
             return 0.5
         return 0.0
 
