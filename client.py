@@ -77,6 +77,8 @@ BUFF_NAMES = {
     "speed_percent": "速度%",
     "skill_power_percent": "威力%",
     "skill_power_flat": "威力",
+    "next_attack_power_percent": "下次攻击威力%",
+    "next_attack_power_flat": "下次攻击威力",
     "hit_count_percent": "连击%",
     "hit_count_flat": "连击数",
     "energy_cost": "能耗",
@@ -169,16 +171,11 @@ def choose_lead(team):
 
 
 def print_state(state):
-    home = state.get("home_side", "?")
     if AUTO_MODE:
-        log(
-            f"回合 {state['turn']}  主场 {home}  魔力 A:{state['magic']['A']} B:{state['magic']['B']}"
-        )
+        log(f"回合 {state['turn']}  魔力 A:{state['magic']['A']} B:{state['magic']['B']}")
         return
     log("\n" + "=" * 56)
-    log(
-        f"回合 {state['turn']}  主场 {home}  魔力 A:{state['magic']['A']} B:{state['magic']['B']}"
-    )
+    log(f"回合 {state['turn']}  魔力 A:{state['magic']['A']} B:{state['magic']['B']}")
     for side in ("A", "B"):
         active_idx = state["active"][side]
         log(f"[{side}]")
@@ -383,6 +380,23 @@ def choose_lord_branch(state):
         print("无效编号")
 
 
+def choose_branch(skill):
+    """选择技能（choice=True）的分支提示。
+
+    返回 0=明 / 1=暗；无默认，必须显式选择。
+    直接回车返回 None，表示返回去改选其他技能。
+    """
+    while True:
+        value = input(
+            f"选择 {skill.get('name', '技能')} 的效果 (0=明, 1=暗, 回车=返回): "
+        ).strip()
+        if value == "":
+            return None
+        if value in ("0", "1"):
+            return int(value)
+        print("无效选择，请输入 0/1 或直接回车返回")
+
+
 def prompt_action(conn, state):
     magic_id = None
     magic_branch = 0
@@ -430,6 +444,13 @@ def prompt_action(conn, state):
                 if skill.get("skill_id") in pet.get("skill_cooldowns", []):
                     log(f"技能冷却中：{skill['name']}")
                     continue
+            choice_branch = 0
+            if idx < len(pet["skills"]) and pet["skills"][idx].get("choice"):
+                branch = choose_branch(pet["skills"][idx])
+                if branch is None:
+                    # 玩家在选择效果时返回，改选其他技能。
+                    continue
+                choice_branch = branch
             log(f"操作: 技能{int(action)}")
             send_line(
                 conn,
@@ -438,6 +459,7 @@ def prompt_action(conn, state):
                     "skill_index": idx,
                     "magic_id": magic_id,
                     "magic_branch": magic_branch,
+                    "choice_branch": choice_branch,
                 },
             )
             return

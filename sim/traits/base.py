@@ -161,7 +161,7 @@ class TraitHandler:
         """技能结束：全部效果（含离场）结算后；ctx.damage_dealt/hit_count 可用。"""
 
     def on_round_end(self, ctx: TraitContext) -> None:
-        """回合结束（按主客场顺序广播）。"""
+        """特性效果阶段（按双方有效速度顺序广播）。"""
 
     def on_buff_gain(self, ctx: TraitContext) -> None:
         """获得增益/减益（ctx.extra["buff_type"]/["value"]）。"""
@@ -236,9 +236,12 @@ class TraitHandler:
         """获得能量增量。"""
         return 0
 
-    def modify_energy_shortfall(self, ctx: TraitContext, need: int) -> int:
+    def modify_energy_shortfall(self, ctx: TraitContext, need: int, dry_run: bool = False) -> int:
         """能量不足兜底（"能量不足时消耗5%生命代替1能量"类）：
-        返回可补充的能量数，handler 自行支付代价；need=缺口。"""
+        返回可补充的能量数，handler 自行支付代价；need=缺口。
+        dry_run=True 为选择校验探测：不得支付代价，只回答"当前状态能否补足"
+        （生命够付且付完不死才算能补足）；结算时（dry_run=False）不做死亡
+        保护——全额支付，生命 ≤0 由引擎直接力竭。"""
         return 0
 
     def is_skill_usable(self, ctx: TraitContext, skill: BattleSkill) -> Optional[bool]:

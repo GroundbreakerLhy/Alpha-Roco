@@ -4,9 +4,7 @@
 - 200095 双向光速    在场时，双方回合结束时的效果额外触发1次。
 - 200203 煤渣草      在场时，所有灼烧的衰减变为增长。
 - 200087 生长        回合结束时，回复12%生命。
-- 200092 警惕        回合结束时，若自己能量为0则脱离（通过 state.pending_switch
-  请求，服务端发 choose_replacement 由玩家手动选择上场精灵）。
-- 200105 奔波命      使用防御技能后，回合结束时脱离（同上机制）。
+- 200290 安可        使用光系技能后，在本侧特性回合末阶段完整返场。
 - 200189 吸积盘      回合结束时，敌方获得2层星陨印记（marks id=7）。
 - 200241 陨落        在场时，双方回合结束时的效果不会触发。
 - 200240 耐活王      敌方受到中毒效果伤害时，自己回复等量生命（on_dot_damage）。
@@ -86,57 +84,6 @@ class Growth(TraitHandler):
         ctx.actor.hp = min(ctx.actor.max_hp, ctx.actor.hp + heal)
 
 
-# ---------------- 200092 警惕 ----------------
-class Vigilance(TraitHandler):
-    trait_id = 200092
-    name = "警惕"
-    desc = "回合结束时，若自己能量为0则脱离。"
-    implemented = True
-
-    def on_round_end(self, ctx):
-        if not ctx.is_active():
-            return
-        if ctx.actor.energy != 0:
-            return
-        # 请求换人：服务端发 choose_replacement，玩家手动选择上场精灵
-        # （场下无存活精灵时不请求）
-        if not any(
-            p.hp > 0
-            for i, p in enumerate(ctx.state.teams[ctx.actor.side])
-            if i != ctx.state.active[ctx.actor.side]
-        ):
-            return
-        ctx.state.pending_switch[ctx.actor.side] = True
-
-
-# ---------------- 200105 奔波命 ----------------
-class BusyLife(TraitHandler):
-    trait_id = 200105
-    name = "奔波命"
-    desc = "使用防御技能后，回合结束时脱离。"
-    implemented = True
-
-    def on_defense(self, ctx):
-        if ctx.subject is not ctx.actor:
-            return
-        ctx.set_state("defended", True)
-
-    def on_round_end(self, ctx):
-        if not ctx.is_active():
-            return
-        if not ctx.state_of("defended", False):
-            return
-        # 本回合用过防御技能：请求换人（服务端发 choose_replacement 玩家手动选）
-        if not any(
-            p.hp > 0
-            for i, p in enumerate(ctx.state.teams[ctx.actor.side])
-            if i != ctx.state.active[ctx.actor.side]
-        ):
-            return
-        ctx.state.pending_switch[ctx.actor.side] = True
-        ctx.set_state("defended", False)
-
-
 # ---------------- 200290 安可 ----------------
 class Encore(TraitHandler):
     trait_id = 200290
@@ -156,9 +103,10 @@ class Encore(TraitHandler):
             return
         if not ctx.state_of("used_light", False):
             return
-        # 本回合用过光系技能：自己返场（离场并立即入场，引擎自动执行）
-        ctx.state.pending_reenter[ctx.actor.side] = True
+        # 清除触发标记后立即完成返场，入场事件也在本侧特性阶段内结算。
         ctx.set_state("used_light", False)
+        from ...battle import reenter
+        reenter(ctx.state, ctx.actor.side, ctx.state.log)
 
 
 # ---------------- 200189 吸积盘 ----------------
@@ -205,8 +153,6 @@ def register_round_end() -> None:
     register(Fallen())
     register(NourishReabsorb())
     register(Growth())
-    register(Vigilance())
-    register(BusyLife())
     register(Encore())
     register(AccretionDisk())
     register(HardyKing())

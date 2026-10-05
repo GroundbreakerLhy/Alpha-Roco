@@ -9,8 +9,9 @@
 - 200224 消波块     每携带1个水系技能进入战斗，地系技能能耗-1。
 - 200252 留学生     自己全技能能耗+2（"可以学习全部攻击技能石"未建模，暂不实现）。
 - 200215 多人宿舍   自己的能量可以超过能量上限（上限+999，视为无实际限制）。
-- 200100 石头大餐   能量不足时，消耗5%生命，代替1能量。
+- 200100 石头大餐   能量不足时，消耗5%最大生命，代替1能量。
 - 280030 盛宴       能量不足时，消耗5%最大生命，代替1能量；生命低于50%时，获得吸血100%（modify_lifesteal）。
+                   两者共用 _pay_hp（转换比 = max(1, int(max_hp×5%))/能量，与当前生命无关）。
 
 语义说明：能耗修正查询会额外查敌方在场精灵特性（冰封），因此 handler 用
 ctx.target.side != ctx.actor.side 判断是否对敌方生效；自身类用 ctx.target is ctx.actor。
@@ -34,18 +35,22 @@ def _self(ctx):
     return ctx.target is ctx.actor
 
 
-def _pay_hp(ctx, need, percent_of_max: bool):
-    """每1能量消耗 X% 生命（石头大餐=当前生命，盛宴=最大生命），返回可补充能量数。"""
+def _pay_hp(ctx, need, dry_run: bool = False):
+    """每1能量消耗最大生命的5%（石头大餐 200100 / 盛宴 280030），返回补充的能量数。
+
+    转换比固定：cost = max(1, int(max_hp × 5%))，与当前生命无关（与盛宴同一套）。
+    dry_run=True（选择校验）：不支付，只判断当前生命是否够付且付完不死
+    （hp > need×cost）；不够则不可选。
+    dry_run=False（结算）：不做死亡保护，全额支付 need×cost；支付后生命 ≤0
+    即直接力竭（技能不再结算，力竭由引擎在付费处统一处理）。
+    """
     if not _self(ctx):
         return 0
-    base = ctx.actor.max_hp if percent_of_max else ctx.actor.hp
-    cost = max(1, int(base * 0.05))
-    available = (ctx.actor.hp - 1) // cost
-    n = min(need, available)
-    if n <= 0:
-        return 0
-    ctx.actor.hp -= n * cost
-    return n
+    cost = max(1, int(ctx.actor.max_hp * 0.05))
+    if dry_run:
+        return need if ctx.actor.hp > need * cost else 0
+    ctx.actor.hp -= need * cost
+    return need
 
 
 # ---------------- 200108 缩壳 ----------------
@@ -224,8 +229,8 @@ class StoneFeast(TraitHandler):
     desc = "能量不足时，消耗5%生命，代替1能量。"
     implemented = True
 
-    def modify_energy_shortfall(self, ctx, need):
-        return _pay_hp(ctx, need, percent_of_max=False)
+    def modify_energy_shortfall(self, ctx, need, dry_run=False):
+        return _pay_hp(ctx, need, dry_run=dry_run)
 
 
 # ---------------- 280030 盛宴 ----------------
@@ -235,8 +240,8 @@ class GrandFeast(TraitHandler):
     desc = "能量不足时，消耗5%最大生命，代替1能量。生命低于50%时，获得吸血100%。"
     implemented = True
 
-    def modify_energy_shortfall(self, ctx, need):
-        return _pay_hp(ctx, need, percent_of_max=True)
+    def modify_energy_shortfall(self, ctx, need, dry_run=False):
+        return _pay_hp(ctx, need, dry_run=dry_run)
 
     def modify_lifesteal(self, ctx):
         if not _self(ctx):

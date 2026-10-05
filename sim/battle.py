@@ -40,7 +40,6 @@ def create_team_battle(team_a: list, team_b: list) -> BattleState:
         active={"A": 0, "B": 0},
         magic={"A": MAGIC_START, "B": MAGIC_START},
         revealed={"A": set(), "B": set()},
-        home_side=random.choice(["A", "B"]),
         turn=1,
         log=[],
     )
@@ -57,7 +56,18 @@ def create_team_battle(team_a: list, team_b: list) -> BattleState:
                 skills.bind_skill(skill, pet)
     # 战斗创建时先初始化需要预计算的技能运行时标记（如飓风共享技能的迅捷）。
     traits.on_battle_start(state)
+    for side in ("A", "B"):
+        pet = _active_pet(state, side)
+        if pet is None:
+            continue
+        for skill_index, skill in enumerate(pet.skills):
+            skills.emit(state, skills.STAGE_ENTRY, pet, skill, skill_index=skill_index, logs=state.log)
     apply_drive(state)
+    # 每回合巧变（借用/取念/复写类）：首发入场即抽取，否则第一回合是技能本身。
+    for side in ("A", "B"):
+        idx = state.active[side]
+        if idx >= 0 and state.teams[side]:
+            _apply_turn_morphs_for_pet(state, state.teams[side][idx])
     return state
 
 
@@ -100,14 +110,38 @@ def _drive_reorder(skills: list, drives: list) -> list:
 
 
 def apply_drive(state: BattleState, side: str | None = None) -> None:
-    """对指定方（或双方）当前在场精灵执行回合开始的传动重排。"""
+    """对指定方（或双方）当前在场精灵执行回合开始的传动重排。
+
+    重排后对**槽位发生变化**的技能广播 STAGE_SLOT_CHANGE（"每回合位置发生变化时"
+    类技能，如齿轮扭矩）：覆盖开局排序、回合末重排、换人后的重排；只对在场精灵
+    结算（场下技能不参与传动重排）。
+    """
     sides = ("A", "B") if side is None else (side,)
     for s in sides:
         pet = _active_pet(state, s)
         if pet is None:
             continue
-        drives = [getattr(skill, "drive", 0) for skill in pet.skills]
+        drives = [
+            getattr(skill, "drive", 0)
+            + int(getattr(skill, "skill_state", {}).pop("extra_drive", 0) or 0)
+            for skill in pet.skills
+        ]
+        before = {id(skill): index for index, skill in enumerate(pet.skills)}
         pet.skills = _drive_reorder(pet.skills, drives)
+        for new_index, skill in enumerate(pet.skills):
+            old_index = before.get(id(skill))
+            if old_index is None or old_index == new_index:
+                continue
+            skills.emit(
+                state,
+                skills.STAGE_SLOT_CHANGE,
+                pet,
+                skill,
+                skill_index=new_index,
+                logs=state.log,
+                old_index=old_index,
+                new_index=new_index,
+            )
 
 
 def _add_energy(state: BattleState, pet: BattlePet, amount: int) -> int:
@@ -162,9 +196,17 @@ def _apply_turn_limit(state: BattleState) -> None:
     state.log.append(f"达到{MAX_TURN + 1}回合，魔力与剩余血量均相同，平局")
 
 
-def _skill_cost_after_bursts(state: BattleState, side: str, skill) -> int:
+def _skill_cost_after_bursts(
+    state: BattleState,
+    side: str,
+    skill,
+    skill_index: int | None = None,
+    choice_branch: int = 0,
+) -> int:
     """计算技能在当前迸发影响下的实际能耗，不处理能量不足兜底。"""
-    total_cost = current_skill_cost(state, side, skill)
+    total_cost = current_skill_cost(
+        state, side, skill, skill_index=skill_index, choice_branch=choice_branch
+    )
     pet = _active_pet(state, side)
     if pet is None:
         return total_cost
@@ -226,6 +268,69 @@ def _is_windup(pet: BattlePet) -> bool:
     return getattr(pet, "windup_skill", None) is not None
 
 
+def _make_turn_morph_temp(template, base, cost_delta: int, pet: BattlePet) -> BattleSkill:
+    """每回合巧变的临时技能：能耗修正、清空嵌套池、morph_origin 指回本技能、
+    绑定静态属性（与用后巧变 _apply_morph 同一套规则）。"""
+    temp = copy.deepcopy(template)
+    temp.energy_cost = max(0, temp.energy_cost + cost_delta)
+    temp.morph_pool = []
+    temp.morph_origin = base
+    skills.bind_skill(temp, pet)
+    return temp
+
+
+def _revert_turn_morphs(pet: BattlePet) -> None:
+    """每回合巧变的临时技能在场下还原为技能本身（借用/取念/复写类）。
+
+    用后巧变（同频/寒潮）的临时技能不受影响：靠原技能 handler 的
+    turn_morph 标记区分两类巧变。
+    """
+    for i, slot in enumerate(pet.skills):
+        origin = getattr(slot, "morph_origin", None)
+        if origin is None:
+            continue
+        handler = skills.get_handler(origin.skill_id)
+        if handler is not None and handler.turn_morph:
+            pet.skills[i] = origin
+
+
+def _apply_turn_morphs_for_pet(state: BattleState, pet: BattlePet) -> None:
+    """单只精灵的每回合巧变重随（借用/取念/复写类）。
+
+    蓄力中的精灵跳过（替换槽位会让已蓄力技能无法释放）。
+    槽位里是上一轮的临时技能时按 morph_origin 找回本体再重随；
+    临时技能本回合被使用则已还原（_apply_morph 既有规则），此处再次重随。
+    """
+    if pet.hp <= 0 or pet.windup_skill is not None:
+        return
+    for i, slot in enumerate(pet.skills):
+        base = slot.morph_origin if slot.morph_origin is not None else slot
+        handler = skills.get_handler(base.skill_id)
+        if handler is None or not handler.turn_morph:
+            continue
+        pool = handler.turn_morph_pool(state, pet, base)
+        if not pool:
+            continue
+        temp = _make_turn_morph_temp(
+            random.choice(pool), base, handler.turn_morph_cost_delta, pet
+        )
+        pet.skills[i] = temp
+        state.log.append(f"{pet.side} {pet.name} 的 {base.name} 变为 {temp.name}")
+
+
+def _apply_turn_morphs(state: BattleState) -> None:
+    """每回合随机变成其他技能的技能（借用/取念/复写）：回合末对在场精灵重随。
+
+    只有在场精灵参与抽取（场下时槽位是技能本身：入场即抽取、离场即还原）；
+    力竭/等待换人的一侧跳过。
+    """
+    for side in ("A", "B"):
+        idx = state.active[side]
+        if idx < 0:
+            continue
+        _apply_turn_morphs_for_pet(state, state.teams[side][idx])
+
+
 # 入场统一结算：蓄电印记(6)迸发、棘刺印记(1)、降灵印记(5)、特性入场事件
 # thorn=False 用于力竭后的替换（棘刺/降灵只对"离场"生效，力竭不算离场）
 # active_switch=True 仅表示本次入场来自玩家主动换人；返回可用迅捷技能索引或 None。
@@ -254,6 +359,14 @@ def switch_in(
             logs.append(f"  降灵印记：{incoming.name} 入场失去 {loss} 能量")
         _apply_dark_surge(state, side, incoming, logs)
     traits.emit(state, "entry", scope="all", side=side, subject=incoming)
+    for skill_index, skill in enumerate(incoming.skills):
+        skills.emit(
+            state, skills.STAGE_ENTRY, incoming, skill,
+            skill_index=skill_index, logs=logs,
+        )
+    # 每回合巧变（借用/取念/复写类）：入场即抽取（只在场上才抽取），
+    # 先于迅捷判定——迅捷技能从巧变后的槽位中选择。
+    _apply_turn_morphs_for_pet(state, incoming)
     if active_switch:
         return _find_swift_skill(state, side, incoming)
     return None
@@ -291,6 +404,7 @@ def _force_switch_after_leave(state: BattleState, side: str, logs: list) -> None
         state, "leave", scope="all", side=side, subject=outgoing, incoming=incoming
     )
     buffs.clear_normal_buffs(outgoing)
+    _revert_turn_morphs(outgoing)
     burst.clear_bursts(outgoing)
     outgoing.light_heal_rounds = 0
     state.active[side] = idx
@@ -313,6 +427,7 @@ def trait_leave_switch(
         state, "leave", scope="all", side=side, subject=outgoing, incoming=incoming
     )
     buffs.clear_normal_buffs(outgoing)
+    _revert_turn_morphs(outgoing)
     burst.clear_bursts(outgoing)
     outgoing.light_heal_rounds = 0
     state.active[side] = state.teams[side].index(incoming)
@@ -336,6 +451,7 @@ def reenter(state: BattleState, side: str, logs: list) -> bool:
     # 离场结算
     traits.emit(state, "leave", scope="all", side=side, subject=pet, incoming=pet)
     buffs.clear_normal_buffs(pet)
+    _revert_turn_morphs(pet)
     burst.clear_bursts(pet)
     pet.light_heal_rounds = 0
     logs.append(f"{side} {pet.name} 返场")
@@ -344,8 +460,9 @@ def reenter(state: BattleState, side: str, logs: list) -> bool:
     return True
 
 
-def _resolve_trait_reenter(state: BattleState) -> None:
-    """回合结束结算后处理特性请求的返场（如安可 200290）。"""
+def _resolve_pending_reenter(state: BattleState) -> None:
+    """回合结束结算后处理返场请求（特性如安可 200290；技能如过载回路
+    "回合结束自己返场"——技能在 STAGE_ROUND_END 里经 Reenter 登记到同一通道）。"""
     for side in ("A", "B"):
         if state.pending_reenter[side]:
             state.pending_reenter[side] = False
@@ -361,6 +478,33 @@ def _resolve_trait_leave(state: BattleState) -> None:
     """
 
 
+def _enter_after_leave(
+    state: BattleState, side: str, incoming: BattlePet, logs: list,
+    entry_energy: int = 0,
+) -> None:
+    """脱离后选定替补的入场结算：上位 + 入场事件 + 附带能量 / 增益继承。
+
+    entry_energy>0（"自己脱离，替换入场的精灵回复N能量"）与
+    state.pending_entry_buffs（击鼓传花"下个入场精灵继承自己增益"）由
+    _execute_action_leave 在离场时登记，此处按侧消费。
+    """
+    state.active[side] = state.teams[side].index(incoming)
+    logs.append(f"{side} 脱离后换上 {incoming.name}")
+    # 脱离换人对入场的棘刺/降灵印记生效（thorn=True）
+    switch_in(state, side, incoming, logs, thorn=True, active_switch=False)
+    if entry_energy:
+        gained = traits.grant_energy(state, incoming, entry_energy)
+        if gained > 0:
+            logs.append(f"  {incoming.name} 回复 {gained} 能量")
+    inherit_buffs = state.pending_entry_buffs[side]
+    state.pending_entry_buffs[side] = []
+    if inherit_buffs:
+        for btype, value, duration, sside, spet, skind in inherit_buffs:
+            buffs.add_buff(incoming, btype, value, duration, state.turn,
+                           sside, spet, skind)
+        logs.append(f"  {incoming.name} 继承了增益")
+
+
 def resume_after_leave(
     state: BattleState, side: str, incoming: BattlePet
 ) -> BattleState:
@@ -370,34 +514,88 @@ def resume_after_leave(
     新精灵本回合即上场——若暂停发生在先手方行动后，续接时后手方的行动会打到新精灵上。
     续接过程中若再次触发脱离（如另一方也用了移花接木），会再次暂停（paused_turn 重新置位），
     由服务端循环处理。
+
+    **双侧脱离（风隐）的收集阶段**：暂停上下文带 ``collect``（按先手顺序的两侧）时，
+    本次调用只记录该侧的选择（``chosen``）并把 ``leave_side`` 指向还没选的另一方；
+    两侧都选完后才执行"先退先入、后退后入"，期间双方都看不到对方选了什么。
     """
     ctx = state.paused_turn
     state.paused_turn = None
     logs = state.log
-    # 入场（替换 active=-1 的离场位）；脱离换人对入场的棘刺/降灵印记生效（thorn=True）
-    state.active[side] = state.teams[side].index(incoming)
-    logs.append(f"{side} 脱离后换上 {incoming.name}")
-    switch_in(state, side, incoming, logs, thorn=True, active_switch=False)
+    collect = ctx.get("collect")
+    if collect:
+        ctx["chosen"][side] = incoming
+        remaining = [s for s in collect if s not in ctx["chosen"]]
+        if remaining:
+            # 还差一方没选：保持暂停，换问下一侧（引擎不换人、不下发任何选择结果）
+            ctx["leave_side"] = remaining[0]
+            ctx["leaver_index"] = state.active[remaining[0]]
+            state.paused_turn = ctx
+            return state
+        # 双方选择集齐：按先手顺序"先退先入、后退后入"
+        entry_energy = ctx.get("entry_energy", {})
+        entry_inherit = ctx.get("entry_inherit", {})
+        left_sides = []
+        for s in collect:
+            chosen = ctx["chosen"][s]
+            leaver = _execute_action_leave(
+                state, s, logs, entry_inherit_buffs=bool(entry_inherit.get(s))
+            )
+            if leaver < 0:
+                # 无法离场（蓄力免疫等）：该侧不换人，选择作废
+                continue
+            left_sides.append(s)
+            _enter_after_leave(
+                state, s, chosen, logs, entry_energy=int(entry_energy.get(s, 0) or 0)
+            )
+        _finish_leave_continuation(state, ctx, left_sides=left_sides)
+        return state
+    # 单侧脱离：登记时该侧已离场（active=-1），此处直接入场
+    _enter_after_leave(
+        state, side, incoming, logs, entry_energy=int(ctx.get("entry_energy", 0) or 0)
+    )
+    _finish_leave_continuation(state, ctx, left_sides=[side])
+    return state
+
+
+def _finish_leave_continuation(state: BattleState, ctx: dict, left_sides=()) -> None:
+    """脱离续接后的收尾：补完后手方行动 → 处理链式脱离 → 进入回合末结算。
+
+    ``left_sides`` = 本次续接中确实离场并换了人的阵营。若**后手方**在其中，说明它的
+    精灵在自己行动结算之前就被换下（双侧脱离里先手方先退先入引发的换人）——该次行动
+    **直接作废**，不结算（用户口径）。
+    """
+    order = tuple(ctx.get("order") or ("A", "B"))
     if ctx.get("do_second"):
         second = ctx["second"]
-        state.log.extend(
-            _resolve_repeated(
-                state,
-                second,
-                ctx["second_action"],
-                is_first=False,
-                is_counter=ctx["second_is_counter"],
-                counter_category=ctx["second_counter_category"],
+        # 该侧精灵在行动结算前已离场（双侧脱离先手方先换人）：本次行动直接作废
+        if second not in left_sides:
+            state.log.extend(
+                _resolve_repeated(
+                    state,
+                    second,
+                    ctx["second_action"],
+                    is_first=False,
+                    is_counter=ctx["second_is_counter"],
+                    counter_category=ctx["second_counter_category"],
+                    countered_by=ctx.get("second_countered_by", ""),
+                )
             )
-        )
-        _apply_faint(state, "B" if second == "A" else "A")
-        if state.winner is not None:
-            return state
-        # 续接的后手方也可能触发脱离（再次暂停）
-        if _try_pause_for_leave(state, second, {"do_second": False}):
-            return state
+            _apply_faint(state, "B" if second == "A" else "A")
+            if state.winner is not None:
+                return
+            # 后手方行动后同样可能双方都要脱离（如后手方用风隐）
+            if _start_double_leave(state, order, {"do_second": False, "order": order}):
+                return
+            if _try_pause_for_leave(state, second, {"do_second": False, "order": order}):
+                return
+    # 链式脱离（如续接过程中另一方也用了移花接木）：逐侧暂停选人
+    if _start_double_leave(state, order, {"do_second": False, "order": order}):
+        return
+    for side in ("A", "B"):
+        if _try_pause_for_leave(state, side, {"do_second": False, "order": order}):
+            return
     _round_end(state)
-    return state
 
 
 def _consume_skill_leave(state: BattleState, ctx, side: str, logs: list) -> None:
@@ -409,6 +607,8 @@ def _consume_skill_leave(state: BattleState, ctx, side: str, logs: list) -> None
     mode = ctx.extra.pop("leave", None)
     if not mode:
         return
+    entry_energy = ctx.extra.pop("leave_entry_energy", 0)
+    entry_inherit = bool(ctx.extra.pop("leave_entry_inherit_buffs", False))
     opponent_side = "B" if side == "A" else "A"
     sides = []
     if mode in (skills.LEAVE_SELF, skills.LEAVE_BOTH):
@@ -421,12 +621,21 @@ def _consume_skill_leave(state: BattleState, ctx, side: str, logs: list) -> None
         )
         if has_substitute:
             state.pending_action_leave[s] = True
+            # "替换入场的精灵回复N能量"/"下个入场精灵继承自己增益"只属于行动方自己的脱离。
+            if s == side and entry_energy:
+                state.pending_entry_energy[s] = entry_energy
+            if s == side and entry_inherit:
+                state.pending_entry_inherit[s] = True
 
 
-def _execute_action_leave(state: BattleState, side: str, logs: list) -> int:
+def _execute_action_leave(
+    state: BattleState, side: str, logs: list, entry_inherit_buffs: bool = False
+) -> int:
     """执行技能脱离：精灵立即离场（出战位 -1），跳过其回合末结算。
 
     返回离场精灵原本的出战位下标；未离场（蓄力免疫/无存活替补）返回 -1。
+    entry_inherit_buffs=True（击鼓传花）时，在清除 NORMAL buff 前快照全部增益
+    到 state.pending_entry_buffs[side]，由续接流程发给本侧下一只入场精灵。
     """
     idx = state.active[side]
     if idx < 0:
@@ -438,7 +647,16 @@ def _execute_action_leave(state: BattleState, side: str, logs: list) -> int:
     if not any(i != idx and p.hp > 0 for i, p in enumerate(state.teams[side])):
         return -1
     traits.emit(state, "leave", scope="all", side=side, subject=pet, incoming=None)
+    if entry_inherit_buffs:
+        # 击鼓传花"下个入场精灵继承自己增益"：在清除 NORMAL buff 前快照全部增益
+        # （含 PERMANENT 时长，按原时长继承；减益不继承）。
+        state.pending_entry_buffs[side] = [
+            (b.buff_type, b.value, b.duration, b.source_side, b.source_pet, b.source_kind)
+            for b in pet.buffs
+            if buffs.is_buff(b.buff_type, b.value)
+        ]
     buffs.clear_normal_buffs(pet)
+    _revert_turn_morphs(pet)
     burst.clear_bursts(pet)
     pet.light_heal_rounds = 0
     pet.windup_skill = None
@@ -452,14 +670,76 @@ def _try_pause_for_leave(state: BattleState, side: str, resume_ctx: dict) -> boo
     if not state.pending_action_leave[side]:
         return False
     state.pending_action_leave[side] = False
-    leaver_idx = _execute_action_leave(state, side, state.log)
+    # 附带的入场能量随暂停上下文走；离场未执行（蓄力免疫/无替补）时一并作废。
+    entry_energy = state.pending_entry_energy[side]
+    state.pending_entry_energy[side] = 0
+    entry_inherit = state.pending_entry_inherit[side]
+    state.pending_entry_inherit[side] = False
+    leaver_idx = _execute_action_leave(
+        state, side, state.log, entry_inherit_buffs=entry_inherit
+    )
     if leaver_idx < 0:
         return False
     ctx = dict(resume_ctx)
     ctx["leave_side"] = side
     ctx["leaver_index"] = leaver_idx
+    if entry_energy:
+        ctx["entry_energy"] = entry_energy
     state.paused_turn = ctx
     return True
+
+
+def _start_double_leave(state: BattleState, order, resume_ctx: dict) -> bool:
+    """双侧脱离的收集阶段：双方**先各自盲选**替补（引擎不换人、不产生日志），
+    集齐后才按 order（先手顺序）"先退先入、后退后入"。返回是否进入收集阶段。
+
+    在**该技能结算后立即**进入收集阶段（不推迟到本回合行动全部结束）：风隐自带
+    先手-1，非特殊情况本就是最后一个行动；若先手方触发双侧脱离，收集与换人先完成，
+    后手方的行动随后打到新入场的精灵上（SPEC B36）。
+    """
+    first, second = order
+    if second is None:
+        return False
+    if not (
+        state.pending_action_leave[first]
+        and state.pending_action_leave[second]
+        and state.active[first] >= 0
+        and state.active[second] >= 0
+    ):
+        return False
+    state.pending_action_leave[first] = False
+    state.pending_action_leave[second] = False
+    state.paused_turn = {
+        **resume_ctx,
+        "collect": [first, second],
+        "chosen": {},
+        "leave_side": first,
+        "leaver_index": state.active[first],
+        "entry_energy": {
+            first: state.pending_entry_energy[first],
+            second: state.pending_entry_energy[second],
+        },
+        "entry_inherit": {
+            first: state.pending_entry_inherit[first],
+            second: state.pending_entry_inherit[second],
+        },
+    }
+    state.pending_entry_energy[first] = 0
+    state.pending_entry_energy[second] = 0
+    state.pending_entry_inherit[first] = False
+    state.pending_entry_inherit[second] = False
+    return True
+
+
+def _speed_leave_order(state: BattleState) -> tuple:
+    """回合末无行动顺序可比时的双侧脱离次序：比较有效速度，同速随机。"""
+    a = _effective_speed(state, "A")
+    b = _effective_speed(state, "B")
+    if a > b:
+        return ("A", "B")
+    if b > a:
+        return ("B", "A")
+    return tuple(random.sample(["A", "B"], 2))
 
 
 def _settle_counters(state: BattleState) -> None:
@@ -485,62 +765,45 @@ def _settle_counters(state: BattleState) -> None:
             energy_cost=item["energy_cost"],
             damage_dealt=item["damage_dealt"],
             hit_count=item["hit_count"],
+            choice_branch=item.get("choice_branch", 0),
+            incoming_skill=item.get("incoming_skill"),
             logs=state.log,
         )
         _consume_skill_leave(state, counter_ctx, pet.side, state.log)
     # 从句伤害可能致命（如"应对攻击：造成90威力物伤"类）
     for side in ("A", "B"):
         _apply_faint(state, side)
-    # 从句登记的脱离（吓退"敌方脱离"等）：立即离场并暂停等待选人
+    # 从句登记的脱离（吓退"敌方脱离"等）：立即离场并暂停等待选人。
+    # 双方都待脱离时同样走双侧收集阶段（SPEC B36a）；回合末没有行动顺序可比，
+    # 次序按有效速度、同速随机。
+    if _start_double_leave(state, _speed_leave_order(state), {"do_second": False}):
+        return
     for side in ("A", "B"):
         if _try_pause_for_leave(state, side, {"do_second": False}):
             return
 
-
-def _settle_hit_effects(state: BattleState) -> None:
-    """命中附加效果的统一结算：回合末结算紧随应对奖励之后（B39）。
-
-    命中时只登记（含未造成伤害的情形，S9），此处重放 STAGE_HIT；效果按结算时
-    的在场状态解析（含 damage_dealt 等命中当时的快照字段）。脱离请求同样
-    按 B36 流程执行并暂停等待选人。
-    """
-    pending = state.pending_hit_effects
-    state.pending_hit_effects = []
-    for item in pending:
-        pet = item["pet"]
-        hit_ctx = skills.emit(
-            state,
-            skills.STAGE_HIT,
-            pet,
-            item["skill"],
-            skill_index=item["skill_index"],
-            is_first=item["is_first"],
-            is_counter=False,
-            counter_category=item["counter_category"],
-            energy_cost=item["energy_cost"],
-            damage_dealt=item["damage_dealt"],
-            hit_count=item["hit_count"],
-            logs=state.log,
-            _defer_mode="settle",
-            killed=item["killed"],
-            hit_target=item["hit_target"],
-        )
-        _consume_skill_leave(state, hit_ctx, pet.side, state.log)
-    for side in ("A", "B"):
-        _apply_faint(state, side)
-    for side in ("A", "B"):
-        if _try_pause_for_leave(state, side, {"do_second": False}):
-            return
 
 
 def _round_end(state: BattleState) -> None:
     """回合结束结算（step 主路径与脱离续接共用；离场精灵因出战位 -1 被跳过）。"""
-    # 第一步：应对奖励从句（B38），紧随其后是命中附加效果（B39）；
-    # 触发脱离暂停时中止，续接后重入完成其余步骤
+    # 特性阶段最先执行；应对从句可能暂停并续接，特性阶段每回合只进入一次。
+    if state.trait_round_end_turn != state.turn:
+        state.trait_round_end_turn = state.turn
+        a_speed = _effective_speed(state, "A")
+        b_speed = _effective_speed(state, "B")
+        if a_speed > b_speed:
+            order = ["A", "B"]
+        elif b_speed > a_speed:
+            order = ["B", "A"]
+        else:
+            order = random.sample(["A", "B"], 2)
+        state.round_end_order = list(reversed(order))
+        traits.on_round_end(state, order=order)
+        for side in order:
+            _apply_faint(state, side)
+        if state.winner is not None:
+            return
     _settle_counters(state)
-    if state.paused_turn is not None or state.winner is not None:
-        return
-    _settle_hit_effects(state)
     if state.paused_turn is not None or state.winner is not None:
         return
     _settle_skill_cooldowns(state)
@@ -548,14 +811,35 @@ def _round_end(state: BattleState) -> None:
     buffs.on_round_end(state)
     resonance.on_round_end(state)
     weather.on_round_end(state)
-    traits.on_round_end(state)
+    # 技能的回合末结算（STAGE_ROUND_END）：只对在场精灵生效（场下不结算，
+    # 与"每回合巧变只在场上"同一口径；水波术"在场上无条件成长"类）。
+    for side in ("A", "B"):
+        idx = state.active[side]
+        if idx < 0:
+            continue
+        pet = state.teams[side][idx]
+        if pet.hp <= 0:
+            continue
+        for skill_index, skill in enumerate(pet.skills):
+            ctx = skills.emit(
+                state, skills.STAGE_ROUND_END, pet, skill,
+                skill_index=skill_index, logs=state.log,
+            )
+            # 技能侧回合末返场（过载回路"回合结束自己返场"）：登记到与特性返场
+            # 同一通道（ctx.extra["reenter"] 给出请求返场的一侧），在力竭结算
+            # 之后统一执行（离场+立即入场）。
+            requested = ctx.extra.get("reenter")
+            if requested:
+                state.pending_reenter[requested] = True
     for team in state.teams.values():
         for pet in team:
             pet.overload_current.clear()
     for side in ("A", "B"):
         _apply_faint(state, side)
     _resolve_trait_leave(state)
-    _resolve_trait_reenter(state)
+    _resolve_pending_reenter(state)
+    # 每回合巧变（借用/取念/复写类）：回合末对在场精灵统一重随，场下不抽取
+    _apply_turn_morphs(state)
     if state.winner is not None:
         return
     if state.turn > MAX_TURN:
@@ -571,6 +855,8 @@ def _resolve_action(
     is_first: bool = False,
     is_counter: bool = False,
     counter_category: str = "",
+    countered_by: str = "",
+    countered_skill=None,
     followups: list | None = None,
     used: list | None = None,
     pay_energy: bool = True,
@@ -609,6 +895,7 @@ def _resolve_action(
                 state, "leave", scope="all", side=side, subject=pet, incoming=incoming
             )
             buffs.clear_normal_buffs(pet)
+            _revert_turn_morphs(pet)
             burst.clear_bursts(pet)
             pet.light_heal_rounds = 0
             pet.windup_skill = None
@@ -629,6 +916,11 @@ def _resolve_action(
     if not buffs.can_act(pet):
         logs.append(f"{side} {pet.name} 眩晕，无法行动")
         return logs
+
+    # 先手 buff（"下一次行动获得先手+1"）是一次性的：行动开始结算即消耗。
+    # 排序已在行动前完成，此处移除不影响本回合先后手；换人不会走到这里
+    # （离场时 NORMAL buff 已统一清除）。
+    buffs.remove_buff(pet, buffs.BuffType.PRIORITY)
 
     if action.kind == "charge":
         pet.has_acted_since_entry = True
@@ -688,7 +980,13 @@ def _resolve_action(
     ) or (replay and bool(getattr(skill, "windup", False)))
 
     # 迸发：本次技能能耗修正（如生物电，不消耗迸发本身）
-    total_cost = _skill_cost_after_bursts(state, side, skill)
+    total_cost = _skill_cost_after_bursts(
+        state,
+        side,
+        skill,
+        skill_index=action.skill_index,
+        choice_branch=action.choice_branch,
+    )
 
     if windup_release:
         # 能量已在蓄力回合支付，释放回合不再扣费。
@@ -701,14 +999,29 @@ def _resolve_action(
             )
             if shortfall > 0:
                 pet.energy += shortfall
-            else:
-                logs.append(f"{side} {pet.name} 能量不足，无法使用 {skill.name}")
-                return logs
+        if pet.energy < total_cost:
+            # 技能自身：能量不足兜底（如虚假破产"消耗5%生命代替1能量"）
+            shortfall = skills.query_energy_shortfall(
+                state, pet, skill, total_cost - pet.energy,
+                skill_index=action.skill_index,
+            )
+            if shortfall > 0:
+                pet.energy += shortfall
+        if pet.hp <= 0:
+            # 兜底支付耗尽生命：直接力竭，技能不再结算
+            logs.append(f"{side} {pet.name} 生命耗尽")
+            _apply_faint(state, side, logs)
+            return logs
+        if pet.energy < total_cost:
+            logs.append(f"{side} {pet.name} 能量不足，无法使用 {skill.name}")
+            return logs
         pet.energy -= total_cost
 
     if getattr(skill, "windup", False) and not windup_release:
         pet.has_acted_since_entry = True
         pet.windup_skill = skill
+        # 蓄力不算"使用攻击技能"（绵里藏针口径：蓄力算作未使用攻击技能），
+        # 故此处不记 attack_used_this_turn；释放回合走下面的正常记账。
         # 对外只暴露“使用了蓄力”，不暴露具体技能。
         logs.append(f"{side} {pet.name} 开始蓄力")
         # 特性：进入蓄力状态（洄游 200114 等）
@@ -762,10 +1075,27 @@ def _resolve_action(
             pet.used_skill_counts[skill.skill_id] = (
                 pet.used_skill_counts.get(skill.skill_id, 0) + 1
             )
+            # "若上次使用攻击技"类判定的来源：与使用记录同一时点更新
+            pet.last_used_skill_id = skill.skill_id
+        # "上回合是否使用攻击技能"类判定的来源（绵里藏针）：与"重放不算新的
+        # 使用"不同——重放也确实打出了攻击技能，同样记账。蓄力回合不走这里
+        # （蓄力算作未使用攻击技能），释放回合在此正常记账。
+        if skill.category in (0, 1):
+            pet.attack_used_this_turn = True
     logs.append(f"{side} {pet.name} 使用 {skill.name}")
     if used is not None:
         used.append(skill)
     # 特性：技能开始
+    skills.emit(
+        state, skills.STAGE_USE_START, pet, skill,
+        skill_index=action.skill_index,
+        is_first=is_first,
+        is_counter=is_counter,
+        counter_category=counter_category,
+        energy_cost=total_cost,
+        choice_branch=action.choice_branch,
+        logs=logs,
+    )
     traits.emit(
         state,
         "skill_start",
@@ -785,11 +1115,28 @@ def _resolve_action(
         logs.append("  对方没有在场精灵")
         return logs
 
+    # 一次性增益"下一次攻击技能威力+N%/+N"（持续高温/伺机而动/热身/淬火/暖气）：
+    # 攻击技能用时取走（P11 增量语义：百分比翻倍 = +100%，固定值 1 层 = 1 点威力），
+    # 只作用于一次攻击技能行动；蓄力回合在更早处 return，故蓄力不消耗（与"蓄力不算
+    # 使用攻击技能"一致），释放回合照常消耗并计入本次伤害。计入 extra_power_*，
+    # 故与其它通用威力 buff 一致，星陨印记的附加伤害同样吃（见下方星陨段）。
+    if skill.category in (0, 1):
+        next_attack_percent, next_attack_flat = buffs.consume_next_attack_power(pet)
+    else:
+        next_attack_percent, next_attack_flat = 0, 0
+
     total_damage = 0
     applied_damage = 0
     hit_count = 1
     if skill.category in (0, 1) and skill.power is not None:
-        skill_element = traits.query_skill_element(state, pet, skill)
+        # 技能实际系别：特性侧改写为底，技能侧可再改写（"本技能系别和天气系别相同"，天光）
+        skill_element = skills.query_element(
+            state, pet, skill,
+            base=traits.query_skill_element(state, pet, skill),
+            is_first=is_first,
+            is_counter=is_counter,
+            choice_branch=action.choice_branch,
+        )
         # 天气：雨天使水系技能威力提升至150%
         extra_power_percent = (
             50.0
@@ -800,6 +1147,8 @@ def _resolve_action(
         # 印记 2：蓄势印记 —— 全技能威力+30%/层
         # 印记 12：风气印记 —— 先手攻击时技能威力+20%/层
         extra_power_flat = 0.0
+        extra_power_percent += next_attack_percent
+        extra_power_flat += next_attack_flat
         if marks.get_mark(state, side, marks.POSITIVE) is not None:
             positive = marks.get_mark(state, side, marks.POSITIVE)
             if positive["id"] == 0:
@@ -813,7 +1162,6 @@ def _resolve_action(
                 extra_power_flat += active_burst["value"]
             if active_burst["type"] == "attack_power_percent":
                 extra_power_percent += active_burst["value"]
-        pet.has_acted_since_entry = True
         # 特性：威力/属性/连击修正汇总
         extra_power_percent, extra_power_flat = traits.query_power(
             state,
@@ -838,10 +1186,12 @@ def _resolve_action(
             skill_index=action.skill_index,
             is_first=is_first,
             is_counter=is_counter,
+            choice_branch=action.choice_branch,
         )
         # 威力由规则算出的技能（闪击/鸣沙按差值查表等）：绝对覆盖基础威力（S17）。
         absolute_power = skills.query_absolute_power(
-            state, pet, skill, is_first=is_first
+            state, pet, skill, is_first=is_first,
+            choice_branch=action.choice_branch,
         )
         result = calc_damage(
             pet,
@@ -857,10 +1207,17 @@ def _resolve_action(
             power_override=absolute_power,
         )
         # 连击数 = 基础1 + buff + 特性 + 技能自身修正（共用 skills.compute_hit_count）。
-        hit_count = skills.compute_hit_count(state, pet, skill, opponent)
+        # is_counter/is_first 透传：应对时或后手时改变连击数的技能
+        # （"应对状态：本技能变为3连击"/"若后手攻击，改为3连击"）即时生效。
+        hit_count = skills.compute_hit_count(
+            state, pet, skill, opponent, skill_index=action.skill_index,
+            is_counter=is_counter, is_first=is_first,
+            choice_branch=action.choice_branch,
+        )
         total_damage = result["damage"] * hit_count
         if total_damage > 0:
             prevented = False
+            prevented_msg = ""
             if total_damage >= opponent.hp:
                 # 特性：致命伤害判定（免死类）
                 prevented = traits.emit_lethal(
@@ -872,6 +1229,13 @@ def _resolve_action(
                     skill=skill,
                     is_first=is_first,
                 )
+                if prevented:
+                    prevented_msg = f"  {opponent.name} 的特性使其免疫了致命伤害"
+                elif opponent.survive_lethal_turn == state.turn:
+                    # 技能侧免死：血气"应对攻击：本回合受到致命伤害时，保留1生命值"
+                    opponent.hp = 1
+                    prevented = True
+                    prevented_msg = f"  {opponent.name} 保留 1 点生命值"
             if not prevented:
                 opponent.hp = max(0, opponent.hp - total_damage)
                 applied_damage = total_damage
@@ -901,8 +1265,25 @@ def _resolve_action(
                     hit_count=hit_count,
                     is_first=is_first,
                 )
-                lifesteal = buffs.get_lifesteal(pet) + traits.query_lifesteal(
-                    state, pet, opponent, skill=skill
+                # 受击方技能侧反应（嗜痛"应对攻击：期间每受到1次攻击伤害获得
+                # 双攻+40%"）：伤害落位后按连击段数广播给受击方携带的技能。
+                skills.emit_take_damage(
+                    state,
+                    opponent,
+                    applied_damage,
+                    attacker=pet,
+                    skill=skill,
+                    hit_count=hit_count,
+                    is_first=is_first,
+                    logs=logs,
+                )
+                lifesteal = (
+                    buffs.get_lifesteal(pet)
+                    + traits.query_lifesteal(state, pet, opponent, skill=skill)
+                    + skills.query_lifesteal(
+                        state, pet, skill, skill_index=action.skill_index,
+                        choice_branch=action.choice_branch,
+                    )
                 )
                 if lifesteal > 0:
                     heal = int(applied_damage * lifesteal)
@@ -934,12 +1315,12 @@ def _resolve_action(
                         hit_count=hit_count,
                     )
             else:
-                logs.append(f"  {opponent.name} 的特性使其免疫了致命伤害")
+                logs.append(prevented_msg)
         else:
             logs.append("  没有造成伤害")
 
-        # 命中后先跑"登记类"效果（脱离/返场，deferrable=False）：立即生效（B36）；
-        # 其余命中附加效果登记到回合末统一结算（B39）；含未造成伤害的情形（S9）。
+        # 命中附加效果在技能命中后立即结算；脱离/返场请求也在本次行动后立即处理。
+        # 含未造成伤害的情形：STAGE_HIT 仍照常触发。
         hit_ctx = skills.emit(
             state,
             skills.STAGE_HIT,
@@ -949,30 +1330,18 @@ def _resolve_action(
             is_first=is_first,
             is_counter=is_counter,
             counter_category=counter_category,
+            countered_by=countered_by,
+            incoming_skill=countered_skill,
             energy_cost=total_cost,
             damage_dealt=applied_damage,
             hit_count=hit_count,
+            choice_branch=action.choice_branch,
             logs=logs,
-            _defer_mode="collect",
         )
         _consume_skill_leave(state, hit_ctx, side, logs)
-        state.pending_hit_effects.append(
-            {
-                "pet": pet,
-                "skill": skill,
-                "skill_index": action.skill_index,
-                "is_first": is_first,
-                "counter_category": counter_category,
-                "energy_cost": total_cost,
-                "damage_dealt": applied_damage,
-                "hit_count": hit_count,
-                # "若使用本技能击败敌方"类的快照：伤害已结算，对方 hp≤0 即本次击败
-                "killed": opponent.hp <= 0,
-                # 命中当时的对方在场精灵（"若击败敌方"类的锚点——回合末结算时
-                # 被击败者已不在场，活跃位是空的）
-                "hit_target": opponent,
-            }
-        )
+        # 入场首动标记在本次行动全部结算后（伤害/威力/连击/命中登记）才置位：
+        # 技能自带的迸发（"迸发：本次技能威力+30"类）按行动前的状态判定。
+        pet.has_acted_since_entry = True
 
         negative_mark = marks.get_mark(state, opponent_side, marks.NEGATIVE)
         # 印记 7：星陨印记 —— 非幻系攻击触发额外幻系伤害
@@ -1011,7 +1380,8 @@ def _resolve_action(
         # 钳制到 [0, 1]：技能减伤可叠乘（不可接触"敌方每有1层中毒减伤+10%"），
         # 超过 100% 时星陨伤害的 (1 - defense_reduction) 会变成负数而反过来给对手回血。
         reduction = skills.query_damage_reduction(
-            state, pet, skill, skill_index=action.skill_index
+            state, pet, skill, skill_index=action.skill_index,
+            choice_branch=action.choice_branch,
         )
         pet.defense_reduction = max(0.0, min(1.0, reduction))
         # 防御技能复用通用冷却：任意防御使用后，本精灵所有防御技能进入冷却。
@@ -1019,6 +1389,23 @@ def _resolve_action(
             if defense_skill.category == 2:
                 skill_utils.schedule_skill_cooldown(pet, defense_skill.skill_id)
         logs.append(f"  防御，减伤 {int(reduction * 100)}%")
+        # 防御技能本体（STAGE_DEFENSE）：血气"应对攻击保留1血"等需要在对方本次
+        # 攻击落位前生效的效果在此即时结算（防御应对攻击时强制先手，先于攻击方
+        # 行动），是 B38 回合末登记的例外（与"应对状态：本次威力N倍"同类）。
+        defense_ctx = skills.emit(
+            state,
+            skills.STAGE_DEFENSE,
+            pet,
+            skill,
+            skill_index=action.skill_index,
+            is_first=is_first,
+            is_counter=is_counter,
+            counter_category=counter_category,
+            energy_cost=total_cost,
+            choice_branch=action.choice_branch,
+            logs=logs,
+        )
+        _consume_skill_leave(state, defense_ctx, side, logs)
         traits.emit(
             state,
             "defense",
@@ -1046,6 +1433,7 @@ def _resolve_action(
             is_counter=is_counter,
             counter_category=counter_category,
             energy_cost=total_cost,
+            choice_branch=action.choice_branch,
             logs=logs,
         )
         # 状态技能可登记脱离（移花接木"随后脱离"等），统一消费。
@@ -1061,6 +1449,30 @@ def _resolve_action(
             is_counter=is_counter,
         )
 
+    # 技能使用后（STAGE_AFTER_USE）：永久成长/巧变/冷却/脱离等（README §阶段表）。
+    # 成长写入 skill_state，能耗/连击/威力查询与付费、显示同走一条管线。
+    after_use_ctx = skills.emit(
+        state,
+        skills.STAGE_AFTER_USE,
+        pet,
+        skill,
+        skill_index=action.skill_index,
+        is_first=is_first,
+        is_counter=is_counter,
+        counter_category=counter_category,
+        energy_cost=total_cost,
+        damage_dealt=applied_damage,
+        hit_count=hit_count,
+        choice_branch=action.choice_branch,
+        logs=logs,
+    )
+    # 使用后登记的脱离（如"使用后自己脱离"类），统一消费。
+    _consume_skill_leave(state, after_use_ctx, side, logs)
+    # 使用后自身生命归零（彗星"使用后消耗全部生命"类）：立即力竭。
+    if pet.hp <= 0:
+        _apply_faint(state, side, logs)
+        return logs
+
     if is_counter:
         # 应对判定成功：只登记奖励从句，延迟到回合末结算的第一步统一生效（B38）。
         # 判定与强制先手在行动排序时已生效；从句不在此立即结算——否则扣能类从句
@@ -1075,6 +1487,8 @@ def _resolve_action(
                 "energy_cost": total_cost,
                 "damage_dealt": applied_damage,
                 "hit_count": hit_count,
+                "choice_branch": action.choice_branch,
+                "incoming_skill": countered_skill,
             }
         )
 
@@ -1105,15 +1519,27 @@ def _resolve_action(
 
 
 # 技能实际能耗（印记 2/11、天气沙暴、buff、特性共同修正）
-def current_skill_cost(state: BattleState, side: str, skill) -> int:
+def current_skill_cost(
+    state: BattleState,
+    side: str,
+    skill,
+    skill_index: int | None = None,
+    choice_branch: int = 0,
+) -> int:
     pet = _active_pet(state, side)
     if pet is None:
         return 0
-    return skill_utils.true_energy_cost(state, pet, skill)
+    return skill_utils.true_energy_cost(
+        state, pet, skill, skill_index=skill_index, choice_branch=choice_branch
+    )
 
 
 def can_use_skill(
-    state: BattleState, side: str, skill, skill_index: int | None = None
+    state: BattleState,
+    side: str,
+    skill,
+    skill_index: int | None = None,
+    choice_branch: int = 0,
 ) -> bool:
     """技能是否可用（能耗/技能冷却/特性限制），供服务端校验与客户端提示。"""
     pet = _active_pet(state, side)
@@ -1132,10 +1558,19 @@ def can_use_skill(
         if skill_utils.is_skill_on_cooldown(pet, skill.skill_id):
             return False
         return traits.query_skill_usable(state, pet, skill, skill_index=skill_index)
-    if pet.energy < current_skill_cost(state, side, skill):
-        # 特性兜底：能量不足但特性可补充（如石头大餐消耗生命代替能量）
-        gap = current_skill_cost(state, side, skill) - pet.energy
-        if traits.query_energy_shortfall(state, pet, gap, skill) <= 0:
+    if pet.energy < current_skill_cost(
+        state, side, skill, skill_index=skill_index, choice_branch=choice_branch
+    ):
+        # 能量不足兜底的选择校验（dry_run，无副作用）：特性（石头大餐类）或
+        # 技能自身（虚假破产类）能补足且生命够付才可选；结算时不做死亡保护。
+        gap = current_skill_cost(
+            state, side, skill, skill_index=skill_index, choice_branch=choice_branch
+        ) - pet.energy
+        trait_cover = traits.query_energy_shortfall(state, pet, gap, skill, dry_run=True)
+        skill_cover = skills.query_energy_shortfall(
+            state, pet, skill, gap, skill_index=skill_index, dry_run=True
+        )
+        if trait_cover + skill_cover < gap:
             return False
     if skill_utils.is_skill_on_cooldown(pet, skill.skill_id):
         return False
@@ -1149,6 +1584,8 @@ def _resolve_repeated(
     is_first: bool,
     is_counter: bool = False,
     counter_category: str = "",
+    countered_by: str = "",
+    countered_skill=None,
 ) -> list:
     logs = []
     pet = _active_pet(state, side)
@@ -1165,6 +1602,12 @@ def _resolve_repeated(
     count = max(1, pet.overload_current.get(key, 0)) if key is not None else 1
     # 迸发：本次行动技能使用次数+1（入场后首次行动，如噼啪！）
     if action.kind == "skill":
+        # 上回合登记的"下回合所选技能使用次数+1"（过载回路/电磁偏转）：跟着本次
+        # 所选技能走，一次性消费（聚能没有"所选技能"，不生效；蓄力技能下面会被
+        # 重置为 1，同样不参与重复）。
+        next_bonus = pet.overload_current.pop("__next__", 0)
+        if next_bonus:
+            count += next_bonus
         for b in pet.bursts:
             if b["type"] == "skill_use_count":
                 count += b["value"]
@@ -1179,22 +1622,52 @@ def _resolve_repeated(
             skill = pet.skills[action.skill_index]
             # 蓄力释放的能量已在蓄力回合支付，释放回合不再校验。
             if pet.windup_skill is not skill and pet.energy < current_skill_cost(
-                state, side, skill
+                state, side, skill, skill_index=action.skill_index
             ):
                 shortfall = traits.query_energy_shortfall(
                     state,
                     pet,
-                    current_skill_cost(state, side, skill) - pet.energy,
+                    current_skill_cost(
+                        state, side, skill, skill_index=action.skill_index
+                    )
+                    - pet.energy,
                     skill,
                 )
                 if shortfall > 0:
                     pet.energy += shortfall
-                else:
-                    logs.append(f"{side} {pet.name} 能量不足，停止重复使用")
-                    break
+            if pet.windup_skill is not skill and pet.energy < current_skill_cost(
+                state, side, skill, skill_index=action.skill_index
+            ):
+                # 技能自身的能量不足兜底（如虚假破产）
+                shortfall = skills.query_energy_shortfall(
+                    state,
+                    pet,
+                    skill,
+                    current_skill_cost(
+                        state, side, skill, skill_index=action.skill_index
+                    )
+                    - pet.energy,
+                    skill_index=action.skill_index,
+                )
+                if shortfall > 0:
+                    pet.energy += shortfall
+            if pet.hp <= 0:
+                # 兜底支付耗尽生命：直接力竭，技能不再结算
+                logs.append(f"{side} {pet.name} 生命耗尽")
+                _apply_faint(state, side, logs)
+                break
+            if (
+                pet.windup_skill is not skill
+                and pet.energy < current_skill_cost(
+                    state, side, skill, skill_index=action.skill_index
+                )
+            ):
+                logs.append(f"{side} {pet.name} 能量不足，停止重复使用")
+                break
         logs.extend(
             _resolve_action(
-                state, side, action, is_first, is_counter, counter_category, used=used
+                state, side, action, is_first, is_counter, counter_category,
+                countered_by=countered_by, countered_skill=countered_skill, used=used
             )
         )
         if state.winner is not None or state.active[side] < 0:
@@ -1232,7 +1705,8 @@ def used_swift_skills(pet: BattlePet, exclude_id: int) -> list:
 
 
 def replay_used_swift_skills(
-    state: BattleState, pet: BattlePet, exclude_id: int, is_first: bool = False
+    state: BattleState, pet: BattlePet, exclude_id: int, is_first: bool = False,
+    logs: list | None = None,
 ) -> list:
     """疾风连袭：按槽位顺序依次免费重放 used_swift_skills 集合。
 
@@ -1240,15 +1714,18 @@ def replay_used_swift_skills(
     效果**（is_counter=False，不结算应对从句）、不付费、不校验冷却、不进入
     蓄力。每次重放后结算力竭（B33）；胜负已分、使用者力竭或被换下场即中断
     后续重放——对方力竭且无替补在场时，后续攻击重放与正常行动一样扑空。
+
+    产生的日志行写入调用方给出的 ``logs`` 缓冲（技能侧传本次行动的本地日志，
+    保持行序），未给出时落到 ``state.log``。
     """
     side = pet.side
     opp_side = "B" if side == "A" else "A"
-    logs = []
+    out = []
     for skill in used_swift_skills(pet, exclude_id):
         if state.winner is not None or state.active[side] < 0 or pet.hp <= 0:
             break
         idx = pet.skills.index(skill)
-        logs.extend(
+        out.extend(
             _resolve_action(
                 state,
                 side,
@@ -1258,32 +1735,38 @@ def replay_used_swift_skills(
                 replay=True,
             )
         )
-        _apply_faint(state, opp_side, logs)
-        _apply_faint(state, side, logs)
+        _apply_faint(state, opp_side, out)
+        _apply_faint(state, side, out)
         if state.winner is not None:
             break
-    return logs
+    (logs if logs is not None else state.log).extend(out)
+    return out
 
 
 def _action_priority(state: BattleState, side: str, action: Action) -> int:
     """行动的先手值：默认 0，与无修正的技能同一层级正常比速度。
 
     技能行动经 skills.query_priority 查 handler 的 modify_priority（"先手+1"类）；
-    聚能没有技能实体可查，自然落在默认 0。换人行动在排序前已被优先处理（B9），
-    不会进入这里。特性侧暂无先手查询（数据里仅 2 条未实现特性引用先手），
-    有消费者时在返回值处并列追加。
+    聚能没有技能实体可查，但先手 buff（"下一次行动获得先手+1"，如有效预防/野性
+    感官）对任意行动生效——聚能也吃到加成并被消耗。换人行动在排序前已被优先
+    处理（B9），不会进入这里。特性侧暂无先手查询（数据里仅 2 条未实现特性引用
+    先手），有消费者时在返回值处并列追加。
     """
-    if action.kind != "skill" or action.skill_index is None:
-        return 0
     pet = _active_pet(state, side)
-    if pet is None or action.skill_index >= len(pet.skills):
+    if pet is None:
         return 0
+    bonus = buffs.get_priority_bonus(pet)
+    if action.kind != "skill" or action.skill_index is None:
+        return bonus
+    if action.skill_index >= len(pet.skills):
+        return bonus
     skill = pet.skills[action.skill_index]
-    return skills.query_priority(state, pet, skill, skill_index=action.skill_index)
+    return bonus + skills.query_priority(state, pet, skill, skill_index=action.skill_index)
 
 
 def round_end_order(state: BattleState) -> list:
-    return ["A", "B"] if state.home_side == "A" else ["B", "A"]
+    """当前回合普通减益/印记/天气的结算顺序。"""
+    return list(state.round_end_order)
 
 
 def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
@@ -1295,9 +1778,11 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     # 上一回合的脱离暂停/请求不应残留（正常应已被续接消费，这里防御性清空）
     state.paused_turn = None
     state.pending_counters = []
-    state.pending_hit_effects = []
     for side in ("A", "B"):
         state.pending_action_leave[side] = False
+        state.pending_entry_energy[side] = 0
+        state.pending_entry_inherit[side] = False
+        state.pending_entry_buffs[side] = []
 
     # 战斗开始为首发精灵补发入场事件；随后广播回合开始事件（双方行动已选定）
     traits.ensure_entry(state)
@@ -1307,6 +1792,10 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         for pet in team:
             pet.defense_reduction = 0.0
             buffs.start_turn_overload(pet)
+            # "上回合"判定（绵里藏针"若自己上回合未使用攻击技能"）：本回合记录
+            # 平移到上回合并清零；本回合内的新记录只影响下一回合的判定。
+            pet.attack_used_last_turn = pet.attack_used_this_turn
+            pet.attack_used_this_turn = False
 
     for side, action in (("A", action_a), ("B", action_b)):
         if action.kind == "flee":
@@ -1355,6 +1844,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         second = None
         forced = None
         counter_category = ""
+        countered_by = {"A": "", "B": ""}
     else:
         a_speed = _effective_speed(state, "A")
         b_speed = _effective_speed(state, "B")
@@ -1364,9 +1854,13 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         # 应对：按独立应对模块判定强制先手；其余按先手值/速度决定
         forced = counter.forced_first(state, remaining["A"], remaining["B"])
         counter_category = ""
+        # 被应对方视角：countered_by[侧] = 应对方行动的类别
+        # （"本次攻击未被防御技能应对"类判定的快照来源）。
+        countered_by = {"A": "", "B": ""}
         if forced == "A":
             first, second = "A", "B"
             counter_category = counter.action_category(state, "B", remaining["B"])
+            countered_by["B"] = counter.action_category(state, "A", remaining["A"])
             counter.record_counter(_active_pet(state, "A"), counter_category)
             traits.emit(
                 state,
@@ -1380,6 +1874,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         elif forced == "B":
             first, second = "B", "A"
             counter_category = counter.action_category(state, "A", remaining["A"])
+            countered_by["A"] = counter.action_category(state, "B", remaining["B"])
             counter.record_counter(_active_pet(state, "B"), counter_category)
             traits.emit(
                 state,
@@ -1401,6 +1896,18 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         else:
             first, second = ("A", "B") if random.random() < 0.5 else ("B", "A")
 
+    # 打断（"应对成功：打断被应对技能"）：应对判定成功时**立即**作废被应对方本次
+    # 声明，不结算（不走 B38 的回合末从句）。被应对方是后手方（应对强制先手）；
+    # 换人不是技能、且已在排序前处理，因此不受影响。
+    # 能耗口径（SPEC B40）：能耗在结算时才支付，取消即等于未支付（不额外发放能量）；
+    # 蓄力释放本次不再付费（费用在蓄力回合已付），因此打断释放不返还能量，
+    # 且蓄力状态保留（被打断的是本次行动，不是蓄力本身）。
+    interrupted = None
+    if forced == first and second is not None:
+        counter_skill = counter._action_skill(state, first, remaining[first])
+        if getattr(counter_skill, "counter_interrupt", False):
+            interrupted = second
+
     if first in remaining:
         state.log.extend(
             _resolve_repeated(
@@ -1410,28 +1917,64 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
                 is_first=True,
                 is_counter=(forced == first),
                 counter_category=counter_category if forced == first else "",
+                countered_by=countered_by[first],
+                countered_skill=(
+                    _active_pet(state, second).skills[remaining[second].skill_index]
+                    if forced == first and second is not None
+                    and remaining[second].kind == "skill"
+                    and _active_pet(state, second) is not None
+                    and 0 <= remaining[second].skill_index < len(_active_pet(state, second).skills)
+                    else None
+                ),
             )
         )
         _apply_faint(state, "B" if first == "A" else "A")
         if state.winner is not None:
             return state
-        # 先手方行动后请求脱离（如移花接木"随后脱离"）：立即离场并暂停等待选人
+        # 先手方行动后请求脱离（如移花接木"随后脱离"）：立即离场并暂停等待选人。
+        # **双侧脱离**（风隐）同样在此刻立即进入收集阶段：双方先盲选替补，
+        # 集齐后再"先退先入、后退后入"；后手方的行动在其后照常结算（打到新精灵）。
+        if _start_double_leave(
+            state,
+            (first, second),
+            {
+                "do_second": second is not None
+                and second in remaining
+                and state.active[second] >= 0
+                and second != interrupted,
+                "second": second,
+                "second_action": remaining.get(second),
+                "second_is_counter": forced == second,
+                "second_counter_category": counter_category if forced == second else "",
+                "second_countered_by": countered_by[second] if second is not None else "",
+                "order": (first, second),
+            },
+        ):
+            return state
         if _try_pause_for_leave(
             state,
             first,
             {
                 "do_second": second is not None
                 and second in remaining
-                and state.active[second] >= 0,
+                and state.active[second] >= 0
+                and second != interrupted,
                 "second": second,
                 "second_action": remaining.get(second),
                 "second_is_counter": forced == second,
                 "second_counter_category": counter_category if forced == second else "",
+                "second_countered_by": countered_by[second] if second is not None else "",
+                "order": (first, second),
             },
         ):
             return state
 
-    if second is not None and second in remaining and state.active[second] >= 0:
+    if (
+        second is not None
+        and second in remaining
+        and state.active[second] >= 0
+        and second != interrupted
+    ):
         state.log.extend(
             _resolve_repeated(
                 state,
@@ -1440,13 +1983,28 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
                 is_first=False,
                 is_counter=(forced == second),
                 counter_category=counter_category if forced == second else "",
+                countered_by=countered_by[second],
+                countered_skill=(
+                    _active_pet(state, first).skills[remaining[first].skill_index]
+                    if forced == second and first is not None
+                    and remaining[first].kind == "skill"
+                    and _active_pet(state, first) is not None
+                    and 0 <= remaining[first].skill_index < len(_active_pet(state, first).skills)
+                    else None
+                ),
             )
         )
         _apply_faint(state, "B" if second == "A" else "A")
         if state.winner is not None:
             return state
-        # 后手方行动后请求脱离（吓退使敌方脱离、移花接木后手等）：立即离场并暂停等待选人
-        if _try_pause_for_leave(state, second, {"do_second": False}):
+        # 双侧脱离（风隐"敌方和自己均脱离"类）：双方**先各自盲选**替补（收集阶段，
+        # 引擎不换人、不下发对方选择），集齐后再按先手顺序"先退先入、后退后入"。
+        # 单侧脱离照旧只处理对应一侧（吓退使敌方脱离、移花接木后手等）。
+        if _start_double_leave(state, (first, second), {"do_second": False, "order": (first, second)}):
+            return state
+        elif _try_pause_for_leave(state, first, {"do_second": False, "order": (first, second)}):
+            return state
+        elif _try_pause_for_leave(state, second, {"do_second": False, "order": (first, second)}):
             return state
 
     _round_end(state)
@@ -1458,23 +2016,31 @@ def pet_to_dict(
     opponent: BattlePet | None = None,
     typechart: dict | None = None,
     hide_wish: bool = False,
+    state: BattleState | None = None,
 ) -> dict:
     skills_source = pet.skills
     if hide_wish and pet.wish_original_skill is not None:
         skills_source = list(pet.skills)
         skills_source[0] = pet.wish_original_skill
-    skills = []
+    # 注意：局部变量不能叫 skills——会遮蔽 sim.skills 模块（下方要查技能侧系别改写）
+    skill_items = []
     for i, skill in enumerate(skills_source):
+        # 显示系别同样含改写（特性侧 + 技能侧，如天光随天气变系）
+        element = skill.element
+        if state is not None:
+            element = traits.query_skill_element(state, pet, skill)
+            element = skills.query_element(state, pet, skill, base=element)
         item = {
             "index": i,
             "skill_id": skill.skill_id,
             "name": skill.name,
-            "element": skill.element,
+            "element": element,
             "category": skill.category,
             "power": skill.power,
             "energy_cost": skill.energy_cost,
             "desc": skill.desc,
             "display_power": None,
+            "choice": bool(getattr(skill, "choice", False)),
         }
         if (
             opponent is not None
@@ -1485,7 +2051,7 @@ def pet_to_dict(
             item["display_power"] = calc_damage(pet, opponent, skill, typechart)[
                 "display_power"
             ]
-        skills.append(item)
+        skill_items.append(item)
     return {
         "name": pet.name,
         "spirit_id": pet.spirit_id,
@@ -1508,7 +2074,7 @@ def pet_to_dict(
             }
             for buff in pet.buffs
         ],
-        "skills": skills,
+        "skills": skill_items,
     }
 
 
@@ -1530,6 +2096,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                 opponent,
                 typechart,
                 hide_wish=(view_side is not None and side != view_side),
+                state=state,
             )
             # 特性效果显示行（客户端 buff 区，如 +双攻 * n (20%/trait)）：只给在场精灵，场下不下发
             d["trait_effects"] = (
@@ -1553,7 +2120,10 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                         # 己方显示真实能耗：天气/印记/buff/特性修正全部计入，最后统一钳制
                         # （缩壳-2、冰封敌方光环+1、对流翻转等）
                         skill_item["energy_cost"] = skill_utils.true_energy_cost(
-                            state, pet, skill_obj
+                            state,
+                            pet,
+                            skill_obj,
+                            skill_index=skill_item["index"],
                         )
                         # 己方显示真实威力：含特性威力/属性改写修正（目空/涂鸦/展翅等；
                         # 顺风/破空等先手条件按非先手计算，实际出招时另算）
@@ -1627,7 +2197,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         "log": state.log,
         "magic": state.magic,
         "active": state.active,
-        "home_side": state.home_side,
+        "round_end_order": list(state.round_end_order),
         "weather": state.weather,
         "marks": state.marks,
         "resonance_usage": state.resonance_usage,

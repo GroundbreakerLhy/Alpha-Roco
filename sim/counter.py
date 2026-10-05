@@ -33,7 +33,12 @@ def action_category(state: BattleState, side: str, action: Action) -> str:
     pet = state.teams[side][idx]
     if not (0 <= action.skill_index < len(pet.skills)):
         return NON_SKILL
-    return category_of(pet.skills[action.skill_index])
+    skill = pet.skills[action.skill_index]
+    # 蓄力不是状态行动（SPEC B41）：蓄力技能的首段"开始蓄力"不参与应对判定——
+    # 既不会被应对，也不作为应对的触发类别；释放段按技能自身类别参与应对。
+    if getattr(skill, "windup", False) and pet.windup_skill is not skill:
+        return NON_SKILL
+    return category_of(skill)
 
 
 def _action_skill(state: BattleState, side: str, action: Action):

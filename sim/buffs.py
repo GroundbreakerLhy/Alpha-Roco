@@ -18,6 +18,12 @@ class BuffType:
     DEF = "def"  # 物抗
     SPDEF = "spdef"  # 魔抗
     SKILL_POWER_PERCENT = "skill_power_percent"  # 技能威力_百分比
+    NEXT_ATTACK_POWER_PERCENT = (
+        "next_attack_power_percent"  # 下一次攻击技能威力_百分比（一次性，攻击技能用时消耗）
+    )
+    NEXT_ATTACK_POWER_FLAT = (
+        "next_attack_power_flat"  # 下一次攻击技能威力_固定值（一次性，攻击技能用时消耗）
+    )
     LIFESTEAL = "lifesteal"  # 吸血
     HIT_COUNT_PERCENT = "hit_count_percent"  # 连击数_百分比
     SPEED = "speed"  # 速度_固定值（每层+10）
@@ -25,6 +31,7 @@ class BuffType:
     SKILL_POWER_FLAT = "skill_power_flat"  # 技能威力_固定值
     HIT_COUNT_FLAT = "hit_count_flat"  # 连击数_固定值
     ENERGY_COST = "energy_cost"  # 能耗
+    ATTACK_ENERGY_COST = "attack_energy_cost"  # 攻击技能能耗（仅攻击技能生效）
     OVERLOAD = "overload"  # 超载
     PRIORITY = "priority"  # 先手
     PRIORITY_DEBUFF = "priority_debuff"  # 先手减益
@@ -54,6 +61,7 @@ ALWAYS_BUFF_TYPES = {
 PERCENT_LAYER_BUFF_TYPES = frozenset(
     {
         BuffType.SKILL_POWER_PERCENT,
+        BuffType.NEXT_ATTACK_POWER_PERCENT,
         BuffType.HIT_COUNT_PERCENT,
     }
 )
@@ -84,14 +92,17 @@ SIGNED_TYPES = {
     BuffType.DEF,
     BuffType.SPDEF,
     BuffType.SKILL_POWER_PERCENT,
+    BuffType.NEXT_ATTACK_POWER_PERCENT,
     BuffType.HIT_COUNT_PERCENT,
     BuffType.SPEED,
     BuffType.SPEED_PERCENT,
     BuffType.SKILL_POWER_FLAT,
+    BuffType.NEXT_ATTACK_POWER_FLAT,
     BuffType.HIT_COUNT_FLAT,
     BuffType.OVERLOAD,
     BuffType.PRIORITY,
     BuffType.ENERGY_COST,
+    BuffType.ATTACK_ENERGY_COST,
 }
 
 DEBUFF_TYPES = {
@@ -113,7 +124,7 @@ def classify_buff(buff_type: str, value: int = 0) -> str:
     if buff_type in DEBUFF_TYPES:
         return "debuff"
     if buff_type in SIGNED_TYPES:
-        if buff_type == BuffType.ENERGY_COST:
+        if buff_type in (BuffType.ENERGY_COST, BuffType.ATTACK_ENERGY_COST):
             if value > 0:
                 return "debuff"
             if value < 0:
@@ -160,16 +171,17 @@ class Buff:
     source_side: str = ""
     source_pet: str = ""
     expire_turn: int | None = None
-    source_kind: str = ""  # "" = 普通增益/减益；"trait" = 特性效果（不算增益）
+    source_kind: str = ""  # "" = 技能/常规来源；"debuff" = 特性给敌方施加的减益；
+    # "trait" = 特性自身的展示效果（不是增益/减益，另一类别）
 
     def is_gain(self) -> bool:
-        """是否属于"增益"（特性来源不算）。"""
+        """是否属于"增益"。特性自身的展示效果（source_kind="trait"）不是增益。"""
         if self.source_kind == "trait":
             return False
         return classify_buff(self.buff_type, self.value) in ("buff", "both")
 
     def is_loss(self) -> bool:
-        """是否属于"减益"（特性来源不算）。"""
+        """是否属于"减益"。特性自身的展示效果（source_kind="trait"）不是减益。"""
         if self.source_kind == "trait":
             return False
         return classify_buff(self.buff_type, self.value) in ("debuff", "both")
@@ -324,7 +336,17 @@ def _immune(pet, element: int) -> bool:
     return element in pet.attributes
 
 
-def _apply_damage(pet, damage: int) -> None:
+def _apply_damage(pet, damage: int, current_turn: int | None = None) -> None:
+    """持续伤害结算。血气类"本回合受到致命伤害保留1血"对回合末持续伤害
+    （中毒/灼烧/寄生）同样生效；冰冻力竭是阈值判定（非伤害），不受其保护。
+    """
+    if (
+        current_turn is not None
+        and damage >= pet.hp
+        and getattr(pet, "survive_lethal_turn", 0) == current_turn
+    ):
+        pet.hp = 1
+        return
     pet.hp = max(0, pet.hp - damage)
 
 
@@ -350,7 +372,7 @@ def _trigger_lightning(pet) -> None:
 
 def on_round_end(state) -> None:
     typechart = load_typechart()
-    order = ["A", "B"] if state.home_side == "A" else ["B", "A"]
+    order = list(getattr(state, "round_end_order", ["A", "B"]))
 
     for side in order:
         for pet in state.teams[side]:
@@ -372,7 +394,7 @@ def _apply_poison(pet, typechart, state=None) -> None:
         return
     mult = type_multiplier(9, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.03 * layers * mult)
-    _apply_damage(pet, damage)
+    _apply_damage(pet, damage, state.turn if state is not None else None)
     if damage > 0 and state is not None:
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
@@ -396,7 +418,7 @@ def _apply_burn(pet, typechart, state=None) -> None:
         return
     mult = type_multiplier(2, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
-    _apply_damage(pet, damage)
+    _apply_damage(pet, damage, state.turn if state is not None else None)
     if state is not None:
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
@@ -424,7 +446,7 @@ def _apply_leech(pet, state, typechart) -> None:
         return
     mult = type_multiplier(1, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
-    _apply_damage(pet, damage)
+    _apply_damage(pet, damage, state.turn if state is not None else None)
     source = _find_source_pet(
         state,
         pet.buffs[0].source_side if pet.buffs else "",
@@ -486,6 +508,23 @@ def get_stat_multiplier(pet, stat: str) -> float:
 def get_skill_power_modifier(pet) -> tuple:
     percent = get_buff_value(pet, BuffType.SKILL_POWER_PERCENT)
     flat = get_buff_value(pet, BuffType.SKILL_POWER_FLAT)
+    return percent, flat
+
+
+def consume_next_attack_power(pet) -> tuple:
+    """"下一次攻击技能威力"一次性增益的取用（攻击技能用时调用）。
+
+    返回增量 ``(百分比, 固定值)``（P11 增量语义：百分比 100 = 翻倍；固定值
+    1 层 = 1 点威力，同 SKILL_POWER_FLAT）；百分比/固定值两条通道一并清空，
+    无增益时返回 ``(0, 0)`` 且不动任何状态。常规时长（NORMAL）——离场清除、
+    可被驱散增益剥掉，故换人后不再保留（与其它常规时长的增益一致）。
+    """
+    percent = get_buff_value(pet, BuffType.NEXT_ATTACK_POWER_PERCENT)
+    flat = get_buff_value(pet, BuffType.NEXT_ATTACK_POWER_FLAT)
+    if percent:
+        remove_buff(pet, BuffType.NEXT_ATTACK_POWER_PERCENT)
+    if flat:
+        remove_buff(pet, BuffType.NEXT_ATTACK_POWER_FLAT)
     return percent, flat
 
 

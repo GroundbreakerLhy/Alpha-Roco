@@ -63,10 +63,14 @@ def energy_modifier_before_traits(state, pet, skill) -> int:
         bonus += positive["stacks"]
     if positive is not None and positive["id"] == 11:
         bonus -= positive["stacks"]
+    # 攻击技能能耗（恶意逃离类）：只对攻击技能生效的带符号修正
+    if category_of(skill) == ATTACK:
+        bonus += buffs.get_buff_value(pet, buffs.BuffType.ATTACK_ENERGY_COST)
     return buffs.get_energy_cost_modifier(pet) + bonus
 
 
-def true_energy_cost(state, pet, skill) -> int:
+def true_energy_cost(state, pet, skill, skill_index: int | None = None,
+                     choice_branch: int = 0) -> int:
     """技能的真实能耗：含天气、印记(蓄势/湿润)、buff、特性与技能自身修正。
 
     与 battle.current_skill_cost 同一套算法（该函数也复用本函数），
@@ -79,11 +83,18 @@ def true_energy_cost(state, pet, skill) -> int:
         return 0
     from . import skills, traits
 
+    if skill_index is None:
+        skill_index = next(
+            (i for i, candidate in enumerate(pet.skills) if candidate is skill),
+            -1,
+        )
+
     total = (
         skill.energy_cost
         + energy_modifier_before_traits(state, pet, skill)
         + traits.query_energy_cost(state, pet, skill)
-        + skills.query_energy_cost(state, pet, skill)
+        + skills.query_energy_cost(state, pet, skill, skill_index=skill_index,
+                                   choice_branch=choice_branch)
     )
     return max(0, total)
 

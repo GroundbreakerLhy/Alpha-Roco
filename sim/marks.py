@@ -90,7 +90,7 @@ def amplify_buff_gain(state, side: str, buff_type: str, value: int) -> int:
 # 回合结束印记结算：中毒印记(4)、光合印记(10)
 def on_round_end(state) -> None:
     typechart = load_typechart()
-    order = ["A", "B"] if state.home_side == "A" else ["B", "A"]
+    order = list(getattr(state, "round_end_order", ["A", "B"]))
     for side in order:
         active_idx = state.active[side]
         if active_idx < 0:

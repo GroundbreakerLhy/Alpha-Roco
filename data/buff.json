@@ -133,6 +133,24 @@
       "immune": []
     },
     {
+      "id": "next_attack_power_percent",
+      "desc": "每层提升1%下一次攻击技能威力，攻击技能使用时一次性消耗。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "percent",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
+      "id": "next_attack_power_flat",
+      "desc": "每层增加1点下一次攻击技能威力，攻击技能使用时一次性消耗。",
+      "type": "both",
+      "duration": "normal",
+      "unit": "flat",
+      "per_layer": 1,
+      "immune": []
+    },
+    {
       "id": "hit_count_flat",
       "desc": "每层增加1点连击数。",
       "type": "both",

@@ -85,7 +85,7 @@ def _make_ctx(state: BattleState, actor: BattlePet, event: str, **kw) -> TraitCo
 def _scope_pets(
     state: BattleState, scope: str, side: str = "", pet: BattlePet | None = None
 ) -> list:
-    order = ["A", "B"] if state.home_side == "A" else ["B", "A"]
+    order = ["A", "B"]
     if scope == "self":
         return [pet] if pet is not None else []
     if scope == "side":
@@ -197,21 +197,29 @@ def describe(state: BattleState, pet: BattlePet) -> list:
     return list(result) if result else []
 
 
-def on_round_end(state: BattleState) -> None:
-    """回合结束（特性层）。双向光速类特性可让整段特性回合结算重复触发。"""
+def on_round_end(state: BattleState, order: list | None = None) -> None:
+    """按速度顺序结算双方特性；单个特性触发的返场在 handler 内完整执行。"""
+    if order is None:
+        from ..battle import _effective_speed
+        import random
+        a_speed = _effective_speed(state, "A")
+        b_speed = _effective_speed(state, "B")
+        order = (["A", "B"] if a_speed > b_speed else ["B", "A"]
+                 if b_speed > a_speed else random.sample(["A", "B"], 2))
+    # 保留全场额外触发/禁止触发的汇总语义，不将光环缩小成仅影响自身。
     repeats = 1
-    for side in ("A", "B"):
+    for side in order:
         idx = state.active[side]
         if idx < 0:
             continue
         owner = state.teams[side][idx]
         handler = get_handler(owner.trait_id)
-        if handler is None:
-            continue
-        ctx = _make_ctx(state, owner, "round_end_repeats", active=True)
-        repeats += handler.modify_round_end_repeats(ctx)
-    for _ in range(max(0, repeats)):
-        emit(state, "round_end", scope="all")
+        if handler is not None:
+            ctx = _make_ctx(state, owner, "round_end_repeats", active=True)
+            repeats += handler.modify_round_end_repeats(ctx)
+    for side in order:
+        for _ in range(max(0, repeats)):
+            emit(state, "round_end", scope="side", side=side)
 
 
 def on_buff_gain(
@@ -435,9 +443,11 @@ def query_energy_gain(state: BattleState, pet: BattlePet, amount: int, **kw) -> 
 
 
 def query_energy_shortfall(
-    state: BattleState, pet: BattlePet, need: int, skill: BattleSkill | None, **kw
+    state: BattleState, pet: BattlePet, need: int, skill: BattleSkill | None,
+    dry_run: bool = False, **kw,
 ) -> int:
-    """能量不足时特性可补充的能量（handler 自行支付代价，如扣血）。"""
+    """能量不足时特性可补充的能量（handler 自行支付代价，如扣血）。
+    dry_run=True 为选择校验探测：不支付代价，只回答能否补足。"""
     total = 0
     for owner in _modifier_pets(state, pet):
         handler = get_handler(owner.trait_id)
@@ -451,7 +461,7 @@ def query_energy_shortfall(
             skill=skill,
             extra={"need": need, **kw},
         )
-        total += handler.modify_energy_shortfall(ctx, need)
+        total += handler.modify_energy_shortfall(ctx, need, dry_run=dry_run)
     return max(0, total)
 
 

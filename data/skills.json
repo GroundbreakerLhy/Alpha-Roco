@@ -17,7 +17,7 @@
       "energyCost": 0,
       "power": 35,
       "desc": "造成物伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -138,7 +138,7 @@
       "energyCost": 3,
       "power": 75,
       "desc": "造成魔伤，1连击，应对状态：本技能变为3连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -193,7 +193,7 @@
       "energyCost": 2,
       "power": 75,
       "desc": "造成魔伤，应对状态：额外打断被应对技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -204,7 +204,7 @@
       "energyCost": 2,
       "power": 65,
       "desc": "造成物伤，若敌方能量小于等于2，造成5倍伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -215,7 +215,7 @@
       "energyCost": 2,
       "power": 140,
       "desc": "造成物伤，每次使用后，本技能能耗永久+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -380,7 +380,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "下一次攻击时，技能威力+70。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -424,7 +424,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "敌方获得1层棘刺印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -468,7 +468,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤70%，应对攻击：自己获得物攻和魔攻+70%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -479,7 +479,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤60%，应对攻击：本回合受到致命伤害时，保留1生命值。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -501,7 +501,7 @@
       "energyCost": 0,
       "power": null,
       "desc": "每回合随机变成己方队伍中其他精灵的技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -512,7 +512,7 @@
       "energyCost": 0,
       "power": null,
       "desc": "每回合随机变成敌方任意精灵的技能，且该技能能耗-2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -523,7 +523,7 @@
       "energyCost": 0,
       "power": null,
       "desc": "每回合随机变成自己未携带的技能，且该技能能耗-2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -600,7 +600,7 @@
       "energyCost": 5,
       "power": 155,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -622,7 +622,7 @@
       "energyCost": 5,
       "power": 155,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -655,7 +655,7 @@
       "energyCost": 3,
       "power": 60,
       "desc": "造成物理伤害，先手+1，迸发：本次技能威力+30。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -699,7 +699,7 @@
       "energyCost": 3,
       "power": 155,
       "desc": "造成物理伤害，先手-1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -743,7 +743,7 @@
       "energyCost": 0,
       "power": 240,
       "desc": "造成魔伤，每失去5%生命，本次技能威力-10，使用后消耗全部生命。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -787,7 +787,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "驱散敌方所有增益。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -798,7 +798,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "减伤50%，应对攻击：下一次行动获得先手+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -809,7 +809,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，应对攻击：期间自己每受到1次攻击伤害，获得双攻+40%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -864,7 +864,7 @@
       "energyCost": 3,
       "power": 70,
       "desc": "造成魔伤，若本次攻击未被防御技能应对，则驱散双方所有印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -875,7 +875,7 @@
       "energyCost": 3,
       "power": 65,
       "desc": "造成魔伤，选择：驱散敌方所有增益或驱散双方1层印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -897,7 +897,7 @@
       "energyCost": 3,
       "power": 125,
       "desc": "造成魔法伤害，巧变：魔攻技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -930,7 +930,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成物伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -952,7 +952,7 @@
       "energyCost": 6,
       "power": 150,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -974,7 +974,7 @@
       "energyCost": 4,
       "power": 80,
       "desc": "造成物伤，自己回复5能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1095,7 +1095,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "减伤80%，应对攻击：自己回复20%生命。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1117,7 +1117,7 @@
       "energyCost": 1,
       "power": 30,
       "desc": "造成魔伤，并吸血100%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1205,7 +1205,7 @@
       "energyCost": 3,
       "power": 80,
       "desc": "造成物伤，自己生命大于80%时，本次技能威力+75。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1216,7 +1216,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "2连击，每次连击自己获得魔攻+60%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1238,7 +1238,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "为场下每个精灵回复3能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1249,7 +1249,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，应对攻击：自己获得物防+70%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1282,7 +1282,7 @@
       "energyCost": 4,
       "power": 50,
       "desc": "造成魔伤，自己每有1能量，本次技能威力+10。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1293,7 +1293,7 @@
       "energyCost": 4,
       "power": 95,
       "desc": "造成魔伤，选择：自己生命大于80%时威力+50或应对状态时自己回复35%生命。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1337,7 +1337,7 @@
       "energyCost": 1,
       "power": 60,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1348,7 +1348,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1359,7 +1359,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成物伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1392,7 +1392,7 @@
       "energyCost": 1,
       "power": 50,
       "desc": "造成物伤，每次使用后，本技能威力永久+20。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1414,7 +1414,7 @@
       "energyCost": 2,
       "power": 70,
       "desc": "造成魔伤，应对状态：下次攻击技能威力翻倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1469,7 +1469,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "下一次攻击时，技能威力翻倍，应对防御：改为威力变为4倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1502,7 +1502,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤70%，应对攻击：敌方获得6层灼烧。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1546,7 +1546,7 @@
       "energyCost": 1,
       "power": 15,
       "desc": "造成魔伤，3连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1590,7 +1590,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1645,7 +1645,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "自己获得双攻+120%和双防-40%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1656,7 +1656,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，应对攻击：下次攻击技能威力翻倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1733,7 +1733,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤70%，应对攻击：下一次攻击时，技能威力+50。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1777,7 +1777,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成魔伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1810,7 +1810,7 @@
       "energyCost": 5,
       "power": 110,
       "desc": "造成魔伤，每次使用后，本技能能耗永久-1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1832,7 +1832,7 @@
       "energyCost": 7,
       "power": 150,
       "desc": "造成魔伤，应对状态：本技能能耗永久-6。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1887,7 +1887,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，应对攻击：自己脱离。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1898,7 +1898,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，应对攻击：自己获得魔攻+70%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1909,7 +1909,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤60%，应对攻击：自己获得全技能能耗-2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1920,7 +1920,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1931,7 +1931,7 @@
       "energyCost": 6,
       "power": 90,
       "desc": "造成魔伤，回合结束时，本技能威力永久+20。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2030,7 +2030,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "驱散自己的减益，并获得全技能能耗-1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2151,7 +2151,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "减伤70%，应对攻击：本技能变为被应对的技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2228,7 +2228,7 @@
       "energyCost": 3,
       "power": 95,
       "desc": "造成魔伤，本技能系别和天气系别相同。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2283,7 +2283,7 @@
       "energyCost": 3,
       "power": 80,
       "desc": "造成魔伤，对混血精灵造成伤害+50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2294,7 +2294,7 @@
       "energyCost": 1,
       "power": 45,
       "desc": "造成物伤，本技能位于1号位时威力+60，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2305,7 +2305,7 @@
       "energyCost": 3,
       "power": 70,
       "desc": "造成物伤，每回合位置发生变化时，本技能威力永久+15。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2327,7 +2327,7 @@
       "energyCost": 3,
       "power": 70,
       "desc": "造成物伤，本技能位于1号位时威力+90，传动2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2349,7 +2349,7 @@
       "energyCost": 6,
       "power": null,
       "desc": "主动：本技能被动永久额外-1能耗，被动：两侧技能能耗-1，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2404,7 +2404,7 @@
       "energyCost": 1,
       "power": 20,
       "desc": "造成物伤，2连击，本技能位于1号或3号位时连击+1，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2415,7 +2415,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2426,7 +2426,7 @@
       "energyCost": 2,
       "power": 70,
       "desc": "造成魔伤，本技能位于1号或3号位时威力+30，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2437,7 +2437,7 @@
       "energyCost": 5,
       "power": 130,
       "desc": "造成物伤，本技能位于1号或3号位时能耗-2，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2492,7 +2492,7 @@
       "energyCost": 3,
       "power": 70,
       "desc": "造成物伤，传动1，选择：本技能位于1号位时威力+65或本回合额外传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2547,7 +2547,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "减伤50%，本技能位于1号位或3号位时，额外减伤40%，应对攻击，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2613,7 +2613,7 @@
       "energyCost": 3,
       "power": 90,
       "desc": "造成物伤，应对状态：额外打断被应对技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2679,7 +2679,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "敌方获得3回合禁足，应对防御：敌方获得双防-60%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2690,7 +2690,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己获得物攻和物防+60%，应对防御：额外使自己的增益翻倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2723,7 +2723,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤90%，若上次使用攻击技则本技能能耗-2，应对攻击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2778,7 +2778,7 @@
       "energyCost": 1,
       "power": 55,
       "desc": "造成物伤，1连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2789,7 +2789,7 @@
       "energyCost": 2,
       "power": 80,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2800,7 +2800,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2899,7 +2899,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤90%，应对攻击：自己获得物攻+50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2943,7 +2943,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成魔伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2976,7 +2976,7 @@
       "energyCost": 4,
       "power": 105,
       "desc": "造成物伤，应对状态：额外使敌方获得全技能能耗+3。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3141,7 +3141,7 @@
       "energyCost": 3,
       "power": 70,
       "desc": "造成魔伤，敌方获得魔防-50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3350,7 +3350,7 @@
       "energyCost": 3,
       "power": 200,
       "desc": "蓄力，对敌方造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3361,7 +3361,7 @@
       "energyCost": 3,
       "power": 130,
       "desc": "蓄力，造成物伤并吸血50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3372,7 +3372,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "蓄力，自己获得双攻+150%和速度+80。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3438,7 +3438,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3471,7 +3471,7 @@
       "energyCost": 2,
       "power": 60,
       "desc": "造成魔伤，若自己上回合未使用攻击技能，本技能威力永久+20。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3537,7 +3537,7 @@
       "energyCost": 3,
       "power": 90,
       "desc": "造成魔伤，迸发：本技能能耗-2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3570,7 +3570,7 @@
       "energyCost": 3,
       "power": 35,
       "desc": "造成魔伤，每次入场，本技能威力永久+40。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3614,7 +3614,7 @@
       "energyCost": 4,
       "power": null,
       "desc": "自己脱离，替换入场的精灵回复8能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3713,7 +3713,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "回合结束自己返场，下回合所选技能使用次数+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3889,7 +3889,7 @@
       "energyCost": 7,
       "power": null,
       "desc": "将敌方所有增益，转化为相同层数的中毒。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3966,7 +3966,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4032,7 +4032,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤90%，应对攻击：驱散敌方1种增益。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4120,7 +4120,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成魔伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4197,7 +4197,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己获得双攻+50%，每携带1个0能耗技能，额外+50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4329,7 +4329,7 @@
       "energyCost": 3,
       "power": 80,
       "desc": "造成魔伤，偷取敌方1层印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4351,7 +4351,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成物伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4395,7 +4395,7 @@
       "energyCost": 2,
       "power": 70,
       "desc": "造成物伤，应对状态：额外打断被应对技能。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4406,7 +4406,7 @@
       "energyCost": 2,
       "power": 25,
       "desc": "造成物伤，2连击，若后手攻击，改为3连击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4439,7 +4439,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己获得全技能威力+40。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4560,7 +4560,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4571,7 +4571,7 @@
       "energyCost": 3,
       "power": 25,
       "desc": "造成魔伤，2连击，每成功应对1次，本技能连击数永久+2。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4615,7 +4615,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "本技能先手-1，选择：若自己生命低于20%，回复60%生命或若自己生命高于80%，获得物攻+150%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4736,7 +4736,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤50%，迅捷，应对攻击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4813,7 +4813,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4846,7 +4846,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "敌方和自己均脱离，先手-1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4978,7 +4978,7 @@
       "energyCost": 4,
       "power": null,
       "desc": "驱散自己的减益，自己的增益翻倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5088,7 +5088,7 @@
       "energyCost": 5,
       "power": 140,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5099,7 +5099,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "自己脱离，下个入场精灵继承自己增益。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5220,7 +5220,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成魔伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5231,7 +5231,7 @@
       "energyCost": 3,
       "power": 80,
       "desc": "造成物伤，应对状态：使敌方失去6能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5242,7 +5242,7 @@
       "energyCost": 2,
       "power": 40,
       "desc": "造成魔伤，若敌方能量等于0，造成20倍伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5253,7 +5253,7 @@
       "energyCost": 4,
       "power": 180,
       "desc": "造成物伤，敌方每有1能量，本次技能威力-10%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5297,7 +5297,7 @@
       "energyCost": 2,
       "power": 80,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5352,7 +5352,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5363,7 +5363,7 @@
       "energyCost": 3,
       "power": 25,
       "desc": "造成魔伤，3连击，若敌方本回合更换精灵，本次技能连击数翻倍。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5374,7 +5374,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己获得魔攻+90%，若敌方本回合更换精灵，自己获得速度+70。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5451,7 +5451,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成物伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5473,7 +5473,7 @@
       "energyCost": 2,
       "power": 65,
       "desc": "造成物伤，并吸血100%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5517,7 +5517,7 @@
       "energyCost": 4,
       "power": 135,
       "desc": "造成物伤，若自己生命高于50%，使用后自己获得双攻-50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5583,7 +5583,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "脱离，应对防御：额外使敌方攻击技能能耗+4。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5660,7 +5660,7 @@
       "energyCost": 2,
       "power": 80,
       "desc": "对敌方精灵造成物理伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5726,7 +5726,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，能量不足时，消耗5%生命代替1能量，应对攻击。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5792,7 +5792,7 @@
       "energyCost": 3,
       "power": 90,
       "desc": "造成物伤，若自己生命低于50%，本次攻击吸血50%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5803,7 +5803,7 @@
       "energyCost": 3,
       "power": 85,
       "desc": "造成物伤，选择：本次技能威力+40，使用后自己生命-10%或自己生命低于50%时本次技能威力+100。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5880,7 +5880,7 @@
       "energyCost": 0,
       "power": 30,
       "desc": "造成物伤，自己回复1能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -6023,7 +6023,7 @@
       "energyCost": 3,
       "power": 100,
       "desc": "对敌方精灵造成魔法伤害。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {

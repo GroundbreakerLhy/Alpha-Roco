@@ -309,6 +309,7 @@ def main():
                 pet_index=raw_a.get("pet_index"),
                 magic_id=raw_a.get("magic_id"),
                 magic_branch=raw_a.get("magic_branch", 0),
+                choice_branch=raw_a.get("choice_branch", 0),
             )
             action_b = Action(
                 kind=raw_b.get("kind", "charge"),
@@ -316,6 +317,7 @@ def main():
                 pet_index=raw_b.get("pet_index"),
                 magic_id=raw_b.get("magic_id"),
                 magic_branch=raw_b.get("magic_branch", 0),
+                choice_branch=raw_b.get("choice_branch", 0),
             )
             state = step(state, action_a, action_b)
 

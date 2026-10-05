@@ -9,6 +9,23 @@ BLIZZARD = 1
 SANDSTORM = 2
 THUNDERSTORM = 3
 
+# 天气对应的系别（"本技能系别和天气系别相同"类技能读取）：
+# 雨天=水系、暴风雪=冰系、沙暴=地系、雷鸣=电系（依据 data/weather.json 的描述）。
+WEATHER_ELEMENTS = {
+    RAIN: 3,
+    BLIZZARD: 6,
+    SANDSTORM: 5,
+    THUNDERSTORM: 8,
+}
+
+
+def element_of(weather) -> int | None:
+    """当前天气对应的系别；无天气或未知天气返回 None。"""
+    if weather is None:
+        return None
+    weather_id = weather["id"] if isinstance(weather, dict) else weather
+    return WEATHER_ELEMENTS.get(weather_id)
+
 
 def set_weather(state, weather_id: int, turns: int = 1) -> None:
     state.weather = {"id": weather_id, "remaining": turns}
@@ -49,11 +66,11 @@ def sandstorm_energy_modifier(weather, skill_element: int) -> int:
 def on_round_end(state) -> None:
     if state.weather is None:
         return
-    order = ["A", "B"] if state.home_side == "A" else ["B", "A"]
+    order = list(getattr(state, "round_end_order", ["A", "B"]))
     weather_id = state.weather["id"]
 
     if weather_id == BLIZZARD:
-        # 暴风雪：双方当前出战精灵都获得1层冻结；按主客场顺序结算
+        # 暴风雪：双方当前出战精灵都获得1层冻结；按 state.round_end_order 顺序结算
         for side in order:
             pet = state.teams[side][state.active[side]]
             if pet.hp > 0:
@@ -64,7 +81,7 @@ def on_round_end(state) -> None:
                 state.log.append(f"暴风雪：{pet.name} 获得1层冻结")
 
     if weather_id == THUNDERSTORM:
-        # 雷鸣：双方每回合结束获得1层引电；电系精灵免疫；按主客场顺序结算
+        # 雷鸣：双方每回合结束获得1层引电；电系精灵免疫；按 state.round_end_order 顺序结算
         for side in order:
             pet = state.teams[side][state.active[side]]
             if pet.hp <= 0 or 8 in pet.attributes:

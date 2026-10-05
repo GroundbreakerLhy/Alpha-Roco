@@ -7,8 +7,8 @@
 接入说明：buff_gain 事件在引擎 add_buff 调用处（battle.py 迸发/印记、weather.py
 暴风雪/雷鸣、化茧施加萌化后）由 traits.on_buff_gain 广播；特性内部自己加的
 buff 不广播（防连锁）。
-营养液泡只响应自己获得"增益"（Buff.is_gain()，特性来源不算增益）。
-衡量复制的增益保留原有来源标记（正常显示为该精灵的普通增益）；
+营养液泡只响应自己获得"增益"（Buff.is_gain()；特性自身的展示效果不是增益）。
+衡量复制的增益保留原有来源标记（正常显示为该精灵的增益）；
 拉拉队长响应自己获得萌化（CUTE）：若已有萌化（CUTE buff 数量>1，即本次之前已有）
 则解除——evolve 恢复一阶 + 减少一层 CUTE buff。
 """
@@ -38,7 +38,7 @@ class NutrientBubble(TraitHandler):
         value = ctx.extra.get("value", 0)
         if not buff_type or value == 0:
             return
-        # 只有"增益"触发（特性来源不算增益）；减益/中性不触发
+        # 只有"增益"触发（特性自身的展示效果不是增益）；减益/中性不触发
         if not B.is_buff(buff_type, value):
             return
         if not ctx.is_active():
@@ -105,7 +105,7 @@ class Measure(TraitHandler):
         if not ctx.is_active():
             return
         if ctx.extra.get("source_kind") == "trait":
-            return  # 特性来源不算普通增益
+            return  # 特性自身的展示效果不是增益
         buff_type = ctx.extra.get("buff_type")
         value = ctx.extra.get("value", 0)
         if not buff_type or value == 0:
