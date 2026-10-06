@@ -54,6 +54,13 @@ ELEMENT_NAMES = [
 # 首领血脉编号（与 sim/enums.LORD_BLOODLINE 一致）
 LORD_BLOODLINE = 18
 
+CATEGORY_NAMES = {
+    0: "物攻",
+    1: "魔攻",
+    2: "防御",
+    3: "状态",
+}
+
 # buff 分类
 BUFF_ALWAYS = {"lifesteal"}
 BUFF_DEBUFF = {
@@ -234,8 +241,7 @@ def print_state(state):
             if side == MY_SIDE:
                 hp_text = f"HP {pet['hp']}/{pet['max_hp']}"
             else:
-                pct = round(pet["hp"] / pet["max_hp"] * 100) if pet["max_hp"] else 0
-                hp_text = f"HP {pct}%"
+                hp_text = f"HP {pet.get('hp_percent', 0)}%"
             log(
                 f" {marker} #{i + 1} {pet['name']} {hp_text} 能量 {pet['energy']} 速 {speed_text}"
             )
@@ -258,21 +264,17 @@ def print_state(state):
                     if skill.get("element") is not None
                     else "?"
                 )
-                if "desc" not in skill:
-                    display = skill.get("display_power")
-                    display_text = f" 显示威力 {display}" if display is not None else ""
+                if "skill_id" not in skill:
                     log(
-                        f"     对方用过: {skill['name']} [{elem}] 能耗{skill['energy_cost']}{display_text}"
+                        f"     对方用过: {skill['name']} [{elem}] 能耗{skill['energy_cost']}"
                     )
                     continue
                 display = skill.get("display_power")
                 display_text = f" 显示威力 {display}" if display is not None else ""
                 log(
                     f"     技能{skill['index'] + 1}: {skill['name']} [{elem}] 能耗{skill['energy_cost']}{display_text} "
-                    f"{'物攻' if skill['category'] == 0 else '魔攻' if skill['category'] == 1 else '其他'} | {skill['desc']}"
+                    f"{CATEGORY_NAMES[skill['category']]}"
                 )
-            if not pet["skills"]:
-                log("     （技能不可见）")
     log("=" * 56)
 
 

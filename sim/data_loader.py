@@ -216,7 +216,7 @@ def calc_stat(base_stat: int, iv: int, nature_multiplier: float = 1.0) -> int:
 
 def calc_hp(base_hp: int, iv: int, nature_multiplier: float = 1.0) -> int:
     growth = 0.01 * base_hp + 0.005 * iv * 6
-    return round_half_up((70 + growth * 170) * nature_multiplier) + 100
+    return round_half_up(round_half_up(70 + growth * 170) * nature_multiplier) + 100
 
 
 def calc_all_stats(base_stats: dict, ivs=None, nature=None) -> dict:

@@ -2038,7 +2038,6 @@ def pet_to_dict(
             "category": skill.category,
             "power": skill.power,
             "energy_cost": skill.energy_cost,
-            "desc": skill.desc,
             "display_power": None,
             "choice": bool(getattr(skill, "choice", False)),
         }
@@ -2163,6 +2162,12 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                                 ),
                             )["display_power"]
             if view_side is not None and side != view_side:
+                d["hp_percent"] = (
+                    max(0, round(pet.hp / pet.max_hp * 100)) if pet.max_hp else 0
+                )
+                del d["hp"]
+                del d["max_hp"]
+                del d["skill_cooldowns"]
                 # 对方速度范围也显示真实范围（含 buff/印记/特性速度修正，如流沙统治者+50）
                 mark_speed_bonus = 0
                 negative = marks.get_mark(state, side, marks.NEGATIVE)
@@ -2183,7 +2188,6 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                     {
                         "name": skill["name"],
                         "energy_cost": skill["energy_cost"],
-                        "display_power": skill.get("display_power"),
                         "element": skill.get("element"),  # 原始属性（不做特性改写）
                     }
                     for skill in d["skills"]
