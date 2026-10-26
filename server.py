@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""Headless battle server.
+"""无头对战服务器。
 
-Run:
-  python server.py --port 5000
-
-Then run two clients:
-  python client.py --port 5000
-  python client.py --port 5000
+运行：python server.py --port 5000，再运行两个 client.py。
 """
 
 import argparse
@@ -205,7 +200,7 @@ def read_replacement(f, conn, state, side):
 
 
 def read_trait_replacement(f, conn, state, side):
-    """特性请求的脱离换人（警惕等）：玩家必须选一只与当前不同的存活精灵。"""
+    """特性脱离换人：玩家必须选一只与当前不同的存活精灵。"""
     while True:
         raw = recv_line(f)
         if raw is None:
@@ -226,10 +221,9 @@ def read_trait_replacement(f, conn, state, side):
 
 
 def read_leave_replacement(f, conn, state, side):
-    """技能脱离的换人（移花接木/吓退等）：只读取并校验玩家选择，不执行换人。
+    """读取技能脱离的换人选择；入场与回合续接由 resume_after_leave 完成。
 
-    真正的入场与回合续接由 battle.resume_after_leave 完成。
-    必须选一只存活、且不是刚离场那只（paused_turn["leaver_index"]）的精灵。
+    必须选存活、且不是刚离场那只（paused_turn["leaver_index"]）。
     """
     leaver_index = (
         state.paused_turn.get("leaver_index", -1) if state.paused_turn else -1
@@ -460,8 +454,7 @@ def main():
             for line in state.log:
                 log(line)
 
-            # 技能脱离（移花接木/吓退等）：回合中暂停等待选人，选人后续完本回合。
-            # 与特性 pending_switch 的区别：它在回合中生效、离场精灵跳过回合末结算。
+            # 技能脱离：回合中暂停选人，选完后继续；离场者跳过回合末结算。
             while state.paused_turn is not None and state.winner is None:
                 lside = state.paused_turn["leave_side"]
                 lconn, lf = (conn_a, f_a) if lside == "A" else (conn_b, f_b)
@@ -480,7 +473,7 @@ def main():
                 for line in state.log[before:]:
                     log(line)
 
-            # 特性请求换人（警惕等）：不占用回合，处理完重新发 state 并继续
+            # 特性请求换人：不占用回合，处理完重发 state 后继续。
             trait_switched = False
             for side, conn, f in (("A", conn_a, f_a), ("B", conn_b, f_b)):
                 if state.pending_switch[side]:

@@ -1,35 +1,7 @@
 """效果原语（Effect）与条件原语（Condition）+ 执行器。
 
-本模块是"把技能描述变成代码"的词汇表：每条技能描述里的效果，都能拆成
-若干个 Effect 的组合，条件（"若…"/"每有1层…"）由 Condition 或 When 承担。
-
-编写原则
---------
-1. **原语是数据，不是解析器**。没有任何函数会根据 `desc` 文本推断效果，
-   效果全部由人工阅读描述后显式写出。
-2. **条件用 Python 表达**，不做 JSON 迷你语言——103 条威力修正里绝大多数带条件
-   （若先手/若敌方本回合换人/每层中毒/生命比例），用数据格式表达必然退化成
-   另一种"自然语言解析"。
-3. 数值可以是 ``int``，也可以是 ``(ctx) -> int`` 的可调用对象，
-   用于"每有1层X"/"每失去10%生命"这类运行时才确定的量（见文件末尾的辅助函数）。
-
-用法::
-
-    class Scratch(OpsSkill):
-        skill_id = 7020360
-        name = "抓挠"
-        category = 0
-        implemented = True
-        hit_effects = (GainEnergy(value=1),)
-
-    class CounterGuard(OpsSkill):
-        skill_id = 7001000
-        name = "示例防御"
-        category = 2
-        counter_target = COUNTER_ATTACK
-        implemented = True
-        defense_effects = (SetReduction(percent=0.7),)
-        counter_effects = (ApplyBuff(buff_type=BuffType.ATK, value=2),)
+技能效果全部由人工阅读描述后显式写成 Effect 组合，没有任何函数解析 ``desc``；
+数值可以是常量，也可以是 ``(ctx) -> int`` 的运行时计算（"每有1层X"类）。
 """
 
 from __future__ import annotations
@@ -48,11 +20,11 @@ from .registry import get_handler
 
 # ==================== 作用对象 ====================
 
-SELF = "self"                    # 使用者
-ENEMY = "enemy"                  # 对方在场精灵
+SELF = "self"
+ENEMY = "enemy"
 SELF_BACKLINE = "self_backline"  # 己方场下（不含使用者）
-SELF_TEAM = "self_team"          # 己方队伍全员
-ENEMY_TEAM = "enemy_team"        # 对方队伍全员
+SELF_TEAM = "self_team"
+ENEMY_TEAM = "enemy_team"
 FIELD = "field"                  # 双方在场精灵
 
 # ==================== 应对类别 ====================
@@ -72,23 +44,22 @@ STAGE_DEFENSE = "defense"
 STAGE_STATUS = "status"
 STAGE_AFTER_USE = "after_use"
 STAGE_ROUND_END = "round_end"
-# 受击方技能侧反应（嗜痛"应对攻击：期间每受到1次攻击伤害获得双攻+40%"）：
-# actor 是**受击方**，ctx.skill 逐个取受击方自己的技能，由引擎在攻击伤害
-# 落位后广播（见 skills.emit_take_damage），不是使用者视角的结算阶段。
+# 受击方技能侧反应：actor 是受击方，ctx.skill 逐个取受击方自己的技能，由引擎
+# 在攻击伤害落位后广播（skills.emit_take_damage），不是使用者视角的结算阶段。
 STAGE_TAKE_DAMAGE = "take_damage"
 
 # ==================== 冷却范围 ====================
 
 COOLDOWN_USED = "used"        # 被应对的技能
-COOLDOWN_DEFENSE = "defense"  # 该精灵全部防御技能
-COOLDOWN_ALL = "all"          # 该精灵全部技能
+COOLDOWN_DEFENSE = "defense"
+COOLDOWN_ALL = "all"
 
 # ==================== 离场方式 ====================
 
-LEAVE_SELF = "self"              # 自己脱离（换人）
+LEAVE_SELF = "self"
 LEAVE_EMERGENCY = "emergency"    # 紧急脱离（回合结束时脱离）
-LEAVE_ENEMY = "enemy"            # 使敌方脱离
-LEAVE_BOTH = "both"              # 双方均脱离
+LEAVE_ENEMY = "enemy"
+LEAVE_BOTH = "both"
 
 # 永久成长字段
 GROWTH_POWER = "power"
@@ -137,10 +108,10 @@ def _value(value, ctx: SkillContext) -> int:
 
 @dataclass(kw_only=True)
 class Effect:
-    """效果原语基类。所有原语均为关键字构造，避免位置参数错配。
+    """效果原语基类。全部关键字构造，避免位置参数错配。
 
-    deferrable：命中附加效果默认延迟到回合末结算（B39）；``False`` 的
-    "登记类"原语（脱离/返场——本身只登记请求）命中时照常登记并立即生效（B36）。
+    deferrable：命中附加效果默认延迟到回合末结算（B32）；``False`` 的登记类
+    原语（脱离/返场）命中时照常登记并立即生效（B16）。
     """
 
     deferrable: ClassVar[bool] = True
@@ -165,9 +136,9 @@ class When(Effect):
 class ApplyBuff(Effect):
     """施加增益/减益。
 
-    value 为负即减益（-3 层物攻 / 能耗 +1 用 buff_type=ENERGY_COST, value=1）。
-    source_kind="trait" 是特性自身的展示效果——它不是增益也不是减益，属于另一个
-    类别，因此既不参与"获得增益/获得减益"判定，也不在驱散范围内。
+    value 为负即减益（ENERGY_COST 正值 = 加费）。source_kind="trait" 是特性
+    自身的展示效果——既不是增益也不是减益，不参与"获得增益/减益"判定，也不在
+    驱散范围内。
     """
 
     buff_type: str
@@ -175,18 +146,19 @@ class ApplyBuff(Effect):
     target: str = SELF
     duration: str = buffs.DurationKind.NORMAL
     source_kind: str = ""
+    turns: int | None = None
 
     def apply(self, ctx: SkillContext) -> None:
         amount = _value(self.value, ctx)
         for pet in resolve_pets(ctx, self.target):
             extra_kw = {}
             if self.buff_type == buffs.BuffType.CUTE:
-                # 萌化的 buff_gain 广播必须携带 pre_had（本次获得前是否已处于萌化），
-                # 供"萌化状态下再获得萌化"响应类特性（拉拉队长 200288）判定，
-                # 与 traits/impl/lethal.py 化茧的施加契约一致。
+                # 萌化的 buff_gain 广播必须携带 pre_had（本次获得前是否已萌化），
+                # 供"萌化状态下再获得萌化"类特性判定。
                 extra_kw["pre_had"] = buffs.has_buff(pet, buffs.BuffType.CUTE)
             gained = buffs.grant_buff(pet, self.buff_type, amount, self.duration, ctx.state.turn,
-                           ctx.actor.side, ctx.actor.name, self.source_kind)
+                           ctx.actor.side, ctx.actor.name, self.source_kind, state=ctx.state,
+                           turns=self.turns)
             if gained == 0:
                 continue
             traits.on_buff_gain(ctx.state, pet, self.buff_type, gained,
@@ -196,11 +168,10 @@ class ApplyBuff(Effect):
 
 @dataclass(kw_only=True)
 class BoostCounteredSkillEnergyCost(Effect):
-    """应对成功时，使被应对技能能耗+N（按技能 id 的能耗修正 buff，作用于敌方）。
+    """应对成功时使被应对技能能耗+N：按技能 id 的能耗修正 buff，作用于敌方。
 
     buff 类型为 ``energy_cost_boost_<被应对技能id>``（buffs.skill_energy_boost_type），
-    引擎能耗计算按技能 id 并入（skill_utils.energy_modifier_before_traits）；
-    能耗增加为减益（正值 = debuff）。
+    引擎按技能 id 并入能耗（skill_utils.energy_modifier_before_traits），正值即减益。
     """
 
     value: int
@@ -213,7 +184,8 @@ class BoostCounteredSkillEnergyCost(Effect):
         btype = buffs.skill_energy_boost_type(incoming.skill_id)
         for pet in resolve_pets(ctx, ENEMY):
             gained = buffs.grant_buff(pet, btype, self.value, self.duration,
-                                      ctx.state.turn, ctx.actor.side, ctx.actor.name)
+                                      ctx.state.turn, ctx.actor.side, ctx.actor.name,
+                                      state=ctx.state)
             if gained:
                 traits.on_buff_gain(ctx.state, pet, btype, gained,
                                     source_side=ctx.actor.side, source_pet=ctx.actor.name)
@@ -221,11 +193,10 @@ class BoostCounteredSkillEnergyCost(Effect):
 
 @dataclass(kw_only=True)
 class RandomStatBuffs(Effect):
-    """随机 N 层属性增益（"自己获得随机16层属性增益"）。
+    """随机 N 层属性增益。
 
-    掷 layers 次，每次等概率落到 stats 中的一种，按属性汇总后逐种施加——
-    每种属性一次施加、一个事件（不是 layers 次单独施加）。
-    属性增益 = 双攻双防与速度（策划定义）。
+    掷 layers 次，每次等概率落到 stats 中的一种，按属性汇总后逐种施加——每种
+    属性一次施加、一个事件（不是 layers 次单独施加）。
     """
 
     layers: int
@@ -241,7 +212,7 @@ class RandomStatBuffs(Effect):
         for pet in resolve_pets(ctx, self.target):
             for stat, n in tally.items():
                 gained = buffs.grant_buff(pet, stat, n, buffs.DurationKind.NORMAL, ctx.state.turn,
-                               ctx.actor.side, ctx.actor.name)
+                               ctx.actor.side, ctx.actor.name, state=ctx.state)
                 if gained == 0:
                     continue
                 traits.on_buff_gain(ctx.state, pet, stat, gained,
@@ -310,7 +281,7 @@ class Heal(Effect):
 
 @dataclass(kw_only=True)
 class LoseHp(Effect):
-    """失去生命（代价类，如"使用后自己生命-10%"）；不会因此直接力竭到 0 以下。"""
+    """失去生命（代价类），下限 0。"""
 
     percent: float = 0.0
     flat: int = 0
@@ -319,7 +290,10 @@ class LoseHp(Effect):
     def apply(self, ctx: SkillContext) -> None:
         for pet in resolve_pets(ctx, self.target):
             amount = int(pet.max_hp * self.percent) + self.flat
+            lost = min(amount, pet.hp)
             pet.hp = max(0, pet.hp - amount)
+            if lost > 0:
+                ctx.log(f"{pet.side} {pet.name} 失去 {lost} 生命")
 
 
 @dataclass(kw_only=True)
@@ -338,11 +312,10 @@ class AddMark(Effect):
 
 @dataclass(kw_only=True)
 class DispelMarks(Effect):
-    """驱散印记；count=None 表示全部驱散；steal=True 表示改为偷取（转给使用者一方）。
+    """驱散印记；count=None 表示全部驱散；steal=True 改为偷取（转给使用者一方）。
 
-    target=FIELD 时驱散**双方**阵营的印记（steal 不与 FIELD 同用）。
-    record_as 非空时把驱散的总层数写入 ctx.extra[record_as]，供同组后续
-    效果经 per_recorded 读取（"每驱散1层，…"类描述）。
+    target=FIELD 驱散双方阵营的印记（steal 不与 FIELD 同用）。record_as 非空时
+    把驱散的总层数写入 ctx.extra[record_as]，供同组后续效果经 per_recorded 读取。
     """
 
     count: Optional[int] = None
@@ -378,12 +351,9 @@ class DispelMarks(Effect):
 class DispelBuffs(Effect):
     """驱散增益/减益；kind ∈ "buff"/"debuff"/"all"，count=None 表示全部驱散。
 
-    两条互相独立的判据：
-
-    1. **是不是增益/减益**——只看效果类型与数值（``buffs.is_buff`` / ``is_debuff``），
-       **与时长无关**：常规时长与永久时长的增益/减益同样会被驱散。
-    2. **是不是特性效果**——``source_kind="trait"`` 是特性自身的展示效果，
-       它既不是增益也不是减益，属于另一个类别，不参与驱散。
+    两条独立判据：①是不是增益/减益只看效果类型与数值，与时长无关——永久时长的
+    同样会被驱散；②``source_kind="trait"`` 是特性自身的展示效果，既不是增益也
+    不是减益，不参与驱散。
     """
 
     kind: str = "buff"
@@ -394,11 +364,8 @@ class DispelBuffs(Effect):
         for pet in resolve_pets(ctx, self.target):
             match = []
             for buff in pet.buffs:
-                # 特性自身的展示效果不是增益/减益（另一个类别），不进入驱散候选。
                 if buff.source_kind == "trait":
                     continue
-                # 增益/减益只按效果类型与数值判定，与时长无关：
-                # 常规（NORMAL）与永久（PERMANENT）时长同样在驱散范围内。
                 if self.kind == "buff" and not buffs.is_buff(buff.buff_type, buff.value):
                     continue
                 if self.kind == "debuff" and not buffs.is_debuff(
@@ -419,9 +386,8 @@ class DispelBuffs(Effect):
 class ConvertBuffs(Effect):
     """把目标的一种效果按层数转化为另一种（"将敌方所有增益转化为相同层数的中毒"）。
 
-    判据与驱散一致（README S26）：①"是不是增益/减益"只看效果类型与数值，**与时长
-    无关**（永久时长同样转化）；②特性自身的展示效果（``source_kind="trait"``）不是
-    增益/减益，属于另一个类别，不参与转化。
+    判据与驱散一致（S18）：增益/减益只看效果类型与数值，与时长无关（永久时长同样
+    转化）；``source_kind="trait"`` 是特性自身的展示效果，不参与转化。
     """
 
     from_kind: str = "buff"
@@ -432,7 +398,6 @@ class ConvertBuffs(Effect):
         for pet in resolve_pets(ctx, self.target):
             total = 0
             for buff in list(pet.buffs):
-                # 特性自身的展示效果不是增益/减益（另一个类别），不参与转化。
                 if buff.source_kind == "trait":
                     continue
                 if not buffs.is_buff(buff.buff_type, buff.value):
@@ -440,7 +405,7 @@ class ConvertBuffs(Effect):
                 total += buff.value
                 pet.buffs = [b for b in pet.buffs if b is not buff]
             if total > 0:
-                buffs.grant_buff(pet, self.to_buff_type, total)
+                buffs.grant_buff(pet, self.to_buff_type, total, state=ctx.state)
 
 
 @dataclass(kw_only=True)
@@ -472,9 +437,8 @@ class ConvertBuffToMark(Effect):
 class DoubleBuffs(Effect):
     """目标某类效果的层数翻倍（"使敌方精灵减益的层数翻倍"）。
 
-    翻倍 = 按现有条目再叠一份同值同来源的层数；获得规则在 add_buff 前检查，
-    写入层统一负责层数钳制。遍历使用快照，新叠出的条目不会被重复处理；
-    只有实际获得层数时才广播 buff_gain。
+    翻倍 = 按现有条目再叠一份同值同来源的层数，层数钳制由写入层负责。遍历使用
+    快照，新叠出的条目不会被重复处理；只有实际获得层数时才广播 buff_gain。
     """
 
     kind: str = "debuff"
@@ -489,11 +453,11 @@ class DoubleBuffs(Effect):
                     continue
                 extra_kw = {}
                 if buff.buff_type == buffs.BuffType.CUTE:
-                    # 与 ApplyBuff 同契约：萌化广播需携带 pre_had（拉拉队长 200288）。
+                    # 与 ApplyBuff 同契约：萌化广播需携带 pre_had。
                     extra_kw["pre_had"] = buffs.has_buff(pet, buffs.BuffType.CUTE)
                 gained = buffs.grant_buff(pet, buff.buff_type, buff.value, buff.duration,
                                ctx.state.turn, buff.source_side, buff.source_pet,
-                               buff.source_kind)
+                               buff.source_kind, state=ctx.state)
                 if gained == 0:
                     continue
                 traits.on_buff_gain(ctx.state, pet, buff.buff_type, gained,
@@ -519,9 +483,8 @@ def deal_extra_damage(ctx: SkillContext, power: int, *,
                       hits: int = 1, target: str = ENEMY) -> None:
     """附加伤害（不占用主伤害段）：直接在调用处经 calc_damage 与统一威力管线结算。
 
-    威力管线与主攻击段同一条：属性增益/减益与威力 buff 由 calc_damage 统一处理；
-    印记（攻击印记/蓄势印记/风气印记）、迸发（本次行动已取走的 active_bursts）
-    与特性威力修正（query_power）在此补齐——凡主动造成的伤害走同一口径。
+    威力管线与主攻击段同一条：属性增减益与威力 buff 由 calc_damage 处理；印记、
+    迸发（本次行动已取走的 active_bursts）与特性威力修正（query_power）在此补齐。
     element/category 缺省沿用本次技能的属性与类别。
     """
     elem = element if element is not None else ctx.skill.element
@@ -544,6 +507,7 @@ def deal_extra_damage(ctx: SkillContext, power: int, *,
             if damage <= 0:
                 continue
             pet.hp = max(0, pet.hp - damage)
+            ctx.log(f"  额外造成 {damage} 伤害")
             traits.emit(ctx.state, "take_damage", scope="all", side=pet.side, subject=pet,
                         target=ctx.actor, skill=extra_skill, damage=damage,
                         hit_count=1, is_first=ctx.is_first)
@@ -552,8 +516,7 @@ def deal_extra_damage(ctx: SkillContext, power: int, *,
 def _extra_power_modifiers(ctx: SkillContext, target_pet, extra_skill) -> tuple:
     """附加伤害的威力修正（百分比, 固定值），与 battle 主攻击段同口径。
 
-    属性增益/减益与威力 buff（SKILL_POWER_*）由 calc_damage 内部处理；
-    这里只补：印记、迸发（行动时已取走的 active_bursts，经 ctx.extra 传入）、
+    这里只补 calc_damage 之外的部分：印记、迸发（ctx.extra 里的 active_bursts）、
     特性威力修正（query_power，按附加伤害自身的属性/类别匹配）。
     """
     return power_modifiers(
@@ -610,7 +573,7 @@ class Overload(Effect):
     """本技能（或指定技能）本次使用次数 +1（"下回合所选技能使用次数+1"）。
 
     scope="next" 写入 ``overload_next["__next__"]``：下回合开始轮转到
-    ``overload_current``，引擎按该回合**所选技能**追加执行次数（聚能不生效）。
+    ``overload_current``，引擎按该回合所选技能追加执行次数（聚能不生效）。
     """
 
     count: int = 1
@@ -640,9 +603,9 @@ class GrantBurst(Effect):
 class SkillGrowth(Effect):
     """本技能的永久成长（"每次使用后，本技能威力永久+45"）。
 
-    写入 BattleSkill.skill_state，由 handler 的
-    modify_power / modify_energy_cost / modify_hit_count 读出（见 growth_value）。
-    delta 可以是可调用对象（运行时取值）——如"威力永久翻倍"= 增量取当前总威力。
+    写入 BattleSkill.skill_state，由 handler 的 modify_power /
+    modify_energy_cost / modify_hit_count 读出（见 growth_value）。delta 可以是
+    可调用对象（运行时取值），如"威力永久翻倍" = 增量取当前总威力。
     """
 
     field: str = GROWTH_POWER
@@ -657,7 +620,7 @@ class SkillGrowth(Effect):
 
 @dataclass(kw_only=True)
 class EnergyFromHp(Effect):
-    """能量不足时以生命代替能量（"能量不足时，消耗5%生命代替1能量"）。
+    """能量不足时以生命代替能量。
 
     记录到 skill_state，供引擎的能量兜底查询读取。
     """
@@ -673,14 +636,12 @@ class LeaveField(Effect):
     """脱离/返场（mode 见 LEAVE_* 常量）。
 
     引擎在技能结算末尾统一处理：本原语只登记请求，避免在效果中途换人。
-    登记类效果（deferrable=False）：命中时照常登记并立即生效（B36），
-    不随命中附加效果延迟到回合末（B39 例外）。
+    登记类效果（deferrable=False）：命中时照常登记并立即生效（B16），不随命中
+    附加效果延迟到回合末（B32 例外）。
 
-    entry_energy>0 时（"自己脱离，替换入场的精灵回复N能量"），己方脱离
-    成功后由续接流程把能量发给替换入场的精灵。
-    entry_inherit_buffs=True 时（"自己脱离，下个入场精灵继承自己增益"），
-    己方脱离执行前快照全部增益（NORMAL 清除之前，减益不继承），由续接流程
-    按原类型/层数/时长发给**下一只**入场的己方精灵。
+    entry_energy>0 时由续接流程把能量发给替换入场的精灵；
+    entry_inherit_buffs=True 时在 NORMAL 清除之前快照全部增益（减益不继承），
+    由续接流程按原类型/层数/时长发给下一只入场的己方精灵。
     """
 
     deferrable = False
@@ -711,8 +672,8 @@ class Reenter(Effect):
 class Repeat(Effect):
     """把子效果重复执行 count 次（"3连击，每次连击…"类）。
 
-    每次都独立执行、独立触发事件——"敌方获得冻结时追加"类特性（加个雪球 200122）
-    会按次数分别响应，而不是只响应一次。
+    每次都独立执行、独立触发事件——"敌方获得冻结时追加"类特性会按次数分别响应，
+    而不是只响应一次。
     """
 
     count: int | Callable = 1
@@ -723,17 +684,15 @@ class Repeat(Effect):
             apply_effects(ctx, self.effects)
 
 
-# ==================== 未建模机制（占位） ====================
+# ==================== 选择 ====================
 
 
 @dataclass(kw_only=True)
 class Choose(Effect):
-    """⚠ 占位：选择（技能二选一，明/暗）。
+    """选择（技能二选一，明/暗）。
 
-    输入通道已由引擎提供（``Action.choice_branch`` → ``SkillContext.choice_branch``），
-    但本原语仍只是登记占位，不在引擎自动执行——明/暗的具体效果由 skills/ 的
-    handler 读取 ``ctx.choice_branch`` 后自行填写（直接调用各效果原语），
-    不由本原语代填。
+    输入由引擎提供（``Action.choice_branch`` → ``SkillContext.choice_branch``）；
+    本原语只登记，明/暗的具体效果由 handler 读 ``ctx.choice_branch`` 后自行填写。
     """
 
     options: tuple = ()
@@ -748,10 +707,10 @@ class Choose(Effect):
 
 @dataclass(kw_only=True)
 class Offering(Effect):
-    """己方队伍获得奉献（队伍级资源，SPEC B45）。
+    """己方队伍获得奉献（队伍级资源，B40）。
 
     grant 为空时每次从五种效果中随机抽取；给出种类时逐种获得 times 次
-    （"己方队伍获得1次奉献：连击+1或威力+20"由 handler 按选择结果传入一种）。
+    （"连击+1或威力+20"由 handler 按选择结果传入一种）。
     """
 
     times: int = 1
@@ -813,8 +772,8 @@ class IsCounter(Condition):
 class CanCute(Condition):
     """自己能够获得萌化（可退化，或已有萌化且特性允许再次获得）。
 
-    "自己获得萌化：X"族技能的前置条件——**能获得萌化才给 X**，不能萌化时
-    门内效果一律不执行（配合 When 条件门，S18）；萌化本身在技能结算之后施加。
+    "自己获得萌化：X"族的前置条件——能萌化才给 X，不能萌化时门内效果一律不
+    执行（配合 When，S22）；萌化本身在技能结算之后施加。
     """
 
     def test(self, ctx: SkillContext) -> bool:
@@ -855,8 +814,7 @@ class UsedAttackSkillLastTurn(Condition):
     """自己（ctx.actor）上回合使用过攻击技能。
 
     "上回合"由引擎在回合开始时平移记录（BattlePet.attack_used_last_turn）；
-    **蓄力回合不算使用攻击技能**（用户口径），释放回合照常算。常与 ``Not``
-    组合（绵里藏针"若自己上回合未使用攻击技能"）。
+    蓄力回合不算使用攻击技能，释放回合照常算。
     """
 
     def test(self, ctx: SkillContext) -> bool:
@@ -943,7 +901,7 @@ class DamageDealt(Condition):
 class KilledTarget(Condition):
     """本次使用击败了敌方在场精灵（"若使用本技能击败敌方，…"）。
 
-    读命中登记时的快照（伤害结算后对方 hp≤0），B39 延迟到回合末结算也不失真。
+    读命中登记时的快照（伤害结算后对方 hp≤0），B32 延迟到回合末结算也不失真。
     """
 
     def test(self, ctx: SkillContext) -> bool:
@@ -1060,12 +1018,9 @@ def per_recorded(key: str, per: int) -> Callable:
 def hit_count_of(ctx: SkillContext) -> int:
     """连击数 = 1（基础一次行动）+ buff + 特性 + 技能自身修正（含强制值）。
 
-    连击类技能（攻击/状态）共用：攻击分支用它算伤害段数，状态技能用它做
-    ``Repeat(count=hit_count_of)`` 的重复次数。技能的固有连击数通过既有的
-    ``SkillHandler.modify_hit_count`` 钩子给出增量（"3连击" = 基础1 + 2），
-    与 buff（hit_count_flat/percent）、特性（modify_hit_count/force_hit_count）
-    走同一条管线——不另设字段。汇总之后的乘算（"连击数翻倍"）交
-    ``SkillHandler.adjust_hit_count``（默认原样返回）。
+    攻击分支用它算伤害段数，状态技能用它做 ``Repeat(count=hit_count_of)``。
+    技能固有连击数经 ``SkillHandler.modify_hit_count`` 给增量（"3连击" = 基础1 + 2），
+    与 buff、特性走同一管线；汇总后的乘算交 ``SkillHandler.adjust_hit_count``。
     """
     base = 1
     flat, percent = buffs.get_hit_count_bonus(ctx.actor)
@@ -1073,7 +1028,6 @@ def hit_count_of(ctx: SkillContext) -> int:
     flat += t_flat
     percent += t_percent
     forced = t_forced
-    # 技能自身连击修正（与特性同一增量语义；此前未接入引擎，现在接入）
     handler = get_handler(ctx.skill.skill_id)
     if handler is not None:
         s_flat, s_percent, s_forced = handler.modify_hit_count(ctx)
@@ -1105,7 +1059,7 @@ def skill_by_id(skill_id: int) -> BattleSkill:
 def apply_effects(ctx: SkillContext, effects) -> None:
     """按顺序执行一组效果原语。
 
-    命中附加效果分两次走（B39）：ctx.extra["_defer_mode"] == "collect" 时只执行
+    命中附加效果分两次走（B32）：ctx.extra["_defer_mode"] == "collect" 时只执行
     deferrable=False 的登记类效果（脱离/返场，命中时立即生效）；== "settle" 时
     只执行 deferrable=True 的效果（回合末统一结算）；缺省全部执行。
     """
@@ -1124,8 +1078,8 @@ def apply_effects(ctx: SkillContext, effects) -> None:
 class OpsSkill(SkillHandler):
     """把效果原语挂到各阶段，无需手写钩子的技能基类。
 
-    子类只需给出静态属性 + 各阶段的效果元组；复杂技能（需要分支/循环/跨技能状态）
-    直接继承 ``SkillHandler`` 覆写钩子即可。
+    子类只需给出静态属性 + 各阶段效果元组；复杂技能直接继承 ``SkillHandler``
+    覆写钩子。
     """
 
     counter_target: str = ""
@@ -1145,7 +1099,7 @@ class OpsSkill(SkillHandler):
     after_use_effects: tuple = ()
     round_end_effects: tuple = ()
 
-    # 威力/连击/能耗的声明式增量（固定值；带条件的用 When 包 modify_power 或覆写钩子）
+    # 威力/连击/能耗的声明式增量（固定值；带条件的覆写钩子）
     power_percent: float = 0.0
     power_flat: float = 0.0
     hit_count_flat: int = 0

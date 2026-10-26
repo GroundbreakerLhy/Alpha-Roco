@@ -1,69 +1,31 @@
 {
   "issue": "53期",
   "type": "上分",
-  "name": "亚龙章脑队",
+  "name": "龙鱼毒队",
   "resonance": 0,
   "team": [
     {
-      "spirit": "伊兰亚龙",
-      "nature": 10,
-      "ivs": {
-        "hp": 10,
-        "atk": 0,
-        "def": 0,
-        "spatk": 10,
-        "spdef": 0,
-        "speed": 10
-      },
-      "bloodline": 2,
-      "skills": [
-        "氧输送",
-        "绵里藏针",
-        "突袭",
-        "撒花"
-      ]
-    },
-    {
-      "spirit": "寂灭骨龙",
-      "nature": 27,
-      "ivs": {
-        "hp": 10,
-        "atk": 10,
-        "def": 0,
-        "spatk": 0,
-        "spdef": 10,
-        "speed": 0
-      },
-      "bloodline": 14,
-      "skills": [
-        "力量增效",
-        "报复",
-        "偷袭",
-        "隼鳞"
-      ]
-    },
-    {
-      "spirit": "智辉章脑",
-      "nature": 25,
+      "spirit": "裘卡",
+      "nature": 29,
       "ivs": {
         "hp": 10,
         "atk": 0,
         "def": 10,
-        "spatk": 10,
-        "spdef": 0,
+        "spatk": 0,
+        "spdef": 10,
         "speed": 0
       },
-      "bloodline": 2,
+      "bloodline": 5,
       "skills": [
-        "感电",
-        "水光冲击",
-        "打湿",
-        "加大功率"
+        "毒孢子",
+        "毒囊",
+        "阻断",
+        "防御"
       ]
     },
     {
-      "spirit": "帕帕斯卡",
-      "nature": 1,
+      "spirit": "龙鱼",
+      "nature": 22,
       "ivs": {
         "hp": 10,
         "atk": 10,
@@ -74,14 +36,33 @@
       },
       "bloodline": 8,
       "skills": [
-        "钢铁洪流",
-        "倾泻",
-        "俯冲猛击",
-        "轮班"
+        "力量增效",
+        "龙之利爪",
+        "水刃",
+        "隼鳞"
       ]
     },
     {
-      "spirit": "霹雳迪迪",
+      "spirit": "琉璃水母",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 0,
+        "spdef": 10,
+        "speed": 0
+      },
+      "bloodline": 3,
+      "skills": [
+        "泡沫幻影",
+        "甩水",
+        "洗礼",
+        "疫病吐息"
+      ]
+    },
+    {
+      "spirit": "离心舞者",
       "nature": 20,
       "ivs": {
         "hp": 10,
@@ -91,31 +72,50 @@
         "spdef": 0,
         "speed": 10
       },
-      "bloodline": 6,
+      "bloodline": 3,
       "skills": [
-        "色散",
-        "落雷",
-        "取念",
-        "镜像反射"
+        "轴承支撑",
+        "离子震荡",
+        "能量守恒",
+        "翼击"
       ]
     },
     {
-      "spirit": "圣剑-X",
-      "nature": 1,
+      "spirit": "影狸",
+      "nature": 20,
       "ivs": {
         "hp": 10,
-        "atk": 10,
-        "def": 10,
-        "spatk": 0,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
         "spdef": 0,
-        "speed": 0
+        "speed": 10
       },
-      "bloodline": 11,
+      "bloodline": 5,
       "skills": [
-        "拖拉机",
-        "齿轮切开",
-        "啮合传递",
-        "鸣沙陷阱"
+        "幽灵爆发",
+        "毒液渗透",
+        "恶意逃离",
+        "嘲弄"
+      ]
+    },
+    {
+      "spirit": "绒光优优",
+      "nature": 20,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 9,
+      "skills": [
+        "毒孢子",
+        "热砂",
+        "天光",
+        "硬化"
       ]
     }
   ]

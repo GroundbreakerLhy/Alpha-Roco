@@ -1,37 +1,7 @@
-"""技能使用类特性（on_skill_end / on_attack / on_skill_start）。
+"""技能使用类特性（on_skill_start / on_attack / on_skill_end）。
 
-- 200191 最好的伙伴  造成克制伤害后，获得攻防速+20%，并回复2能量。
-- 200107 浸润       使用水系技能后，全技能能耗-1。
-- 200146 助燃       使用火系技能后，获得双攻+20%。
-- 280003 爆燃       使用火系技能后，获得双攻永久+30%（PERMANENT，下场不消失）。
-- 200076 氧循环     使用草系技能后，回复10%生命。
-- 280002 深层氧循环   使用草系技能后，回复15%生命。
-- 200078 生物碱     使用草系技能时，敌方获得2层中毒。
-- 200089 碰瓷       自己使用恶系技能后，敌方失去2能量。
-- 200096 鼓气       使用能耗为3的技能时，获得攻防+20%。
-- 200111 溶解扩散   每携带1个毒系技能进入战斗，水系技能使敌方获得1层中毒。
-- 200115 扩散侵蚀   使用水系技能后，敌方获得中毒，层数=敌方中毒印记层数×2。
-- 200171 贪心算法   1号位技能获得传动1（入场时给 skills[0].drive=1），
-                   且使用该技能后使敌方获得6层灼烧。
-- 200205 月牙雪糕   使用攻击技能时，敌方每有1层冻结，在攻击前使其获得1层星陨印记。
-- 200125 咔咔冲刺   若先于敌方行动，行动后获得连击数+1（HIT_COUNT_FLAT buff 叠加）。
-- 200131 毒腺       使用能耗小于等于1的技能时，敌方获得4层中毒。
-- 200150 灵魂灼伤   冰系技能使敌方获得4层灼烧，火系技能使敌方获得2层冻结。
-- 200128 乘风连击   使用翼系技能后，获得连击数+1（HIT_COUNT_FLAT buff 叠加）。
-- 200129 快锤       携带的能耗小于3的技能获得迅捷（按真实能耗判断，入场时重算）。
-- 200234 翼轴       1号位技能获得迅捷和传动1（战斗开始时给 skills[0] 打标记）。
-- 200093 起飞加速   本场战斗首次使用的技能获得迅捷（on_skill_start 打标记）。
-- 200173 暴食       携带的龙系技能获得迅捷（on_battle_start 按属性打标记）。
-- 280029 相争       首次使用的技能获得迅捷；拥有迅捷效果的技能先手+1（modify_priority）。
-- 200300 上锁       对手本回合使用的技能，冷却1回合。
-- 200262 哨兵       敌方本回合技能足够击败自己时，速度+50，行动后脱离。
-- 280008 高浓生物碱  使用技能时（不限属性），敌方获得2层中毒。
-
-语义说明：
-- 最好的伙伴："攻防速"按 双攻/双防 各 +20%（ATK/SPATK/DEF/SPDEF 各 2 层）、速度 +20%
-  （SPEED_PERCENT 2 层，百分比速度见 buffs.get_speed_value）。
-- 给己方施加的增益带 source_kind="trait"（不算普通"增益"，见 buffs.Buff.is_gain）；
-  给敌方施加的 debuff 带 source_kind="debuff"（正常显示/参与减益判定）。
+“攻防速+20%” = 双攻/双防各 2 层、速度 2 层（SPEED_PERCENT）。
+己方增益带 source_kind="trait"（不是普通增益）；敌方减益带 "debuff"（正常参与减益判定）。
 """
 
 from __future__ import annotations
@@ -45,19 +15,18 @@ from ...enums import Element as E
 from ..base import TraitHandler
 from ..registry import register
 
-WATER = E.WATER  # 3 水
-FIRE = E.FIRE  # 2 火
-GRASS = E.GRASS  # 1 草
-POISON = E.POISON  # 9 毒
-WING = E.WING  # 12 翼
-DRAGON = E.DRAGON  # 7 龙
-DARK = E.DARK  # 15 恶
-ICE = E.ICE  # 6 冰
-POISON_MARK = 4  # 中毒印记
-STAR_MARK = 7  # 星陨印记
+WATER = E.WATER
+FIRE = E.FIRE
+GRASS = E.GRASS
+POISON = E.POISON
+WING = E.WING
+DRAGON = E.DRAGON
+DARK = E.DARK
+ICE = E.ICE
+POISON_MARK = 4
+STAR_MARK = 7
 
 
-# ---------------- 200191 最好的伙伴 ----------------
 class BestCompanion(TraitHandler):
     trait_id = 200191
     name = "最好的伙伴"
@@ -87,7 +56,6 @@ class BestCompanion(TraitHandler):
         ]
 
 
-# ---------------- 200107 浸润 ----------------
 class Soak(TraitHandler):
     trait_id = 200107
     name = "浸润"
@@ -109,7 +77,6 @@ class Soak(TraitHandler):
         return [{"name": "能耗", "layers": n, "per": "1", "gain": False}]
 
 
-# ---------------- 200146 助燃 ----------------
 class FireFuel(TraitHandler):
     trait_id = 200146
     name = "助燃"
@@ -132,7 +99,6 @@ class FireFuel(TraitHandler):
         return [{"name": "双攻", "layers": n, "per": "20%", "gain": True}]
 
 
-# ---------------- 280003 爆燃 ----------------
 class Detonation(TraitHandler):
     trait_id = 280003
     name = "爆燃"
@@ -164,7 +130,6 @@ class Detonation(TraitHandler):
         return [{"name": "双攻", "layers": n, "per": "30%", "gain": True}]
 
 
-# ---------------- 200076 氧循环 ----------------
 class OxygenCycle(TraitHandler):
     trait_id = 200076
     name = "氧循环"
@@ -180,7 +145,6 @@ class OxygenCycle(TraitHandler):
         ctx.actor.hp = min(ctx.actor.max_hp, ctx.actor.hp + heal)
 
 
-# ---------------- 280002 深层氧循环 ----------------
 class DeepOxygenCycle(TraitHandler):
     trait_id = 280002
     name = "深层氧循环"
@@ -196,7 +160,6 @@ class DeepOxygenCycle(TraitHandler):
         ctx.actor.hp = min(ctx.actor.max_hp, ctx.actor.hp + heal)
 
 
-# ---------------- 200078 生物碱 ----------------
 class Alkaloid(TraitHandler):
     trait_id = 200078
     name = "生物碱"
@@ -221,7 +184,6 @@ class Alkaloid(TraitHandler):
         )
 
 
-# ---------------- 200096 鼓气 ----------------
 class DrumUp(TraitHandler):
     trait_id = 200096
     name = "鼓气"
@@ -244,7 +206,6 @@ class DrumUp(TraitHandler):
         return [{"name": "物攻&物防", "layers": n, "per": "20%", "gain": True}]
 
 
-# ---------------- 200171 贪心算法 ----------------
 class GreedyAlgorithm(TraitHandler):
     trait_id = 200171
     name = "贪心算法"
@@ -281,7 +242,6 @@ class GreedyAlgorithm(TraitHandler):
         )
 
 
-# ---------------- 200205 月牙雪糕 ----------------
 class CrescentIceCream(TraitHandler):
     trait_id = 200205
     name = "月牙雪糕"
@@ -292,7 +252,7 @@ class CrescentIceCream(TraitHandler):
         if ctx.subject is not ctx.actor or ctx.skill is None:
             return
         if ctx.skill.category not in (0, 1):
-            return  # 仅攻击技能
+            return
         target = ctx.target
         if target is None or target.side == ctx.actor.side:
             return
@@ -304,7 +264,6 @@ class CrescentIceCream(TraitHandler):
         marks.add_mark(ctx.state, target.side, STAR_MARK, frozen)
 
 
-# ---------------- 200125 咔咔冲刺 ----------------
 class KaKaDash(TraitHandler):
     trait_id = 200125
     name = "咔咔冲刺"
@@ -339,7 +298,6 @@ class KaKaDash(TraitHandler):
         return [{"name": "连击数", "layers": n, "per": "1", "gain": True}]
 
 
-# ---------------- 200131 毒腺 ----------------
 class VenomGland(TraitHandler):
     trait_id = 200131
     name = "毒腺"
@@ -364,7 +322,6 @@ class VenomGland(TraitHandler):
         )
 
 
-# ---------------- 200150 灵魂灼伤 ----------------
 class SoulBurn(TraitHandler):
     trait_id = 200150
     name = "灵魂灼伤"
@@ -399,7 +356,38 @@ class SoulBurn(TraitHandler):
             )
 
 
-# ---------------- 200293 爆裂玉米 ----------------
+class Fireball(TraitHandler):
+    trait_id = 200292
+    name = "大火球"
+    desc = "自己使用2次不同的火系技能后，下次技能无需蓄力，随后特性重置。"
+    implemented = True
+
+    def on_skill_end(self, ctx):
+        if ctx.subject is not ctx.actor or ctx.skill is None:
+            return
+        if ctx.skill.element != FIRE or ctx.state_of("ready", False):
+            return
+        used = ctx.state_of("fire_skills", None)
+        if used is None:
+            used = set()
+            ctx.set_state("fire_skills", used)
+        used.add(ctx.skill.skill_id)
+        if len(used) >= 2:
+            ctx.set_state("ready", True)
+
+    def consume_skip_windup(self, pet):
+        if not pet.trait_state.get("ready", False):
+            return False
+        pet.trait_state["ready"] = False
+        pet.trait_state.pop("fire_skills", None)
+        return True
+
+    def display(self, state, pet):
+        if not pet.trait_state.get("ready", False):
+            return None
+        return [{"name": "无需蓄力", "layers": 1, "per": "1", "gain": True}]
+
+
 class BurstingCorn(TraitHandler):
     trait_id = 200293
     name = "爆裂玉米"
@@ -426,7 +414,6 @@ class BurstingCorn(TraitHandler):
         )
 
 
-# ---------------- 200111 溶解扩散 ----------------
 class DissolveSpread(TraitHandler):
     trait_id = 200111
     name = "溶解扩散"
@@ -454,7 +441,6 @@ class DissolveSpread(TraitHandler):
         )
 
 
-# ---------------- 200115 扩散侵蚀 ----------------
 class SpreadErosion(TraitHandler):
     trait_id = 200115
     name = "扩散侵蚀"
@@ -485,7 +471,6 @@ class SpreadErosion(TraitHandler):
         )
 
 
-# ---------------- 200300 上锁 ----------------
 class SkillLock(TraitHandler):
     trait_id = 200300
     name = "上锁"
@@ -500,7 +485,6 @@ class SkillLock(TraitHandler):
         skill_utils.schedule_skill_cooldown(ctx.subject, ctx.skill.skill_id)
 
 
-# ---------------- 200262 哨兵 ----------------
 class Sentinel(TraitHandler):
     trait_id = 200262
     name = "哨兵"
@@ -574,7 +558,6 @@ class Sentinel(TraitHandler):
         return [{"name": "速度", "layers": 1, "per": "50", "gain": True}]
 
 
-# ---------------- 200129 快锤 ----------------
 class QuickHammer(TraitHandler):
     trait_id = 200129
     name = "快锤"
@@ -596,7 +579,6 @@ class QuickHammer(TraitHandler):
         self._refresh_swift(ctx)
 
 
-# ---------------- 200234 翼轴 ----------------
 class WingAxis(TraitHandler):
     trait_id = 200234
     name = "翼轴"
@@ -613,7 +595,6 @@ class WingAxis(TraitHandler):
             skill.drive = 1
 
 
-# ---------------- 200173 暴食 ----------------
 class Gluttony(TraitHandler):
     trait_id = 200173
     name = "暴食"
@@ -628,7 +609,6 @@ class Gluttony(TraitHandler):
                 skill.swift = True
 
 
-# ---------------- 280022 溶解腐蚀 ----------------
 class DissolveCorrosion(TraitHandler):
     trait_id = 280022
     name = "溶解腐蚀"
@@ -660,7 +640,6 @@ class DissolveCorrosion(TraitHandler):
         )
 
 
-# ---------------- 200093 起飞加速 ----------------
 class TakeoffBoost(TraitHandler):
     trait_id = 200093
     name = "起飞加速"
@@ -678,7 +657,6 @@ class TakeoffBoost(TraitHandler):
         ctx.skill.swift = True
 
 
-# ---------------- 280029 相争 ----------------
 class Rivalry(TraitHandler):
     trait_id = 280029
     name = "相争"
@@ -701,7 +679,6 @@ class Rivalry(TraitHandler):
         return 1 if skill_utils.is_swift(ctx.skill) else 0
 
 
-# ---------------- 200128 乘风连击 ----------------
 class WindRideCombo(TraitHandler):
     trait_id = 200128
     name = "乘风连击"
@@ -723,7 +700,6 @@ class WindRideCombo(TraitHandler):
         return [{"name": "连击数", "layers": n, "per": "1", "gain": True}]
 
 
-# ---------------- 280008 高浓生物碱 ----------------
 class ConcentratedAlkaloid(TraitHandler):
     trait_id = 280008
     name = "高浓生物碱"
@@ -746,7 +722,6 @@ class ConcentratedAlkaloid(TraitHandler):
         )
 
 
-# ---------------- 200089 碰瓷 ----------------
 class BumpScam(TraitHandler):
     trait_id = 200089
     name = "碰瓷"
@@ -779,6 +754,7 @@ def register_skill() -> None:
         VenomGland,
         SoulBurn,
         BurstingCorn,
+        Fireball,
         DissolveSpread,
         SpreadErosion,
         GreedyAlgorithm,

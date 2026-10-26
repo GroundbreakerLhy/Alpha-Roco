@@ -1,7 +1,6 @@
-"""奉献：队伍级资源（SPEC B45）。
+"""奉献（B40）：五种效果之一，同类累加、不消耗、整场保留。
 
-一次奉献是下列五种效果之一。同类按次累加，不消耗，整场保留，只强化该队
-全部「啃咬」「虫群」技能（含场下精灵），由这些技能自己取用 ``bonus``。
+只强化该队全部「啃咬」「虫群」技能（含场下），由技能取用 ``bonus``。
 """
 
 from __future__ import annotations
@@ -9,11 +8,11 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-POWER = "power"  # 威力+20
-HIT = "hit"  # 连击数+1
-COST = "cost"  # 能耗-2
-POISON = "poison"  # 敌方获得2层中毒
-LIFESTEAL = "lifesteal"  # 获得10%吸血
+POWER = "power"
+HIT = "hit"
+COST = "cost"
+POISON = "poison"
+LIFESTEAL = "lifesteal"
 
 KINDS = (POWER, HIT, COST, POISON, LIFESTEAL)
 
@@ -27,13 +26,13 @@ LABELS = {
     LIFESTEAL: "获得10%吸血",
 }
 
-# 受奉献影响的技能：啃咬 7130100、虫群 7130130
+# 受奉献影响的技能：啃咬/虫群
 AFFECTED_SKILL_IDS = frozenset({7130100, 7130130})
 
 
 @dataclass(frozen=True)
 class Bonus:
-    """奉献给啃咬/虫群带来的强化（不含技能自身的永久成长）。"""
+    """奉献给啃咬/虫群带来的强化。"""
 
     power: int = 0
     hit_count: int = 0

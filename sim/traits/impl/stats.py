@@ -1,17 +1,6 @@
-"""第 1 批-b：属性/速度修正（modify_stat / modify_speed）。
+"""属性/速度修正（modify_stat / modify_speed）。
 
-- 200090 壮胆       队伍存在虫系精灵，自己获得双攻+50%。
-- 200140 悲悯       己方队伍中每有1只力竭的精灵，自己获得双攻+30%。（原第 0 批测试队伍，归入此类）
-- 200091 囤积       每有1能量，获得双防+10%。
-- 200094 保守派     总技能能耗小于4时，自己获得双防+80%。
-- 200309 守护之心   双方场上每有1种不同的增益，自己获得物防+20%。
-- 200310 和弦共振   双方场上每有1种不同的印记，自己获得魔攻+50%。
-- 280024 悼亡       双方队伍中每有1只力竭的精灵，自己获得双攻+30%。
-- 200298 流沙统治者 天气为沙暴时，自己获得速度+50。
-
-语义说明：
-- 守护之心/变形活画数的是"增益"，用 Buff.is_gain()（特性自身的展示效果不是增益）。
-- 和弦共振数印记种类（双方正/负槽非空印记 id 去重）。
+守护之心按增益种类计数（Buff.is_gain，特性来源不算）；和弦共振按双方印记 id 去重计数。
 """
 
 from __future__ import annotations
@@ -20,8 +9,8 @@ from ...enums import Element as E
 from ..registry import register
 from ..base import TraitHandler
 
-BUG = E.BUG  # 10 虫
-SANDSTORM = 2  # 天气：沙暴
+BUG = E.BUG
+SANDSTORM = 2
 
 
 def _self(ctx):
@@ -37,7 +26,6 @@ def _active_pets(ctx):
     return pets
 
 
-# ---------------- 200140 悲悯 ----------------
 class Compassion(TraitHandler):
     trait_id = 200140
     name = "悲悯"
@@ -51,7 +39,6 @@ class Compassion(TraitHandler):
         return 0.3 * n
 
 
-# ---------------- 200090 壮胆 ----------------
 class BraveHeart(TraitHandler):
     trait_id = 200090
     name = "壮胆"
@@ -65,7 +52,6 @@ class BraveHeart(TraitHandler):
         return 0.5 if has_bug else 0.0
 
 
-# ---------------- 200091 囤积 ----------------
 class Hoard(TraitHandler):
     trait_id = 200091
     name = "囤积"
@@ -78,7 +64,6 @@ class Hoard(TraitHandler):
         return 0.1 * ctx.actor.energy
 
 
-# ---------------- 200094 保守派 ----------------
 class Conservative(TraitHandler):
     trait_id = 200094
     name = "保守派"
@@ -92,7 +77,6 @@ class Conservative(TraitHandler):
         return 0.8 if total < 4 else 0.0
 
 
-# ---------------- 200309 守护之心 ----------------
 class GuardianHeart(TraitHandler):
     trait_id = 200309
     name = "守护之心"
@@ -108,7 +92,6 @@ class GuardianHeart(TraitHandler):
         return 0.2 * len(types)
 
 
-# ---------------- 200310 和弦共振 ----------------
 class ChordResonance(TraitHandler):
     trait_id = 200310
     name = "和弦共振"
@@ -127,7 +110,6 @@ class ChordResonance(TraitHandler):
         return 0.5 * len(ids)
 
 
-# ---------------- 280024 悼亡 ----------------
 class Mourning(TraitHandler):
     trait_id = 280024
     name = "悼亡"
@@ -143,7 +125,6 @@ class Mourning(TraitHandler):
         return 0.3 * n
 
 
-# ---------------- 200298 流沙统治者 ----------------
 class SandRuler(TraitHandler):
     trait_id = 200298
     name = "流沙统治者"

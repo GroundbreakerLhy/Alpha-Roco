@@ -1,13 +1,7 @@
 """冰冻增益类特性（on_buff_gain）。
 
-- 200122 加个雪球  使敌方获得冻结时，也会使其获得2层冻结。
-- 200116 捉迷藏    使敌方获得冻结时，也会使其获得全技能能耗+1。
-
-接入说明：buff_gain 事件在 buffs.add_buff 调用处由引擎广播
-（traits.on_buff_gain），ctx.extra 携带 buff_type/value/source_side/source_pet/source_kind。
-触发语义：敌方获得冻结（任何来源，含天气暴风雪）即触发。
-给敌方施加的 debuff 标记 source_kind="debuff"（正常显示/参与减益判定）；
-特性内部 add_buff 不广播 buff_gain，因此不会自我连锁叠加。
+敌方获得冻结（任何来源，含天气暴风雪）即触发；特性内部 add_buff 不广播 buff_gain，
+不会自我连锁。
 """
 
 from __future__ import annotations
@@ -19,7 +13,7 @@ from ..registry import register
 
 
 def _enemy_frozen(ctx):
-    """敌方获得冻结（任何来源，含天气）返回受击精灵；否则 None。"""
+    """敌方获得冻结时返回受击精灵，否则 None。"""
     if ctx.extra.get("buff_type") != B.BuffType.FREEZE:
         return None
     subject = ctx.subject
@@ -30,7 +24,6 @@ def _enemy_frozen(ctx):
     return subject
 
 
-# ---------------- 200122 加个雪球 ----------------
 class AddSnowball(TraitHandler):
     trait_id = 200122
     name = "加个雪球"
@@ -52,7 +45,6 @@ class AddSnowball(TraitHandler):
         )
 
 
-# ---------------- 200116 捉迷藏 ----------------
 class HideAndSeek(TraitHandler):
     trait_id = 200116
     name = "捉迷藏"
@@ -73,7 +65,6 @@ class HideAndSeek(TraitHandler):
         )
 
 
-# ---------------- 280012 抓到你了 ----------------
 class Gotcha(TraitHandler):
     trait_id = 280012
     name = "抓到你了"
@@ -95,7 +86,7 @@ class Gotcha(TraitHandler):
             source_kind="debuff",
         )
         if gained > 0:
-            # 入场施加的冻结也属于"使敌方获得冻结"：广播以触发本特性的能耗+1
+            # 入场施加的冻结也算敌方获得冻结：手动广播以触发本特性
             T.on_buff_gain(
                 ctx.state, enemy, B.BuffType.FREEZE, gained,
                 source_side=ctx.actor.side, source_pet=ctx.actor.name,

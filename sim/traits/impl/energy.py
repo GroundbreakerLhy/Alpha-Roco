@@ -1,21 +1,7 @@
-"""第 1 批-c：能耗/能量修正（modify_energy_cost / modify_energy_limit / modify_energy_shortfall）。
+"""能耗/能量修正（modify_energy_cost / modify_energy_limit / modify_energy_shortfall）。
 
-- 200108 缩壳       携带的防御技能能耗-2。
-- 200112 倾轧       携带的技能受能耗变化效果的影响翻倍。
-- 200113 对流       自己的能耗增加变为能耗降低；能耗降低变为能耗增加。
-- 200123 冰封       在场时，敌方全技能能耗+1（敌方光环，query 会查敌方在场精灵）。
-- 200104 石天平     若使用技能能耗高于敌方，回合结束敌方失去能耗之差的能量。
-- 200114 洄游       每次进入蓄力状态，获得全技能能耗永久-2（PERMANENT，下场不消失）。
-- 200224 消波块     每携带1个水系技能进入战斗，地系技能能耗-1。
-- 200252 留学生     自己全技能能耗+2（"可以学习全部攻击技能石"未建模，暂不实现）。
-- 200215 多人宿舍   自己的能量可以超过能量上限（上限+999，视为无实际限制）。
-- 200100 石头大餐   能量不足时，消耗5%最大生命，代替1能量。
-- 280030 盛宴       能量不足时，消耗5%最大生命，代替1能量；生命低于50%时，获得吸血100%（modify_lifesteal）。
-                   两者共用 _pay_hp（转换比 = max(1, int(max_hp×5%))/能量，与当前生命无关）。
-
-语义说明：能耗修正查询会额外查敌方在场精灵特性（冰封），因此 handler 用
-ctx.target.side != ctx.actor.side 判断是否对敌方生效；自身类用 ctx.target is ctx.actor。
-倾轧/对流基于自身当前 ENERGY_COST buff 总值翻转/翻倍（含特性来源，特性也是"能耗变化效果"）。
+能耗查询会额外查敌方在场精灵（冰封敌方光环），handler 用 ctx.target.side != ctx.actor.side 判断敌方。
+倾轧/对流基于自身当前 ENERGY_COST buff 总值翻转/翻倍（含特性来源）。
 """
 
 from __future__ import annotations
@@ -26,10 +12,10 @@ from ...enums import Element as E
 from ..registry import register
 from ..base import TraitHandler
 
-WATER = E.WATER  # 3 水
-EARTH = E.EARTH  # 5 地
-FANTASY = E.FANTASY  # 17 幻
-NO_LIMIT = 999  # 多人宿舍：能量上限视为无实际限制
+WATER = E.WATER
+EARTH = E.EARTH
+FANTASY = E.FANTASY
+NO_LIMIT = 999  # 视为无实际能量上限
 
 
 def _self(ctx):
@@ -37,13 +23,10 @@ def _self(ctx):
 
 
 def _pay_hp(ctx, need, dry_run: bool = False):
-    """每1能量消耗最大生命的5%（石头大餐 200100 / 盛宴 280030），返回补充的能量数。
+    """每 1 能量消耗 max_hp×5%（下限 1），返回补充的能量数。
 
-    转换比固定：cost = max(1, int(max_hp × 5%))，与当前生命无关（与盛宴同一套）。
-    dry_run=True（选择校验）：不支付，只判断当前生命是否够付且付完不死
-    （hp > need×cost）；不够则不可选。
-    dry_run=False（结算）：不做死亡保护，全额支付 need×cost；支付后生命 ≤0
-    即直接力竭（技能不再结算，力竭由引擎在付费处统一处理）。
+    dry_run=True：不支付，仅判断当前生命够付且付完不死。
+    dry_run=False：不做死亡保护，全额支付；生命 ≤0 由引擎在付费处统一力竭。
     """
     if not _self(ctx):
         return 0
@@ -51,10 +34,10 @@ def _pay_hp(ctx, need, dry_run: bool = False):
     if dry_run:
         return need if ctx.actor.hp > need * cost else 0
     ctx.actor.hp -= need * cost
+    ctx.log(f"{ctx.actor.side} {ctx.actor.name} 失去 {need * cost} 生命")
     return need
 
 
-# ---------------- 200108 缩壳 ----------------
 class ShrinkShell(TraitHandler):
     trait_id = 200108
     name = "缩壳"
@@ -69,7 +52,6 @@ class ShrinkShell(TraitHandler):
         return 0
 
 
-# ---------------- 200112 倾轧 ----------------
 class Overwhelm(TraitHandler):
     trait_id = 200112
     name = "倾轧"
@@ -82,7 +64,6 @@ class Overwhelm(TraitHandler):
         return B.get_buff_value(ctx.target, B.BuffType.ENERGY_COST)
 
 
-# ---------------- 200113 对流 ----------------
 class Convection(TraitHandler):
     trait_id = 200113
     name = "对流"
@@ -100,7 +81,6 @@ class Convection(TraitHandler):
         return -2 * total
 
 
-# ---------------- 200104 石天平 ----------------
 class StoneBalance(TraitHandler):
     trait_id = 200104
     name = "石天平"
@@ -139,7 +119,6 @@ class StoneBalance(TraitHandler):
         enemy.energy = max(0, enemy.energy - diff)
 
 
-# ---------------- 200123 冰封 ----------------
 class IceSeal(TraitHandler):
     trait_id = 200123
     name = "冰封"
@@ -154,7 +133,6 @@ class IceSeal(TraitHandler):
         return 0
 
 
-# ---------------- 200114 洄游 ----------------
 class Migration(TraitHandler):
     trait_id = 200114
     name = "洄游"
@@ -181,7 +159,6 @@ class Migration(TraitHandler):
         return [{"name": "能耗", "layers": n, "per": "2", "gain": False}]
 
 
-# ---------------- 200224 消波块 ----------------
 class WaveBreaker(TraitHandler):
     trait_id = 200224
     name = "消波块"
@@ -197,7 +174,6 @@ class WaveBreaker(TraitHandler):
         return -n_water
 
 
-# ---------------- 200252 留学生 ----------------
 class ExchangeStudent(TraitHandler):
     trait_id = 200252
     name = "留学生"
@@ -207,10 +183,21 @@ class ExchangeStudent(TraitHandler):
     def modify_energy_cost(self, ctx):
         if not _self(ctx):
             return 0
-        return 2  # "攻击技能石"机制未建模，暂只实现能耗部分
+        return 2
 
 
-# ---------------- 200215 多人宿舍 ----------------
+class GeneEditing(TraitHandler):
+    trait_id = 200318
+    name = "基因编辑"
+    desc = "自己携带技能的基础能耗，变为上回合双方使用的技能能耗之和。"
+    implemented = True
+
+    def modify_base_energy_cost(self, ctx):
+        if not _self(ctx) or ctx.skill is None:
+            return None
+        return ctx.state.prev_turn_costs["A"] + ctx.state.prev_turn_costs["B"]
+
+
 class SharedDorm(TraitHandler):
     trait_id = 200215
     name = "多人宿舍"
@@ -223,7 +210,6 @@ class SharedDorm(TraitHandler):
         return NO_LIMIT
 
 
-# ---------------- 200100 石头大餐 ----------------
 class StoneFeast(TraitHandler):
     trait_id = 200100
     name = "石头大餐"
@@ -234,7 +220,6 @@ class StoneFeast(TraitHandler):
         return _pay_hp(ctx, need, dry_run=dry_run)
 
 
-# ---------------- 280030 盛宴 ----------------
 class GrandFeast(TraitHandler):
     trait_id = 280030
     name = "盛宴"
@@ -252,7 +237,6 @@ class GrandFeast(TraitHandler):
         return 0.0
 
 
-# ---------------- 200188 盲从 ----------------
 class BlindObedience(TraitHandler):
     trait_id = 200188
     name = "盲从"
@@ -280,6 +264,7 @@ def register_batch1_energy() -> None:
         SharedDorm,
         StoneFeast,
         GrandFeast,
+        GeneEditing,
         BlindObedience,
     ):
         register(cls())

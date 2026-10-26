@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Headless battle client.
+"""无头对战客户端。
 
-Run:
-  python client.py --port 5000 --team data/teams/冻陨2.0.json
-  python client.py --port 5000 --team data/teams/冻陨2.0.json --auto best
-  python client.py --port 5000 --team data/teams/冻陨2.0.json --auto teacher
+运行：python client.py --team data/teams/team4.json [--auto best|teacher]
 """
 
 import argparse
@@ -40,7 +37,7 @@ AUTO_TEACHER = None
 AUTO_DEVICE = None
 AUTO_MEMORIES = {"A": None, "B": None}
 
-# 元素 0-17 名称（与 sim/enums.Element 一致）
+# 元素名称（同 sim/enums.Element）
 ELEMENT_NAMES = [
     "普通",
     "草",
@@ -61,7 +58,7 @@ ELEMENT_NAMES = [
     "机械",
     "幻",
 ]
-# 首领血脉编号（与 sim/enums.LORD_BLOODLINE 一致）
+# 首领血脉编号（同 sim/enums.LORD_BLOODLINE）
 LORD_BLOODLINE = 18
 
 CATEGORY_NAMES = {
@@ -71,7 +68,6 @@ CATEGORY_NAMES = {
     3: "状态",
 }
 
-# buff 分类
 BUFF_ALWAYS = {"lifesteal"}
 BUFF_DEBUFF = {
     "priority_debuff",
@@ -84,7 +80,6 @@ BUFF_DEBUFF = {
     "lock",
     "lightning",
 }
-# buff 类型中文名
 BUFF_NAMES = {
     "atk": "物攻",
     "spatk": "魔攻",
@@ -119,7 +114,7 @@ _BUFF_INFO = None
 
 
 def buff_display_name(btype):
-    """buff 类型显示名；按元素威力增益（power_boost_<元素id>）动态映射为'X系技能威力'。"""
+    """buff 显示名；power_boost_<id> 动态映射为'X系技能威力'。"""
     if btype.startswith("power_boost_"):
         el = int(btype.rsplit("_", 1)[1])
         return f"{ELEMENT_NAMES[el]}系技能威力"
@@ -140,7 +135,7 @@ def buff_classify(btype, value):
 
 
 def buff_info():
-    """懒加载 data/buff.json：类型 -> {per_layer, unit}（显示每层数值用）。"""
+    """懒加载 data/buff.json：id -> {per_layer, unit}。"""
     global _BUFF_INFO
     if _BUFF_INFO is None:
         path = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "buff.json"
@@ -170,10 +165,7 @@ def log(msg):
 
 
 def load_team(team_name):
-    """加载队伍 JSON。
-    都会优先从 data/teams/ 下查找
-    返回完整 JSON 配置（含 team、resonance 等字段）。
-    """
+    """加载队伍 JSON（绝对路径或 data/teams/ 下的名字），返回完整配置。"""
     root = Path(os.path.dirname(os.path.abspath(__file__)))
     candidates = []
     if Path(team_name).is_absolute():
@@ -275,11 +267,11 @@ def print_state(state):
             log(
                 f" {marker} #{i + 1} {pet['name']} {hp_text} 能量 {pet['energy']} 速 {speed_text}"
             )
-            # 特性效果行在最前（服务端算好，如 +双攻 * 3 (20%/trait)）
+            # 特性效果行在最前（服务端算好）
             for eff in pet.get("trait_effects") or []:
                 sign = "+" if eff.get("gain", True) else "-"
                 log(f"     {sign}{eff['name']} * {eff['layers']} ({eff['per']}/trait)")
-            # 普通 buff（特性来源的已由 trait_effects 展示，这里跳过）
+            # 普通 buff：特性来源已由 trait_effects 展示
             merged = {}
             for buff in pet.get("buffs", []):
                 if buff.get("source_kind") == "trait":
@@ -312,10 +304,10 @@ def print_state(state):
 
 
 def render_buffs(merged):
-    """把普通 buff（type -> 层数）渲染成显示行：统计类联合显示、中文名、格式 +物攻 * 6 (10%/buff)。"""
+    """把普通 buff 渲染成显示行：统计类联合显示、中文名。"""
     info_map = buff_info()
     lines = []
-    # 统计类联合：层数相同的 atk/spatk/def/spdef 合并为 双攻/双防/物攻&物防 等
+    # 统计类联合：层数相同时合并显示
     stat_family = ("atk", "spatk", "def", "spdef")
     stats = {t: v for t, v in merged.items() if t in stat_family}
     if len(stats) >= 2 and len(set(stats.values())) == 1:
@@ -419,11 +411,7 @@ def choose_lord_branch(state):
 
 
 def choose_branch(skill):
-    """选择技能（choice=True）的分支提示。
-
-    返回 0=明 / 1=暗；无默认，必须显式选择。
-    直接回车返回 None，表示返回去改选其他技能。
-    """
+    """选择技能分支（choice=True）：返回 0=明 / 1=暗，回车返回 None。"""
     while True:
         value = terminal_input(
             f"选择 {skill.get('name', '技能')} 的效果 (0=明, 1=暗, 回车=返回): "
@@ -476,7 +464,7 @@ def prompt_action(conn, state):
         if action.isdigit() and 1 <= int(action) <= skill_limit:
             idx = int(action) - 1
             pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
-            # 进化之力追加的技能尚未出现在本地快照中，冷却检查交由服务端/引擎处理。
+            # 进化之力追加的技能不在本地快照，冷却交由服务端判定。
             if idx < len(pet["skills"]):
                 skill = pet["skills"][idx]
                 if (
@@ -493,7 +481,6 @@ def prompt_action(conn, state):
             ):
                 branch = choose_branch(pet["skills"][idx])
                 if branch is None:
-                    # 玩家在选择效果时返回，改选其他技能。
                     continue
                 choice_branch = branch
             log(f"操作: 技能{int(action)}")
@@ -700,7 +687,6 @@ def main():
         parser.error(
             "必须通过 --team 指定队伍文件，例如 --team data/teams/冻陨2.0.json"
         )
-    # random.seed(42)
     global AUTO_MODE, MACHINE_MODE, AUTO_AGENT
     AUTO_MODE = bool(args.auto)
     AUTO_AGENT = args.auto
@@ -748,7 +734,7 @@ def main():
             log(f"你是 {side} 方")
             if team is None:
                 resonance = None
-            # 共鸣魔法不再开局选择，直接从队伍 JSON 的 resonance 字段读取
+            # 共鸣魔法从队伍 JSON 的 resonance 字段读取
             send_line(
                 conn,
                 {

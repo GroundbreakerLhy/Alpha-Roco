@@ -1,14 +1,4 @@
-"""回合结束类特性（on_round_end / on_dot_damage / on_defense）。
-
-- 200080 养分重吸收  回合结束时，回复3能量。
-- 200095 双向光速    在场时，双方回合结束时的效果额外触发1次。
-- 200203 煤渣草      在场时，所有灼烧的衰减变为增长。
-- 200087 生长        回合结束时，回复12%生命。
-- 200290 安可        使用光系技能后，在本侧特性回合末阶段完整返场。
-- 200189 吸积盘      回合结束时，敌方获得2层星陨印记（marks id=7）。
-- 200241 陨落        在场时，双方回合结束时的效果不会触发。
-- 200240 耐活王      敌方受到中毒效果伤害时，自己回复等量生命（on_dot_damage）。
-"""
+"""回合结束类特性（on_round_end / on_dot_damage / on_defense）。"""
 
 from __future__ import annotations
 
@@ -20,10 +10,9 @@ from ...models import BattleSkill
 from ..base import TraitHandler
 from ..registry import register
 
-LIGHT = E.LIGHT  # 4 光
+LIGHT = E.LIGHT
 
 
-# ---------------- 200203 煤渣草 ----------------
 class CinderGrass(TraitHandler):
     trait_id = 200203
     name = "煤渣草"
@@ -34,7 +23,6 @@ class CinderGrass(TraitHandler):
         return ctx.is_active()
 
 
-# ---------------- 200095 双向光速 ----------------
 class TwoWayLightSpeed(TraitHandler):
     trait_id = 200095
     name = "双向光速"
@@ -47,7 +35,6 @@ class TwoWayLightSpeed(TraitHandler):
         return 1
 
 
-# ---------------- 200241 陨落 ----------------
 class Fallen(TraitHandler):
     trait_id = 200241
     name = "陨落"
@@ -60,7 +47,6 @@ class Fallen(TraitHandler):
         return -1
 
 
-# ---------------- 200080 养分重吸收 ----------------
 class NourishReabsorb(TraitHandler):
     trait_id = 200080
     name = "养分重吸收"
@@ -73,7 +59,6 @@ class NourishReabsorb(TraitHandler):
         T.grant_energy(ctx.state, ctx.actor, 3)
 
 
-# ---------------- 200087 生长 ----------------
 class Growth(TraitHandler):
     trait_id = 200087
     name = "生长"
@@ -87,7 +72,6 @@ class Growth(TraitHandler):
         ctx.actor.hp = min(ctx.actor.max_hp, ctx.actor.hp + heal)
 
 
-# ---------------- 200290 安可 ----------------
 class Encore(TraitHandler):
     trait_id = 200290
     name = "安可"
@@ -112,7 +96,6 @@ class Encore(TraitHandler):
         reenter(ctx.state, ctx.actor.side, ctx.state.log)
 
 
-# ---------------- 200189 吸积盘 ----------------
 class AccretionDisk(TraitHandler):
     trait_id = 200189
     name = "吸积盘"
@@ -130,7 +113,6 @@ class AccretionDisk(TraitHandler):
         marks.add_mark(ctx.state, enemy.side, 7, 2)
 
 
-# ---------------- 200240 耐活王 ----------------
 class HardyKing(TraitHandler):
     trait_id = 200240
     name = "耐活王"
@@ -150,7 +132,6 @@ class HardyKing(TraitHandler):
         ctx.actor.hp = min(ctx.actor.max_hp, ctx.actor.hp + ctx.damage)
 
 
-# ---------------- 200187 蚀刻 ----------------
 class Etching(TraitHandler):
     trait_id = 200187
     name = "蚀刻"
@@ -172,7 +153,6 @@ class Etching(TraitHandler):
         M.add_mark(ctx.state, enemy.side, 4, n)
 
 
-# ---------------- 200275 合拍 ----------------
 # 聚能按"0 能耗 / 状态类型 / 属性18"的虚拟技能参与比较（属性18 不与任何常规系别相同，
 # 只有双方都聚能时系别才算相同）。
 _CHARGE_VIRTUAL = BattleSkill(
@@ -234,7 +214,6 @@ class Sync(TraitHandler):
         return [{"name": "物攻物防", "layers": n, "per": "10%", "gain": True}]
 
 
-# ---------------- 200297 莫比乌斯 ----------------
 class Mobius(TraitHandler):
     trait_id = 200297
     name = "莫比乌斯"
@@ -249,7 +228,6 @@ class Mobius(TraitHandler):
         T.grant_energy(ctx.state, ctx.actor, 10)
 
 
-# ---------------- 280013 养分内循环 ----------------
 class NutrientInnerCycle(TraitHandler):
     trait_id = 280013
     name = "养分内循环"

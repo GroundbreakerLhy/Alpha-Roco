@@ -1,11 +1,7 @@
-"""技能注册表：skill_id -> handler 实例。
+"""技能注册表：skill_id -> handler。
 
-与 sim/traits/registry.py 同构：默认把 data/skills.json 中的全部技能注册为
-no-op handler（implemented=False），实现某个技能时用 ``register()`` 覆盖。
-这样注册表始终完整，引擎分发不会缺项，``report()`` 也就能直接给出覆盖率。
-
-注意：**desc 只用于校对**。``check()`` 会核对代码定义的 name/category 与
-skills.json 是否一致，但任何运行时路径都不会读 desc。
+默认把 data/skills.json 的全部技能注册为 no-op（implemented=False），
+实现时用 ``register()`` 覆盖。desc 仅供展示/校对，运行时不读取。
 """
 
 from __future__ import annotations
@@ -78,10 +74,7 @@ def raw_of(skill_id: int) -> dict | None:
 
 
 def static_of(skill_id: int) -> dict:
-    """技能的静态属性（构造 BattleSkill 时使用）。
-
-    返回 ``{counter_target, counter_interrupt, drive, swift, windup, usable, element, choice}``。
-    """
+    """构造 BattleSkill 用的静态属性字典。"""
     handler = get_handler(skill_id)
     if handler is None:
         return {"counter_target": "", "counter_interrupt": False, "drive": 0,
@@ -100,11 +93,7 @@ def static_of(skill_id: int) -> dict:
 
 
 def bind_skill(skill, pet=None):
-    """把注册表中的静态定义写入一个 BattleSkill 实例。
-
-    引擎接入点：``data_loader`` 构造技能后调用一次。只写入代码显式声明的字段
-    （非默认值），因此不会覆盖特性等其他来源已经设置好的运行时标记。
-    """
+    """把静态定义写入 BattleSkill；只写非默认值，不覆盖其他来源的标记。"""
     handler = get_handler(getattr(skill, "skill_id", None))
     if handler is None:
         return skill
@@ -136,10 +125,7 @@ def all_handlers() -> list:
 
 
 def report() -> dict:
-    """进度统计：以 ``data/skills.json`` 的 ``done``/``tested`` 标志为准（与 traits 同约定）。
-
-    handler 上的 ``implemented`` 只是代码内的声明；唯一进度依据是数据文件的 done/tested。
-    """
+    """进度统计：以 data/skills.json 的 done/tested 为准。"""
     raws = _raw_skills()
     done = [s for s in raws if s.get("done")]
     tested = [s for s in raws if s.get("tested")]
@@ -153,11 +139,7 @@ def report() -> dict:
 
 
 def check() -> list:
-    """一致性自检：返回问题清单（空列表表示通过）。
-
-    核对代码定义与 data/skills.json 是否对齐——这是"效果定义迁移到代码"之后
-    防止两边漂移的兜底，也是替代 desc 解析的保障。
-    """
+    """一致性自检：核对代码定义与 data/skills.json，返回问题清单（空=通过）。"""
     _load_defaults()
     problems = []
     for sid, handler in sorted(_REGISTRY.items()):

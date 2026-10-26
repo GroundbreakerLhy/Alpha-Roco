@@ -1,11 +1,4 @@
-"""击败/力竭类特性（on_kill / on_faint）。
-
-- 200141 付给恶魔的赎价  击败敌方精灵时，敌方额外损失1点魔力；被敌方精灵击败时，自己额外损失1点魔力。
-- 200081 诈死          自己力竭时，少损失1点魔力。
-- 200230 不朽          力竭4回合后复活，恢复满血满能量，并保留萌化。
-- 200211 飓风          其他翼系队友携带相同技能时，本精灵对应技能获得迅捷；被敌方击败时额外损失1点魔力。
-- 200257 恶魔的晚宴    主动击败敌方精灵时，自己永久获得双攻+50%（PERMANENT buff，下场不消失）。
-"""
+"""击败/力竭类特性（on_kill / on_faint / on_attack）。"""
 
 from __future__ import annotations
 
@@ -20,7 +13,6 @@ from ..registry import register
 WISH_TRAIT_SKILL_ID = -2  # 特性替换版愿力冲击（共鸣魔法版为 -1，静态威力且回合末还原）
 
 
-# ---------------- 200141 付给恶魔的赎价 ----------------
 class DevilsPrice(TraitHandler):
     trait_id = 200141
     name = "付给恶魔的赎价"
@@ -40,7 +32,6 @@ class DevilsPrice(TraitHandler):
         ctx.state.magic[ctx.actor.side] -= 1
 
 
-# ---------------- 200081 诈死 ----------------
 class FeignDeath(TraitHandler):
     trait_id = 200081
     name = "诈死"
@@ -55,7 +46,6 @@ class FeignDeath(TraitHandler):
         ctx.state.magic[ctx.actor.side] += 1
 
 
-# ---------------- 200230 不朽 ----------------
 class Undying(TraitHandler):
     trait_id = 200230
     name = "不朽"
@@ -103,7 +93,6 @@ class Undying(TraitHandler):
         T.emit(ctx.state, "revive", scope="all", side=ctx.actor.side, subject=ctx.actor)
 
 
-# ---------------- 200211 飓风 ----------------
 class Hurricane(TraitHandler):
     trait_id = 200211
     name = "飓风"
@@ -142,7 +131,6 @@ class Hurricane(TraitHandler):
         ctx.set_state("defeated_by_enemy", False)
 
 
-# ---------------- 200257 恶魔的晚宴 ----------------
 class DemonFeast(TraitHandler):
     trait_id = 200257
     name = "恶魔的晚宴"
@@ -172,7 +160,6 @@ class DemonFeast(TraitHandler):
         return [{"name": "双攻", "layers": n, "per": "50%", "gain": True}]
 
 
-# ---------------- 280025 裁决 / 280026 滋养 / 280027 点燃 / 280028 净化 ----------------
 def _wish_skill(pet, element):
     """构造特性替换版愿力冲击（永久替换、不还原；威力 80，应对状态经 handler 加倍）。"""
     category = 0 if pet.stats["atk"] >= pet.stats["spatk"] else 1
@@ -182,7 +169,7 @@ def _wish_skill(pet, element):
         element=element,
         category=category,
         power=80,
-        energy_cost=0,
+        energy_cost=2,
         desc="应对状态：本次威力+150%",
     )
     wish.counter_target = "status"
@@ -193,7 +180,7 @@ class _WishOnSuperEffective(TraitHandler):
     """造成克制伤害后：攻防速+20%、回复2能量、首个技能替换为对应系别愿力冲击（永久）。"""
 
     implemented = True
-    wish_element = None  # 子类指定系别
+    wish_element = None
 
     def on_attack(self, ctx):
         if ctx.subject is not ctx.actor:
@@ -207,7 +194,7 @@ class _WishOnSuperEffective(TraitHandler):
         B.grant_buff(ctx.actor, B.BuffType.SPDEF, 2, source_kind="trait")
         B.grant_buff(ctx.actor, B.BuffType.SPEED_PERCENT, 2, source_kind="trait")
         T.grant_energy(ctx.state, ctx.actor, 2)
-        # 首个技能替换为对应系别愿力冲击（永久替换、不还原——不设 wish_original_skill）
+        # 首个技能永久替换为对应系别愿力冲击（不还原）
         if ctx.actor.skills:
             ctx.actor.skills[0] = _wish_skill(ctx.actor, self.wish_element)
         ctx.add_state("triggers", 1)

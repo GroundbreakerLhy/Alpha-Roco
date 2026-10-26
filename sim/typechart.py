@@ -1,4 +1,4 @@
-"""Type effectiveness lookup."""
+"""属性克制查表。"""
 
 
 def type_multiplier(

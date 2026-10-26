@@ -1,36 +1,7 @@
 """入场/离场类特性（on_entry / on_leave）。
 
-- 200149 专注力    入场首回合，获得物攻+100%（首次行动——任意技能或聚能——后结束）。
-- 200244 图书守卫者  入场时若己方魔力为1，获得双攻+100%。
-- 200126 洁癖     离场后，自己的增益和减益会被更换入场的精灵继承。
-- 200161 做噩梦    敌方精灵离场后，更换入场的精灵失去3能量。
-- 200162 噼啪！   入场后首次行动，所选技能使用次数+1（迸发：skill_use_count）。
-- 200164 电流刺激  入场后获得迸发：本次攻击技能威力+40（attack_power_flat）。
-- 200216 珊瑚骨    敌方精灵离场时，自己获得全技能能耗-3（ENERGY_COST buff 叠加）。
-- 200102 地脉      初始能量为0，入场前己方精灵每放1次地系技能，回复3能量
-                   （场下积累次数，入场时能量=次数×3，初始为0）。
-- 200109 守护者    己方其他精灵每有1层萌化，自己入场时全技能能耗-1
-                   （入场时统计己方其他精灵萌化总层数 N，加 ENERGY_COST -N）。
-- 200110 水翼推进  己方精灵每使用1次水系技能，自己入场时获得全技能能耗-1
-                   （全程累计次数 charges，入场时刷新能耗 buff 为当前累计数，不清零不叠加）。
-- 200118 结晶水    初始能量为0，入场前己方精灵每放1次冰系技能，回复3能量
-                   （场下积累次数，入场时能量=次数×3，初始为0）。
-- 200132 虫群鼓舞  队伍中每有1只其他的虫系精灵，自己入场时获得攻防速+10%
-                   （入场时统计己方其他存活虫系精灵数 N，攻/防/速各 +10%×N）。
-- 200142 瞳中倒影  自己或其他精灵离场时，自己与更换入场的精灵交换血量百分比
-                   （任意精灵离场都触发，on_leave）。
-- 200147 散热      初始能量为0，入场前己方精灵每放1次火系技能，回复3能量
-                   （场下积累次数，入场时能量=次数×3，初始为0）。
-- 200153 蒸汽膨胀  己方精灵每使用1次火系技能，自己入场时获得全技能威力+10。
-- 200177 慢热型    初始能量为0，入场前己方精灵每成功应对1次，回复5能量。
-- 200139 渴求      入场时获得50%吸血（LIFESTEAL 5 层，每层10%）。
-- 200220 稀兽花宝  根据自身血脉，入场时对己方/敌方施加不同效果。
-
-语义说明：
-- 专注力：buff 为 NORMAL 时长，持续到首次行动（技能或聚能）之后才结束；下场/重新入场重新触发。
-- 洁癖：离场事件在引擎清除普通 buff 之前广播，因此能拿到完整的增益/减益列表，全部复制给入场精灵。
-- 地脉：on_skill_end 只积累"己方"（ctx.side==actor.side）的地系技能且自己在场下；入场时兑现。
-- 特性带来的所有 buff 均带 source_kind="trait" 标记（不算普通"增益"，见 buffs.Buff.is_gain）。
+离场事件在引擎清除普通 buff 之前广播，因此 on_leave 能拿到完整增益/减益列表。
+特性带来的 buff 均带 source_kind="trait"（不算普通增益，见 buffs.Buff.is_gain）。
 """
 
 from __future__ import annotations
@@ -46,14 +17,13 @@ from ...enums import Element as E
 from ..base import TraitHandler
 from ..registry import register
 
-EARTH = E.EARTH  # 5 地
-WATER = E.WATER  # 3 水
-ICE = E.ICE  # 6 冰
-BUG = E.BUG  # 10 虫
-FIRE = E.FIRE  # 2 火
+EARTH = E.EARTH
+WATER = E.WATER
+ICE = E.ICE
+BUG = E.BUG
+FIRE = E.FIRE
 
 
-# ---------------- 200149 专注力 ----------------
 class Focus(TraitHandler):
     trait_id = 200149
     name = "专注力"
@@ -77,7 +47,6 @@ class Focus(TraitHandler):
         ctx.set_state("buff", buff)
 
     def on_skill_end(self, ctx):
-        # 首次使用技能后结束
         self._end(ctx)
 
     def on_charge(self, ctx):
@@ -105,7 +74,6 @@ class Focus(TraitHandler):
         return [{"name": "物攻", "layers": 1, "per": "100%", "gain": True}]
 
 
-# ---------------- 200177 慢热型 ----------------
 class SlowWarm(TraitHandler):
     trait_id = 200177
     name = "慢热型"
@@ -130,7 +98,6 @@ class SlowWarm(TraitHandler):
         ctx.set_state("counter_charges", 0)
 
 
-# ---------------- 200244 图书守卫者 ----------------
 class LibraryGuardian(TraitHandler):
     trait_id = 200244
     name = "图书守卫者"
@@ -153,7 +120,6 @@ class LibraryGuardian(TraitHandler):
         return [{"name": "双攻", "layers": layers, "per": "10%", "gain": True}]
 
 
-# ---------------- 200245 构装契约者 ----------------
 class ConstructContractor(TraitHandler):
     trait_id = 200245
     name = "构装契约者"
@@ -177,7 +143,57 @@ class ConstructContractor(TraitHandler):
         return [{"name": "双防", "layers": layers, "per": "10%", "gain": True}]
 
 
-# ---------------- 200126 洁癖 ----------------
+class StarBenevolence(TraitHandler):
+    trait_id = 200166
+    name = "星地善良"
+    desc = "回合结束时，若场上的己方精灵能量等于0，自己立即替换此精灵。"
+    implemented = True
+
+    def on_round_end(self, ctx):
+        if ctx.is_active() or ctx.actor.hp <= 0:
+            return
+        side = ctx.actor.side
+        idx = ctx.state.active[side]
+        if idx < 0 or ctx.state.teams[side][idx].energy != 0:
+            return
+        ctx.state.pending_switch_to[side] = ctx.actor
+
+
+class SoulBell(TraitHandler):
+    trait_id = 200322
+    name = "盗魂铃"
+    desc = "初始能量为0，首次入场前敌方每聚能1次，回复5能量（可突破上限），在场时自己回复的能量-4。"
+    implemented = True
+
+    def on_battle_start(self, ctx):
+        ctx.actor.energy = 0
+        ctx.set_state("charges", 0)
+        ctx.set_state("first_entry_done", False)
+
+    def on_charge(self, ctx):
+        if ctx.subject is None or ctx.subject.side == ctx.actor.side:
+            return
+        if ctx.state_of("first_entry_done", False):
+            return
+        ctx.add_state("charges", 1)
+
+    def on_entry(self, ctx):
+        if ctx.subject is not ctx.actor or ctx.state_of("first_entry_done", False):
+            return
+        ctx.set_state("first_entry_done", True)
+        gain = ctx.state_of("charges", 0) * 5
+        if gain > 0:
+            # 可突破上限：直接增加，不经过能量上限钳制
+            ctx.actor.energy += gain
+            T.emit(ctx.state, "energy_gain", scope="all", side=ctx.actor.side,
+                   subject=ctx.actor, energy_gain=gain)
+
+    def modify_energy_gain(self, ctx):
+        if ctx.target is not ctx.actor or not ctx.is_active():
+            return 0
+        return -4
+
+
 class Cleanliness(TraitHandler):
     trait_id = 200126
     name = "洁癖"
@@ -203,7 +219,6 @@ class Cleanliness(TraitHandler):
             )
 
 
-# ---------------- 200160 搜刮 ----------------
 class Scavenge(TraitHandler):
     trait_id = 200160
     name = "搜刮"
@@ -259,7 +274,6 @@ class Scavenge(TraitHandler):
         return [{"name": "魔攻", "layers": n, "per": "20%", "gain": True}]
 
 
-# ---------------- 280036 扫荡 ----------------
 class Raid(Scavenge):
     trait_id = 280036
     name = "扫荡"
@@ -297,7 +311,6 @@ class Raid(Scavenge):
         ]
 
 
-# ---------------- 200156 下黑手 ----------------
 class SuckerPunch(TraitHandler):
     trait_id = 200156
     name = "下黑手"
@@ -321,7 +334,6 @@ class SuckerPunch(TraitHandler):
         )
 
 
-# ---------------- 200325 旧玩具 ----------------
 class OldToy(TraitHandler):
     trait_id = 200325
     name = "旧玩具"
@@ -365,7 +377,6 @@ class OldToy(TraitHandler):
         return [{"name": "双攻", "layers": n, "per": "10%", "gain": True}]
 
 
-# ---------------- 200161 做噩梦 ----------------
 class Nightmare(TraitHandler):
     trait_id = 200161
     name = "做噩梦"
@@ -382,7 +393,6 @@ class Nightmare(TraitHandler):
         incoming.energy = max(0, incoming.energy - 3)
 
 
-# ---------------- 200162 噼啪！ ----------------
 class Crackle(TraitHandler):
     trait_id = 200162
     name = "噼啪！"
@@ -395,7 +405,6 @@ class Crackle(TraitHandler):
         burst.add_burst(ctx.actor, "skill_use_count", 1)
 
 
-# ---------------- 200164 电流刺激 ----------------
 class CurrentStimulus(TraitHandler):
     trait_id = 200164
     name = "电流刺激"
@@ -408,7 +417,6 @@ class CurrentStimulus(TraitHandler):
         burst.add_burst(ctx.actor, "attack_power_flat", 40)
 
 
-# ---------------- 200216 珊瑚骨 ----------------
 class CoralBone(TraitHandler):
     trait_id = 200216
     name = "珊瑚骨"
@@ -431,7 +439,6 @@ class CoralBone(TraitHandler):
         return [{"name": "能耗", "layers": n, "per": "3", "gain": False}]
 
 
-# ---------------- 200169 蓄电池 ----------------
 class Battery(TraitHandler):
     trait_id = 200169
     name = "蓄电池"
@@ -439,7 +446,7 @@ class Battery(TraitHandler):
     implemented = True
 
     def on_entry(self, ctx):
-        # 每次入场（首发/主动换人/力竭替换/脱离换人/返场）都叠加双攻+30%（PERMANENT）
+        # 每次入场（含返场）都叠加永久双攻+30%
         if ctx.subject is not ctx.actor:
             return
         B.grant_buff(ctx.actor, B.BuffType.ATK, 3, B.DurationKind.PERMANENT,
@@ -455,7 +462,6 @@ class Battery(TraitHandler):
         return [{"name": "双攻", "layers": n, "per": "30%", "gain": True}]
 
 
-# ---------------- 200102 地脉 ----------------
 class EarthVein(TraitHandler):
     trait_id = 200102
     name = "地脉"
@@ -487,7 +493,6 @@ class EarthVein(TraitHandler):
         return [{"name": "积累", "layers": n, "per": "3", "gain": True}]
 
 
-# ---------------- 200109 守护者 ----------------
 class Guardian(TraitHandler):
     trait_id = 200109
     name = "守护者"
@@ -502,7 +507,7 @@ class Guardian(TraitHandler):
             if pet is ctx.actor:
                 continue
             if pet.hp <= 0:
-                continue  # 已死亡的精灵不计入
+                continue
             n += B.get_buff_value(pet, B.BuffType.CUTE)
         if n <= 0:
             return
@@ -516,7 +521,6 @@ class Guardian(TraitHandler):
         return [{"name": "能耗", "layers": n, "per": "1", "gain": False}]
 
 
-# ---------------- 200110 水翼推进 ----------------
 class HydroPropulsion(TraitHandler):
     trait_id = 200110
     name = "水翼推进"
@@ -552,7 +556,6 @@ class HydroPropulsion(TraitHandler):
         return [{"name": "积累", "layers": n, "per": "1", "gain": True}]
 
 
-# ---------------- 280005 水翼飞升 ----------------
 class HydroAscend(TraitHandler):
     trait_id = 280005
     name = "水翼飞升"
@@ -596,7 +599,6 @@ class HydroAscend(TraitHandler):
         return [{"name": "积累", "layers": n, "per": "1", "gain": True}]
 
 
-# ---------------- 200118 结晶水 ----------------
 class CrystalWater(TraitHandler):
     trait_id = 200118
     name = "结晶水"
@@ -627,7 +629,6 @@ class CrystalWater(TraitHandler):
         return [{"name": "积累", "layers": n, "per": "3", "gain": True}]
 
 
-# ---------------- 200132 虫群鼓舞 ----------------
 class SwarmCheer(TraitHandler):
     trait_id = 200132
     name = "虫群鼓舞"
@@ -657,7 +658,6 @@ class SwarmCheer(TraitHandler):
         return [{"name": "攻防速", "layers": n, "per": "10%", "gain": True}]
 
 
-# ---------------- 200142 瞳中倒影 ----------------
 class MirrorReflection(TraitHandler):
     trait_id = 200142
     name = "瞳中倒影"
@@ -675,7 +675,6 @@ class MirrorReflection(TraitHandler):
         incoming.hp = round(incoming.max_hp * own_pct)
 
 
-# ---------------- 200253 吉利丁片 ----------------
 class GelatinSheet(TraitHandler):
     trait_id = 200253
     name = "吉利丁片"
@@ -704,7 +703,6 @@ class GelatinSheet(TraitHandler):
             )
 
 
-# ---------------- 200254 美拉德反应 ----------------
 class MaillardReaction(TraitHandler):
     trait_id = 200254
     name = "美拉德反应"
@@ -725,7 +723,6 @@ class MaillardReaction(TraitHandler):
         )
 
 
-# ---------------- 200202 茶多酚 ----------------
 class TeaPolyphenol(TraitHandler):
     trait_id = 200202
     name = "茶多酚"
@@ -733,7 +730,6 @@ class TeaPolyphenol(TraitHandler):
     implemented = True
 
     def on_leave(self, ctx):
-        # 自己离场时，更换入场的精灵回复20%最大生命并获得免疫寄生
         if ctx.subject is not ctx.actor:
             return
         incoming = ctx.extra.get("incoming")
@@ -747,7 +743,6 @@ class TeaPolyphenol(TraitHandler):
         )
 
 
-# ---------------- 200163 快充 ----------------
 class QuickCharge(TraitHandler):
     trait_id = 200163
     name = "快充"
@@ -761,7 +756,6 @@ class QuickCharge(TraitHandler):
         T.grant_energy(ctx.state, ctx.actor, 10)
 
 
-# ---------------- 200153 蒸汽膨胀 ----------------
 class SteamExpansion(TraitHandler):
     trait_id = 200153
     name = "蒸汽膨胀"
@@ -801,7 +795,6 @@ class SteamExpansion(TraitHandler):
         return [{"name": "技能威力", "layers": n, "per": "10", "gain": True}]
 
 
-# ---------------- 200147 散热 ----------------
 class HeatDissipation(TraitHandler):
     trait_id = 200147
     name = "散热"
@@ -832,7 +825,6 @@ class HeatDissipation(TraitHandler):
         return [{"name": "积累", "layers": n, "per": "3", "gain": True}]
 
 
-# ---------------- 200139 渴求 ----------------
 class Thirst(TraitHandler):
     trait_id = 200139
     name = "渴求"
@@ -851,9 +843,8 @@ class Thirst(TraitHandler):
         return [{"name": "吸血", "layers": 5, "per": "10%", "gain": True}]
 
 
-# ---------------- 200220 稀兽花宝 ----------------
 class RareBeastFlower(TraitHandler):
-    # 兽花蕾的特性给的 buff 不用标记 source_kind = "trait"
+    # 本特性的 buff 不带 source_kind="trait"（按普通增益处理）
     trait_id = 200220
     name = "稀兽花宝"
     desc = "根据自己的血脉，入场时获得不同效果。"
@@ -959,6 +950,8 @@ def register_entry() -> None:
         SlowWarm,
         LibraryGuardian,
         ConstructContractor,
+        StarBenevolence,
+        SoulBell,
         Cleanliness,
         Nightmare,
         Crackle,

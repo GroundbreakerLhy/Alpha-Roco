@@ -402,7 +402,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "敌方本回合使用的技能能耗+7，持续3回合。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -1029,7 +1029,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己回复4能量，并获得魔攻+70%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2250,7 +2250,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "光系技能威力永久+50%，应对防御：改为永久+100%。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2272,7 +2272,7 @@
       "energyCost": 4,
       "power": 115,
       "desc": "造成物伤，选择：敌方携带光系技能时威力+50或应对状态时被应对的技能变为透射。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2371,7 +2371,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "减伤80%，应对攻击：两侧技能能耗永久-1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2459,7 +2459,7 @@
       "energyCost": 1,
       "power": null,
       "desc": "自己获得速度+30，本技能位于1号或3号位时额外获得物攻+80%，传动1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -2866,7 +2866,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "自己获得物防+140%和速度-30。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3735,7 +3735,7 @@
       "energyCost": 2,
       "power": 60,
       "desc": "造成魔伤，每离场1次，本技能使用次数永久+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3856,7 +3856,7 @@
       "energyCost": 5,
       "power": 120,
       "desc": "造成魔伤，敌方每有1层中毒效果，本技能能耗-1，敌方获得1层中毒。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -3999,7 +3999,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "敌方获得1层中毒印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4340,7 +4340,7 @@
       "energyCost": 3,
       "power": 75,
       "desc": "造成物伤，若敌方本回合更换精灵，本次威力+90且无视敌方系别抵抗。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4670,7 +4670,7 @@
       "energyCost": 3,
       "power": 50,
       "desc": "造成魔伤，迅捷。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -4780,7 +4780,7 @@
       "energyCost": 2,
       "power": 75,
       "desc": "造成物伤，应对状态：回合结束使敌方紧急脱离。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5022,7 +5022,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "自己和敌方获得萌化：回复40%生命。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5891,7 +5891,7 @@
       "energyCost": 4,
       "power": 15,
       "desc": "造成魔伤，1连击，敌方每有1层星陨印记，本次技能连击数+1。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5913,7 +5913,7 @@
       "energyCost": 4,
       "power": null,
       "desc": "敌方获得4层星陨印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5935,7 +5935,7 @@
       "energyCost": 3,
       "power": null,
       "desc": "2连击，每次连击使敌方获得1层星陨印记。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
@@ -5957,7 +5957,7 @@
       "energyCost": 7,
       "power": null,
       "desc": "敌方获得星陨印记，获得层数等于敌方印记层数。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {

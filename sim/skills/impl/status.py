@@ -1,9 +1,6 @@
-"""状态类技能（category 3，共 157 条）。
+"""状态类技能（category 3）。
 
-与 defense.py / attack.py 同约定：效果全部以代码定义，desc 不参与运行时；
-能耗/属性沿用 skills.json。
-
-进度以 ``data/skills.json`` 的 ``done``/``tested`` 标志为准。
+效果全部以代码定义，desc 不参与运行时；能耗/属性取自 skills.json。
 """
 
 from __future__ import annotations
@@ -30,6 +27,8 @@ from ..ops import (
     LeaveField,
     OpsSkill,
     Overload,
+    SlotIn,
+    per_any_mark,
     RandomStatBuffs,
     Reenter,
     Repeat,
@@ -47,12 +46,11 @@ from ..registry import register
 
 # ---------------- 纯 buff 状态技（无其他效果） ----------------
 class BuffStatus(OpsSkill):
-    """纯 buff 状态技：desc 只有"自己/敌方获得 X"，无其他效果。
+    """纯 buff 状态技（只有"自己/敌方获得 X"）。
 
-    数值换算约定（填表人负责）：属性增益 10% = 1 层（get_stat_multiplier =
-    1 + 层数×0.1）；速度每层 +10；冻结由 add_buff 强制 PERMANENT（生命变动或获得冻结后
-    实时检查斩杀，见 buffs.check_freeze）；其余常规时长的增益离场清除（B28）、
-    可被驱散（S26：全部增益/减益，含永久时长；特性自身的展示效果不算增益/减益）。新增同类技能只在对应表加一行。
+    属性增益 10% = 1 层；速度每层 +10；冻结由 add_buff 强制 PERMANENT 并实时
+    检查斩杀（buffs.check_freeze）；常规增益离场清除（B36）、可驱散（S18，
+    含永久时长；特性自身的展示效果不算增益/减益）。
     """
 
     def __init__(
@@ -67,7 +65,6 @@ class BuffStatus(OpsSkill):
         self.implemented = True
 
 
-# 纯给敌方上 buff/debuff
 for _handler in (
     BuffStatus(7090160, "霜降", buffs.BuffType.FREEZE, 4, ENEMY),
     BuffStatus(7120120, "毒孢子", buffs.BuffType.POISON, 5, ENEMY),
@@ -76,7 +73,6 @@ for _handler in (
 ):
     register(_handler)
 
-# 纯给自己上 buff
 for _handler in (
     BuffStatus(7020620, "力量增效", buffs.BuffType.ATK, 10, SELF),
     BuffStatus(7020630, "魔法增效", buffs.BuffType.SPATK, 7, SELF),
@@ -89,11 +85,10 @@ for _handler in (
 
 # ---------------- 纯印记状态技（无其他效果） ----------------
 class MarkStatus(OpsSkill):
-    """纯印记状态技：desc 只有"自己/敌方获得N层X印记"，无其他效果。
+    """纯印记状态技（只有"自己/敌方获得 N 层 X 印记"）。
 
-    印记以阵营为单位：target 解析到对应阵营后由 marks.add_mark 按印记
-    正/负属性写入对应槽位（data/marks.json），单条印记上限 99（B30）。
-    新增同类技能只在对应表加一行。
+    印记以阵营为单位：marks.add_mark 按印记正/负属性写入对应槽位，单条上限
+    99（B38）。
     """
 
     def __init__(
@@ -106,14 +101,12 @@ class MarkStatus(OpsSkill):
         self.implemented = True
 
 
-# 纯给自己上印记
 for _handler in (
     MarkStatus(7030300, "光合作用", 10, 1, SELF),
     MarkStatus(7050240, "打湿", 11, 1, SELF),
 ):
     register(_handler)
 
-# 纯给敌方上印记
 for _handler in (
     MarkStatus(7090330, "速冻", 3, 2, ENEMY),
     MarkStatus(7020740, "棘刺", 1, 1, ENEMY),
@@ -123,10 +116,10 @@ for _handler in (
 
 # ---------------- 7020640 休息回复 ----------------
 class RestHeal(OpsSkill):
-    """自己回复30%生命。
+    """回复自身生命。
 
-    回复量 = int(最大生命 × 30%)，经 ``traits.query_heal`` 修正（如"戏耍"可把回复
-    转为敌方扣血），不超过最大生命。
+    回复量经 ``traits.query_heal`` 修正（如"戏耍"可把回复转为敌方扣血），
+    不超过最大生命。
     """
 
     skill_id = 7020640
@@ -144,11 +137,9 @@ register(RestHeal())
 class Borrow(OpsSkill):
     """每回合随机变成己方队伍中其他精灵的技能。
 
-    每回合替换由引擎统一处理（battle._apply_round_replacements_for_pet）：入场即抽取、
-    在场时每回合末重随、离场还原为本体。池 = 己方其他**存活**精灵携带的技能，
-    按 id 从 skills.json 重建**原始状态**——不带对方的运行时成长
-    （对方的水炮已成长到 3 费时，抽到的是原始 5 费）。
-    本技能被直接使用时无效果。
+    替换由引擎统一处理（battle._apply_round_replacements_for_pet）：入场抽取、
+    每回合末重随、离场还原。池 = 己方其他存活精灵携带的技能，按 id 从
+    skills.json 重建原始状态——不继承对方的运行时成长。直接使用本技能无效果。
     """
 
     skill_id = 7020840
@@ -173,11 +164,10 @@ register(Borrow())
 
 # ---------------- 7020850 取念 ----------------
 class ThoughtSteal(OpsSkill):
-    """每回合随机变成敌方任意精灵的技能，且该技能能耗-2。
+    """每回合随机变成敌方任意精灵的技能，并使其能耗降低。
 
-    池 = 敌方队伍中**存活**精灵携带的技能，同样按 id 从 skills.json 重建
-    原始状态（不含对方的运行时成长）；临时技能能耗 -2
-    （round_replace_cost_delta）。其余同借用。
+    池 = 敌方存活精灵携带的技能，从 skills.json 重建原始状态（不含运行时成长）；
+    临时技能能耗降低（round_replace_cost_delta）。
     """
 
     skill_id = 7020850
@@ -202,17 +192,12 @@ class ThoughtSteal(OpsSkill):
 register(ThoughtSteal())
 
 
-# ---------------- 7060150 镜像反射复制当前技能属性的辅助 ----------------
-# 复制逻辑由 MirrorReflection 在防御应对阶段执行；该注释保留技能分组位置。
-
-
 # ---------------- 7020860 复写 ----------------
 class Rewrite(OpsSkill):
-    """每回合随机变成自己未携带的技能，且该技能能耗-2。
+    """每回合随机变成自己未携带的技能，并使其能耗降低。
 
-    池 = 本精灵可习得技能（spirits.json 的 normal 池 + 血脉池中血脉编号与
-    当前血脉一致的条目）减去当前携带的技能——不能从血脉技能池中抽取
-    非当前血脉的技能（用户口径）；临时技能能耗 -2。其余同借用。
+    池 = 可习得技能（normal 池 + 血脉编号与当前血脉一致的血脉池）减去当前
+    携带的技能；临时技能能耗降低。
     """
 
     skill_id = 7020860
@@ -234,7 +219,6 @@ class Rewrite(OpsSkill):
             sid for sid in spirit["skills"]["normal"]
             if sid not in carried and sid in skill_map and sid != 9999999
         ]
-        # 血脉技能池：只取血脉编号与当前血脉一致的条目
         for entry in spirit["skills"].get("bloodline", []):
             sid = entry["skillId"]
             if (
@@ -252,10 +236,10 @@ register(Rewrite())
 
 # ---------------- 7030510 富养化 ----------------
 class Eutrophication(OpsSkill):
-    """为场下每个精灵回复3能量。
+    """为场下每个精灵回复能量。
 
-    目标是己方场下精灵（SELF_BACKLINE，不含使用者自身）；回复经
-    traits.grant_energy 走能量上限修正与 energy_gain 广播。
+    目标为己方场下（SELF_BACKLINE，不含使用者）；回复经 traits.grant_energy
+    走能量上限修正与 energy_gain 广播。
     """
 
     skill_id = 7030510
@@ -271,12 +255,11 @@ register(Eutrophication())
 
 # ---------------- 7110270 加大功率 ----------------
 class PowerUp(OpsSkill):
-    """自己脱离，替换入场的精灵回复8能量。
+    """自己脱离，替换入场的精灵回复能量。
 
-    脱离走 LeaveField 登记（B36：行动照常结算，行动后立即离场、暂停等待
-    选人）；entry_energy 随暂停上下文传递给续接流程，玩家选定的替补入场
-    结算后经 traits.grant_energy 回复（含能量上限与 energy_gain 广播）。
-    无存活替补 / 蓄力免疫时脱离不生效，能量也不发。
+    脱离走 LeaveField 登记（B16：行动照常结算，行动后立即离场、暂停选人）；
+    entry_energy 随暂停上下文传给续接流程，替补入场结算后经 traits.grant_energy
+    回复。无存活替补 / 蓄力免疫时脱离不生效，能量也不发。
     """
 
     skill_id = 7110270
@@ -292,13 +275,11 @@ register(PowerUp())
 
 # ---------------- 7180190 恶意逃离 ----------------
 class MaliciousEscape(OpsSkill):
-    """脱离，应对防御：额外使敌方攻击技能能耗+4。
+    """脱离，应对防御：额外提高敌方攻击技能能耗。
 
-    本体脱离走 LeaveField 登记（B36：行动照常结算、行动后立即离场暂停选人）。
-    应对从句延迟到回合末结算（B38）——离场不影响结算（登记先于离场）。
-    "攻击技能能耗+4"是只对攻击技能生效的 debuff（BuffType.ATTACK_ENERGY_COST），
-    经 skill_utils.energy_modifier_before_traits 计入真实能耗（付费/校验/显示
-    同管线），常规时长、离场清除；描述未写持续回合，故不设回合数。
+    脱离走 LeaveField 登记（B16）。应对从句延迟到回合末结算（B46），离场不
+    影响结算（登记先于离场）。ATTACK_ENERGY_COST 只对攻击技能生效，经
+    skill_utils.energy_modifier_before_traits 计入真实能耗（付费/校验/显示同管线）。
     """
 
     skill_id = 7180190
@@ -318,11 +299,11 @@ register(MaliciousEscape())
 
 # ---------------- 7150260 飞羽 ----------------
 class SwiftFeather(OpsSkill):
-    """迅捷，驱散敌方1种增益。
+    """迅捷，驱散敌方 1 种增益。
 
     迅捷是静态属性（构造期由 bind_skill 写入 ``skill.swift``）：主动换人入场时
-    若能量足够则自动释放，不强制先手。驱散范围涵盖**全部**增益（含永久时长）；
-    特性自身的展示效果不是增益，不受影响（S26）。
+    能量足够则自动释放，不强制先手。驱散涵盖全部增益（含永久时长）；特性自身
+    的展示效果不是增益（S18）。
     """
 
     skill_id = 7150260
@@ -341,8 +322,8 @@ register(SwiftFeather())
 class Sunbath(OpsSkill):
     """驱散敌方所有增益。
 
-    count=None 表示全部驱散；**全部**增益都在范围内——常规时长与永久时长的
-    增益同样会被剥掉。特性自身的展示效果不是增益（另一个类别），不受影响（S26）。
+    count=None 表示全部；常规时长与永久时长的增益都在范围内。特性自身的展示
+    效果不是增益（另一个类别），不受影响（S18）。
     """
 
     skill_id = 7021100
@@ -358,11 +339,11 @@ register(Sunbath())
 
 # ---------------- 7030290 移花接木 ----------------
 class Switcheroo(OpsSkill):
-    """自己回复15%生命，随后脱离。
+    """自己回复生命，随后脱离。
 
-    先回复（Heal），随后立即脱离：脱离不取消本次行动——回复照常结算，
-    随后立即离场、跳过自己的回合末结算，并由己方重新选择上场精灵
-    （引擎回合中暂停、服务端 choose_replacement 续接）。无存活替补时脱离不生效。
+    先回复后脱离：脱离不取消本次行动——回复照常结算，随后立即离场、跳过自己的
+    回合末结算，并由己方重新选人（引擎暂停、choose_replacement 续接）。
+    无存活替补时脱离不生效。
     """
 
     skill_id = 7030290
@@ -381,17 +362,16 @@ register(Switcheroo())
 
 # ---------------- 7030490 花炮 ----------------
 class FlowerCannon(OpsSkill):
-    """2连击，每次连击自己获得魔攻+60%。
+    """连击，每次连击自己获得魔攻增益。
 
-    分 2 次各施加 6 层魔攻（Repeat），而不是一次施加 12 层——"每次连击"是
-    N 次独立的施加，"获得增益时追加"类特性按次数分别响应（同打喷嚏）。
-    固有 2 连击 = 基础 1 + hit_count_flat 1，走统一连击查询（hit_count_of）。
+    每次连击独立施加（Repeat），不是一次施加总层数——"获得增益时追加"类特性
+    按次数分别响应。连击数走统一查询（hit_count_of）。
     """
 
     skill_id = 7030490
     name = "花炮"
     category = 3
-    hit_count_flat = 1  # 固有 2 连击 = 基础 1 + 1
+    hit_count_flat = 1  # 固有 2 连击
     implemented = True
 
     status_effects = (
@@ -409,12 +389,11 @@ register(FlowerCannon())
 
 # ---------------- 7080190 流沙 ----------------
 class Quicksand(OpsSkill):
-    """敌方获得3回合禁足，应对防御：敌方获得双防-60%。
+    """敌方获得禁足，应对防御：敌方双防大幅下降。
 
-    禁足（LOCK）的层数 = 剩余回合数：回合末逐层衰减（buffs._apply_lock），
-    3 层即 3 回合无法主动换人（buffs.can_switch）。应对防御（状态克制防御）
-    的从句由引擎在 STAGE_COUNTER 回合末结算（B38）；双防-60% = 物防/魔防
-    各 -6 层（属性增减益 10%/层）。
+    禁足（LOCK）层数 = 剩余回合数，回合末逐层衰减（buffs._apply_lock），期间
+    无法主动换人（buffs.can_switch）。应对从句由引擎在 STAGE_COUNTER 回合末
+    结算（B46）；双防各 -6 层（属性增减益 10%/层）。
     """
 
     skill_id = 7080190
@@ -439,12 +418,10 @@ register(Quicksand())
 class WindHide(OpsSkill):
     """敌方和自己均脱离，先手-1。
 
-    双方均脱离 = LeaveField(LEAVE_BOTH)：行动照常结算（B36），**结算后立即**进入
-    收集阶段——双方先各自盲选替补（服务端在此期间不下发对方的选择），集齐后再按
-    先手顺序"先退先入、后退后入"（SPEC B36a）。本技能先手-1，非特殊情况下本回合
-    最后一个行动；若对方也有先手-1（如双方都用风隐），则按有效速度拼速、同速随机，
-    此时先手方的换人先完成，**对方尚未结算的行动直接作废**（不结算）。
-    先手-1 = priority_delta（同后发制人）。
+    双方均脱离 = LeaveField(LEAVE_BOTH)：行动照常结算（B16），结算后立即进入
+    收集阶段——双方各自盲选替补，集齐后按先手顺序"先退先入、后退后入"（B17）。
+    若双方都先手-1，则按有效速度拼速、同速随机，先手方的换人先完成，对方尚未
+    结算的行动直接作废。先手-1 = priority_delta。
     """
 
     skill_id = 7150270
@@ -461,18 +438,16 @@ register(WindHide())
 
 # ---------------- 7090470 打喷嚏 ----------------
 class Sneeze(OpsSkill):
-    """3连击，每次连击敌方获得1层冻结。
+    """连击，每次连击敌方获得冻结。
 
-    分 N 次各施加 1 层冻结（Repeat），而不是一次施加 N 层——"每次连击"是 N 次独立的
-    施加，"敌方获得冻结时追加"类特性（加个雪球 200122）会按次数分别响应。
-    连击数走统一查询（hit_count_of = 基础1 + 技能修正 + buff + 特性）：
-    固有 3 连击用既有的 hit_count_flat 增量字段给出（+2）。
+    每次连击独立施加（Repeat），"获得冻结时追加"类特性按次数分别响应。
+    连击数走统一查询（hit_count_of）。
     """
 
     skill_id = 7090470
     name = "打喷嚏"
     category = 3
-    hit_count_flat = 2  # 固有 3 连击 = 基础 1 + 2
+    hit_count_flat = 2  # 固有 3 连击
     implemented = True
 
     status_effects = (
@@ -490,12 +465,10 @@ register(Sneeze())
 
 # ---------------- 7150300 羽化加速 ----------------
 class FeatherAccel(OpsSkill):
-    """自己获得全技能威力+20，迅捷。
+    """自己获得全技能威力固定值增益，迅捷。
 
-    威力+20 是固定值增益（SKILL_POWER_FLAT，calc_damage 的威力固定值通道），
-    与"全技能威力+N%"的百分比增益（SKILL_POWER_PERCENT）是两条独立 buff——
-    描述无 %，按固定值。迅捷是静态属性（同飞羽）：主动换人入场时能量足够
-    则自动释放。
+    描述无 %，走固定值通道（SKILL_POWER_FLAT），与百分比通道
+    （SKILL_POWER_PERCENT）是两条独立 buff。迅捷同飞羽。
     """
 
     skill_id = 7150300
@@ -512,10 +485,10 @@ register(FeatherAccel())
 
 # ---------------- 7140140 化劲 ----------------
 class NeutralizeForce(OpsSkill):
-    """自己获得全技能威力+40。
+    """自己获得全技能威力固定值增益。
 
-    与羽化加速同一条通道：描述无 %，按固定值增益（SKILL_POWER_FLAT=40），
-    不做"40% 威力"的百分比换算（SKILL_POWER_PERCENT 是另一条 buff）。
+    与羽化加速同一固定值通道（SKILL_POWER_FLAT），不做百分比换算
+    （SKILL_POWER_PERCENT 是另一条 buff）。
     """
 
     skill_id = 7140140
@@ -531,11 +504,10 @@ register(NeutralizeForce())
 
 # ---------------- 7040500 焚烧烙印 ----------------
 class BurnBrand(OpsSkill):
-    """驱散双方所有印记，每驱散1层，敌方获得5层灼烧。
+    """驱散双方所有印记，每驱散 1 层，敌方获得灼烧。
 
-    驱散覆盖双方阵营的正/负印记（DispelMarks target=FIELD）；驱散的总层数
-    经 record_as 写入 ctx.extra，灼烧层数 = 5 × 总层数，一次施加（一个事件，
-    与霜降"获得4层"同粒度）。驱散 0 层时灼烧为 0，add_buff 不生效。
+    覆盖双方阵营的正/负印记（DispelMarks target=FIELD）；总层数经 record_as
+    写入 ctx.extra，灼烧 = 5 × 总层数一次施加。驱散 0 层时不生效。
     """
 
     skill_id = 7040500
@@ -558,11 +530,10 @@ register(BurnBrand())
 
 # ---------------- 7090400 冰点 ----------------
 class FreezingPoint(OpsSkill):
-    """敌方获得5层冻结，应对防御：额外获得5层。
+    """敌方获得冻结，应对防御：额外获得一份。
 
-    本体（STAGE_STATUS）施加 5 层；应对防御成功（对方本回合使用防御行动）
-    时 STAGE_COUNTER 再追加 5 层（合计 10 层，两次独立施加、两个事件）。
-    冻结的永久性与实时斩杀判定同霜降（buffs.check_freeze）。
+    本体（STAGE_STATUS）与应对成功（STAGE_COUNTER）各施加一次，两次独立事件。
+    冻结的永久性与实时斩杀判定见 buffs.check_freeze。
     """
 
     skill_id = 7090400
@@ -584,13 +555,11 @@ register(FreezingPoint())
 
 # ---------------- 7160180 赤子之心 ----------------
 class InnocentHeart(OpsSkill):
-    """自己获得萌化：全技能能耗永久-2。
+    """自己获得萌化：全技能能耗永久下降。
 
-    "获得萌化：X"族的前置条件是**能获得萌化**（存在前一进化阶段）：已是
-    最初阶段时整组效果（含能耗-2）都不执行（When + CanCute 条件门，S18）。
-    能萌化时：先给全技能能耗-2（ENERGY_COST 负层、PERMANENT，离场保留 B28），
-    萌化在技能结算之后施加（退化一个进化阶段，见 evolution.apply_cute）。
-    萌化的 buff_gain 广播自动携带 pre_had（ApplyBuff 的 CUTE 契约）。
+    "获得萌化：X"族的前置条件是能获得萌化（存在前一进化阶段）：已是初始阶段时
+    整组效果都不执行（When + CanCute，S22）。能萌化时先给能耗负层（PERMANENT，
+    离场保留 B36），萌化在技能结算之后施加（evolution.apply_cute）。
     """
 
     skill_id = 7160180
@@ -618,12 +587,11 @@ register(InnocentHeart())
 
 # ---------------- 7170240 嘲弄 ----------------
 class Taunt(OpsSkill):
-    """自己获得魔攻+90%，若敌方本回合更换精灵，自己获得速度+70。
+    """自己获得魔攻增益，若敌方本回合更换精灵，自己获得速度增益。
 
-    属性增益 10%/层 → 魔攻+90% = 9 层；速度每层 +10 → 速度+70 = 7 层。
-    换人先于行动结算（step 中 switch 先行），故敌方本回合主动换人在状态
-    结算时 entry_turn == 当前回合，EnemySwitchedThisTurn 即刻成立；
-    回合中脱离换上（暂停续接，switch_in 刷新 entry_turn）同理成立。
+    换人先于行动结算（step 中 switch 先行），故敌方本回合主动换人在状态结算时
+    entry_turn == 当前回合，EnemySwitchedThisTurn 即刻成立；回合中脱离换上
+    （暂停续接，switch_in 刷新 entry_turn）同理。
     """
 
     skill_id = 7170240
@@ -645,12 +613,10 @@ register(Taunt())
 
 # ---------------- 7130210 贮藏 ----------------
 class Storage(OpsSkill):
-    """自己获得双攻+50%，每携带1个0能耗技能，额外+50%。
+    """自己获得双攻增益，每携带 1 个 0 能耗技能再加一份。
 
-    "0能耗技能"按**实际能耗**判定（true_energy_cost：天气/印记/buff/特性/
-    技能自身修正全计入、最后钳制到 0；能耗被修正为非 0 的技能不计入），
-    不做 skills.json 原始能耗的字面比较。
-    双攻 = 物攻+魔攻各 5 层（属性增益 10%/层），每个 0 能耗技能再各 +5 层。
+    "0 能耗"按实际能耗判定（true_energy_cost：天气/印记/buff/特性/技能自身
+    修正全计入），不与 skills.json 的原始能耗比较。
     """
 
     skill_id = 7130210
@@ -679,11 +645,10 @@ register(Storage())
 
 # ---------------- 7050400 洗礼 ----------------
 class Baptism(OpsSkill):
-    """驱散自己的减益，并获得全技能能耗-1。
+    """驱散自己的减益，并获得全技能降耗。
 
-    驱散自身全部减益（DispelBuffs kind="debuff" count=None；常规时长与永久时长的
-    减益同样会被驱散；特性自身的展示效果不是减益，不受影响，S26）；随后获得全技能能耗-1
-    （ENERGY_COST 负层 = 降耗增益），常规时长、离场清除。
+    驱散全部减益（含永久时长；特性自身的展示效果不是减益，S18）；随后获得
+    ENERGY_COST 负层（降耗增益），常规时长、离场清除。
     """
 
     skill_id = 7050400
@@ -702,15 +667,12 @@ register(Baptism())
 
 # ---------------- 7150320 疾风连袭 ----------------
 class GaleFlurry(OpsSkill):
-    """释放自己释放过的迅捷技能，其能耗之和的二分之一加至本技能能耗，每次使用后能耗+1。
+    """重放自己释放过的迅捷技能；能耗 = 其能耗之和的一半，每次使用后 +1。
 
-    翼系状态技，基础能耗 0 取自 skills.json（圣羽翼王专属；飓风特性可让任意
-    技能获得迅捷，故重放集合按**当前**迅捷状态实时过滤）。
-    - 能耗（动态）= 重放集合（本场释放过的迅捷技能，按技能去重）原始能耗之和
-      整除 2 + 使用成长（每次用后 +1，SkillGrowth 写 skill_state）。
-    - 效果：付费后按**技能槽位顺序**依次免费重放集合内技能
-      （battle.replay_used_swift_skills）——与正常使用同等的基础结算
-      （伤害/命中附加/状态效果/减伤），无应对效果；自身永远在集合外（防递归）。
+    重放集合按当前迅捷状态实时过滤（飓风特性可让任意技能获得迅捷）。
+    - 动态能耗 = 集合内技能原始能耗之和整除 2 + 使用成长（SkillGrowth）。
+    - 付费后按技能槽位顺序免费重放（battle.replay_used_swift_skills），与正常
+      使用同等的基础结算，无应对效果；自身永远在集合外（防递归）。
     """
 
     skill_id = 7150320
@@ -738,13 +700,11 @@ register(GaleFlurry())
 
 # ---------------- 7190430 叠加态 ----------------
 class Superposition(OpsSkill):
-    """自己获得随机16层属性增益，巧变：幻系攻击技能。
+    """自己获得随机层数属性增益，巧变：幻系攻击技能。
 
-    - 随机16层（RandomStatBuffs）：掷16次，每次等概率落到物攻/魔攻/物防/
-      魔防/速度之一，按属性汇总后逐种施加（每种属性一次施加、一个事件）。
+    - RandomStatBuffs 逐次掷点，按属性汇总后逐种施加（每种一个事件）。
     - 巧变池 = skills.json 中全部幻系（element 17）攻击技能（category 0/1，
-      按结构化字段过滤，不解析 desc，无需人工分组）；用后随机变成其一
-      （能耗-1），该临时技能用后还原（引擎 _apply_morph（真正巧变）规则）。
+      按结构化字段过滤）；用后随机变成其一（能耗-1），用后还原。
     """
 
     skill_id = 7190430
@@ -770,15 +730,14 @@ register(Superposition())
 class OverloadCircuit(OpsSkill):
     """回合结束自己返场，下回合所选技能使用次数+1。
 
-    - 返场成功后获得真实迸发：使用次数 +1，持续到下回合末。由下一次行动消费，
-      未消费则到期移除；不使用 overload_next 的隐藏过载计数。
-      蓄能也是状态技能行动，使用次数 +1 时执行两次；蓄力技能不参与重复。
-    - "回合结束自己返场"：Reenter 登记，引擎在回合末技能结算之后、力竭结算后
-      与特性返场同一时点执行（离场+立即入场，完整重跑入场结算）；本回合已入场
-      的精灵免疫返场效果（entry_turn == 当前回合）。
-    - 回合末结算会对在场精灵的**全部技能**发 STAGE_ROUND_END，故返场用**使用
-      回合戳**门控（skill_state，本技能自己的运行时状态）：只有本回合用过本技能
-      才返场（与嗜痛"期间"同一手法）。返场后精灵仍在场，戳记不会重复触发。
+    - 返场成功后获得真实迸发：使用次数 +1 持续到下回合末，由下一次行动消费，
+      未消费则到期移除；不走 overload_next 的隐藏过载计数。蓄力技能不参与重复。
+    - Reenter 登记，引擎在回合末技能结算之后、力竭结算后与特性返场同一时点
+      执行（离场+立即入场，完整重跑入场结算）；本回合已入场的精灵免疫
+      （entry_turn == 当前回合）。
+    - 回合末结算会对在场精灵的全部技能发 STAGE_ROUND_END，故用使用回合戳门控
+      （skill_state）：只有本回合用过本技能才返场，返场后仍在场，戳记不会重复
+      触发。
     """
 
     skill_id = 7110360
@@ -802,11 +761,10 @@ register(OverloadCircuit())
 
 # ---------------- 7040440 怒火 ----------------
 class Wrath(OpsSkill):
-    """自己获得双攻+120%和双防-40%。
+    """自己获得双攻增益和双防减益。
 
-    火系（element 2）状态技，能耗 1 取自 skills.json。四条属性增益/减益一次
-    结算：双攻各 +12 层、双防各 -4 层（属性 10%/层 = ±10%）。常规时长，故
-    离场清除、可被驱散（S26）；减益侧按层数为负，可用"驱散减益"剥掉。
+    四条属性一次结算（属性 10%/层）。常规时长：离场清除、可被驱散（S18）；
+    减益侧层数为负，可被"驱散减益"剥掉。
     """
 
     skill_id = 7040440
@@ -843,14 +801,10 @@ def _next_attack_buffs(percent: int = 0, flat: int = 0) -> tuple:
 class NextAttackPowerStatus(OpsSkill):
     """ "下一次攻击时，技能威力+N%（/ +N）"类状态技（本体增益）。
 
-    增益为**一次性**（BuffType.NEXT_ATTACK_POWER_PERCENT / _FLAT）：挂在
-    自己身上，由引擎在**下一次攻击技能**用时取走并计入该次威力——本次行动
-    （含本技能自身）不受影响，故描述里的"下一次"不需要额外门控。描述带 %
-    的走百分比通道（100 = 翻倍），不带 % 的按固定值（1 层 = 1 点威力，同化劲）。
-    常规时长：离场清除、可被驱散增益剥掉（与其它常规时长的增益一致）。
-
-    新增同类技能只在下表加一行；带应对从句（"应对X：改为…"）的用子类覆写
-    on_counter（见下方 WarmUp）。
+    增益一次性（NEXT_ATTACK_POWER_PERCENT / _FLAT）：由引擎在下一次攻击技能
+    用时取走并计入该次威力——本次行动（含本技能自身）不受影响，故"下一次"
+    不需要额外门控。带 % 走百分比通道，不带 % 按固定值。常规时长：离场清除、
+    可被驱散。
     """
 
     def __init__(self, skill_id: int, name: str, percent: int = 0, flat: int = 0):
@@ -863,11 +817,10 @@ class NextAttackPowerStatus(OpsSkill):
 
 # ---------------- 7040270 热身 ----------------
 class WarmUp(NextAttackPowerStatus):
-    """下一次攻击技能威力翻倍，应对防御：改为威力变为 4 倍。
+    """下一次攻击技能威力翻倍，应对防御：改为 4 倍。
 
-    本体先给 +100%（翻倍）；应对防御成功时在回合末（B38 应对从句）把这份增益
-    **替换**为 +300%（4 倍）——先 remove 再 apply，故中途被驱散也不影响最终
-    数值（是"改为"而非叠加）。
+    应对成功时在回合末（B46 应对从句）先 remove 再 apply，把 +100% 替换为
+    +300%——是"改为"而非叠加。
     """
 
     counter_target = COUNTER_DEFENSE
@@ -895,13 +848,11 @@ register(WarmUp())
 
 # ---------------- 7080200 泥浆铠甲 ----------------
 class MudArmor(OpsSkill):
-    """自己获得物攻和物防+60%，应对防御：额外使自己的增益翻倍。
+    """自己获得物攻和物防增益，应对防御：额外使自己的增益翻倍。
 
-    土系（element 5）状态技，能耗 2 取自 skills.json。本体：物攻/物防各 +6 层
-    （属性 10%/层 = 60%）。应对防御（对方本回合使用防御行动）成功时，回合末
-    （B38 应对从句）再把自己的**全部增益**层数翻倍（DoubleBuffs(kind="buff")）：
-    含本技能刚给的物攻/物防，也含此前已有的其它增益；翻倍同样受层数钳制（B29），
-    离场清除 / 可被驱散与常规时长的增益一致。
+    应对成功时在回合末（B46 应对从句）把自己的全部增益层数翻倍
+    （DoubleBuffs(kind="buff")）：含本技能刚给的，也含此前已有的；翻倍受层数
+    钳制（B37）。
     """
 
     skill_id = 7080200
@@ -924,11 +875,9 @@ register(MudArmor())
 class BirthdayCake(OpsSkill):
     """驱散自己的减益，自己的增益翻倍。
 
-    萌系（element 13）状态技，能耗 4 取自 skills.json。本体两条效果按序即时
-    结算：先驱散自己全部减益（含永久时长；特性自身的展示效果不是减益，不受
-    影响，S26），再把自己的**全部增益**层数翻倍（DoubleBuffs(kind="buff")，与泥浆
-    铠甲的应对从句同一原语；翻倍受层数钳制 B29）。驱散减益不算增益、不会被
-    第二条翻倍。
+    两条效果按序即时结算：先驱散全部减益（含永久时长；特性自身的展示效果不是
+    减益，S18），再把全部增益层数翻倍（DoubleBuffs，受层数钳制 B37）。驱散减益
+    不算增益，不会被第二条翻倍。
     """
 
     skill_id = 7160160
@@ -949,12 +898,10 @@ register(BirthdayCake())
 class PassTheParcel(OpsSkill):
     """自己脱离，下个入场精灵继承自己增益。
 
-    萌系（element 13）状态技，能耗 3 取自 skills.json。脱离走 LeaveField 登记
-    （B36：行动照常结算，行动后立即离场、暂停等待选人）。
-    "继承自己增益"：离场执行时在清除 NORMAL buff 前**快照全部增益**（含
-    PERMANENT 时长，按原时长继承；减益不继承），由续接流程发给本侧**下一只**
-    入场的精灵，按原类型/层数/时长逐条加给它（add_buff 统一做层数钳制，叠加
-    到它已有增益上）。无存活替补 / 蓄力免疫时脱离不生效，快照也随之作废。
+    脱离走 LeaveField 登记（B16）。离场执行时在清除 NORMAL buff 前快照全部增益
+    （含 PERMANENT，按原时长；减益不继承），由续接流程逐条加给本侧下一只入场
+    精灵（add_buff 统一钳制，叠加到其已有增益）。无存活替补 / 蓄力免疫时脱离
+    不生效，快照作废。
     """
 
     skill_id = 7160270
@@ -972,9 +919,9 @@ register(PassTheParcel())
 class BearingSupport(OpsSkill):
     """左右相邻技能的永久能耗支撑。
 
-    携带时，当前技能列表中轴承支撑左右相邻的技能能耗 -1；每次主动
-    使用后，该被动永久额外 -1。相邻关系按当前技能列表循环判定，
-    传动重排后自动随技能位置变化：1号位的两侧是4、2号位，4号位的两侧是3、1号位。
+    携带时当前技能列表中左右相邻的技能能耗 -1；每次主动使用后，该被动永久
+    额外 -1。相邻关系按当前技能列表循环判定，传动重排后随位置变化：
+    1 号位两侧是 4、2 号位，4 号位两侧是 3、1 号位。
     """
 
     skill_id = 7070060
@@ -1007,13 +954,10 @@ register(BearingSupport())
 
 # ---------------- 7140330 马步 ----------------
 class HorseStance(OpsSkill):
-    """先手-1；选择：生命低于 20% 时回复 60% 生命，或生命高于 80% 时获得物攻 +150%。
+    """先手-1；选择：低生命时回复，或高生命时获得物攻增益。
 
-    武系（element 11）状态技，能耗 3 取自 skills.json。先手-1 = priority_delta
-    （同后发制人）。两个支路的生命条件都在**使用技能时**实时判定（状态本体
-    结算时），条件不成立时该支路无效果：
-    - 明：生命低于 20% → 回复 60% 最大生命；
-    - 暗：生命高于 80% → 物攻 +15 层（属性 10%/层 = +150%）。
+    两个支路的生命条件都在使用技能时实时判定（状态本体结算时），条件不成立时
+    该支路无效果。先手-1 = priority_delta。
     """
 
     skill_id = 7140330
@@ -1038,10 +982,9 @@ register(HorseStance())
 class PoisonFog(OpsSkill):
     """将敌方所有增益转化为相同层数的中毒。
 
-    毒系（element 9）状态技，能耗 7 取自 skills.json。"增益"按效果类型与数值
-    判定（与时长、来源无关；特性自身的展示效果不是增益、不参与转化，SPEC S26）：
-    把敌方身上的**全部**增益层数合计后一次性转化为等量中毒层数（add_buff 统一
-    做层数钳制），增益本身被移除。
+    "增益"按效果类型与数值判定（与时长无关；特性自身的展示效果不是增益、不参与
+    转化，S18）：全部增益层数合计后一次性转为等量中毒（add_buff 统一钳制），
+    增益本身被移除。
     """
 
     skill_id = 7120130
@@ -1063,12 +1006,10 @@ register(PoisonFog())
 
 # ---------------- 7100170 龙吟 ----------------
 class DragonChant(OpsSkill):
-    """蓄力：释放时自己获得双攻+150%和速度+80。
+    """蓄力：释放时自己获得双攻和速度增益。
 
-    龙系（element 7）状态技，能耗 3 取自 skills.json。蓄力技能：首段"开始蓄力"
-    支付能耗并进入蓄力状态（**蓄力不是状态行动**，不参与应对，SPEC B41），
-    下一回合再次选择该技能即释放（不再付费）。释放时给自己物攻/魔攻各 +15 层
-    （属性 10%/层 = +150%）、速度 +8 层（每层 +10 = +80），常规时长、离场清除。
+    首段"开始蓄力"支付能耗并进入蓄力状态（蓄力不是状态行动，不参与应对，
+    B33），下一回合再次选择该技能即释放（不再付费）。增益常规时长、离场清除。
     """
 
     skill_id = 7100170
@@ -1085,3 +1026,186 @@ class DragonChant(OpsSkill):
 
 
 register(DragonChant())
+
+
+# ---------------- 7020720 操控 ----------------
+class Manipulate(OpsSkill):
+    """敌方技能能耗 +7，持续 3 回合。"""
+
+    skill_id = 7020720
+    name = "操控"
+    category = 3
+    implemented = True
+
+    status_effects = (
+        ApplyBuff(
+            buff_type=buffs.BuffType.ENERGY_COST,
+            value=7,
+            target=ENEMY,
+            turns=3,
+        ),
+    )
+
+
+register(Manipulate())
+
+
+# ---------------- 7030250 氧输送 ----------------
+class OxygenSupply(OpsSkill):
+    """自己回复 4 能量，并获得魔攻 +70%。"""
+
+    skill_id = 7030250
+    name = "氧输送"
+    category = 3
+    implemented = True
+
+    status_effects = (
+        GainEnergy(value=4),
+        ApplyBuff(buff_type=buffs.BuffType.SPATK, value=7),
+    )
+
+
+register(OxygenSupply())
+
+
+# ---------------- 7060240 放晴 ----------------
+class ClearSky(OpsSkill):
+    """光系技能威力永久 +50%；应对防御时改为永久 +100%。
+
+    "改为"按增量实现：基础 +50，应对防御成功再 +50，合计 100%。光系 element 4。
+    """
+
+    skill_id = 7060240
+    name = "放晴"
+    category = 3
+    counter_target = COUNTER_DEFENSE
+    implemented = True
+
+    status_effects = (
+        ApplyBuff(
+            buff_type=buffs.element_power_buff_type(4),
+            value=50,
+            duration=buffs.DurationKind.PERMANENT,
+        ),
+    )
+
+    counter_effects = (
+        ApplyBuff(
+            buff_type=buffs.element_power_buff_type(4),
+            value=50,
+            duration=buffs.DurationKind.PERMANENT,
+        ),
+    )
+
+
+register(ClearSky())
+
+
+# ---------------- 7070170 啮合传递 ----------------
+class MeshingTransmission(OpsSkill):
+    """自己获得速度 +30；位于 1/3 号位时额外获得物攻 +80%；传动 1。"""
+
+    skill_id = 7070170
+    name = "啮合传递"
+    category = 3
+    drive = 1
+    implemented = True
+
+    status_effects = (
+        ApplyBuff(buff_type=buffs.BuffType.SPEED, value=3),
+        When(
+            condition=SlotIn(slots=(1, 3)),
+            effects=(ApplyBuff(buff_type=buffs.BuffType.ATK, value=8),),
+        ),
+    )
+
+
+register(MeshingTransmission())
+
+
+# ---------------- 7080370 钧势 ----------------
+class GallowsStance(OpsSkill):
+    """自己获得物防 +140% 和速度 -30。"""
+
+    skill_id = 7080370
+    name = "钧势"
+    category = 3
+    implemented = True
+
+    status_effects = (
+        ApplyBuff(buff_type=buffs.BuffType.DEF, value=14),
+        ApplyBuff(buff_type=buffs.BuffType.SPEED, value=-3),
+    )
+
+
+register(GallowsStance())
+
+
+# ---------------- 7120240 疫病吐息 ----------------
+register(MarkStatus(7120240, "疫病吐息", 4, 1, ENEMY))
+
+
+# ---------------- 7160200 甜心续航 ----------------
+class SweetRecovery(OpsSkill):
+    """自己和敌方获得萌化，并各回复 40% 生命。
+
+    萌化按 CanCute 口径：该侧能获得萌化才给萌化与回复，不能获得时该侧不结算。
+    """
+
+    skill_id = 7160200
+    name = "甜心续航"
+    category = 3
+    implemented = True
+
+    def on_status(self, ctx):
+        for target in (SELF, ENEMY):
+            pet = ctx.actor if target == SELF else ctx.target
+            if pet is None or not buffs.can_gain_buff(pet, buffs.BuffType.CUTE, 1):
+                continue
+            ApplyBuff(buff_type=buffs.BuffType.CUTE, value=1, target=target).apply(ctx)
+            Heal(percent=0.40, target=target).apply(ctx)
+
+
+register(SweetRecovery())
+
+
+# ---------------- 7190280 超维投射 ----------------
+register(MarkStatus(7190280, "超维投射", 7, 4, ENEMY))
+
+
+# ---------------- 7190300 星链 ----------------
+class StarChain(OpsSkill):
+    """2 连击，每次连击使敌方获得 1 层星陨印记。"""
+
+    skill_id = 7190300
+    name = "星链"
+    category = 3
+    hit_count_flat = 1
+    implemented = True
+
+    status_effects = (
+        Repeat(
+            count=hit_count_of,
+            effects=(AddMark(mark_id=7, stacks=1, target=ENEMY),),
+        ),
+    )
+
+
+register(StarChain())
+
+
+# ---------------- 7190320 心灵洞悉 ----------------
+class MindInsight(OpsSkill):
+    """敌方获得星陨印记，层数等于敌方已有印记总层数（正负合计）。"""
+
+    skill_id = 7190320
+    name = "心灵洞悉"
+    category = 3
+    implemented = True
+
+    status_effects = (
+        AddMark(mark_id=7, stacks=per_any_mark(1, ENEMY), target=ENEMY),
+    )
+
+
+register(MindInsight())

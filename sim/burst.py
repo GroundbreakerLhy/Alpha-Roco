@@ -1,11 +1,7 @@
-"""Burst effects: extra effects consumed on the first action after entering field.
+"""迸发：入场后首次行动消耗的额外效果。
 
-迸发类型（burst["type"]）：
-  attack_power_flat    本次攻击技能威力 +value（固定值）
-  attack_power_percent 本次攻击技能威力 +value（百分比）
-  skill_use_count      本次行动技能使用次数 +value
-  energy_cost_flat     本次技能能耗 -value
-  enemy_energy_cost    本次行动后敌方全技能能耗 +value（施加给敌方在场精灵）
+type 取值：attack_power_flat / attack_power_percent / skill_use_count /
+energy_cost_flat / enemy_energy_cost。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Resonance magic system."""
+"""共鸣魔法。"""
 
 from __future__ import annotations
 
@@ -57,9 +57,8 @@ def _evolve(state, side: str, branch: int = 0) -> bool:
     if evolution.lordize(pet, branch):
         state.log.append(f"{side} {pet.name} 使用进化之力")
         traits.emit(state, "evolution", scope="self", side=side, subject=pet, pet=pet)
-        # 首领化视作一次入场：重置入场状态并广播入场事件——新形态的特性重新绑定后，
-        # 其"入场时"效果（如雪影冰灵 280012 抓到你了给敌方冻结）在双方行动前立即触发。
-        # 不是换人：不做印记/迸发结算，不触发迅捷。
+        # 首领化视作一次入场：重置入场状态并广播，新形态特性立即触发；
+        # 不是换人，不结算印记/迸发，不触发迅捷。
         pet.has_acted_since_entry = False
         pet.entry_turn = state.turn
         traits.emit(state, "entry", scope="all", side=side, subject=pet)
@@ -78,7 +77,7 @@ def use_magic(
     elif magic_id == WISH:
         pet = state.teams[side][state.active[side]]
         category = 0 if pet.stats["atk"] >= pet.stats["spatk"] else 1
-        # 愿力冲击属性 = 精灵血脉；首领血脉（18）不是元素，退回主属性
+        # 愿力冲击属性 = 血脉；首领血脉不是元素，退回主属性
         blood = pet.bloodline if pet.bloodline != LORD_BLOODLINE else None
         element = (
             blood if blood is not None else (pet.attributes[0] if pet.attributes else 0)

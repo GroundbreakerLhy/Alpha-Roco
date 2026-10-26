@@ -1,4 +1,4 @@
-"""Legal action enumeration for a single player's current view."""
+"""当前视角下的合法行动枚举。"""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def is_valid_action(state, side: str, action: dict, phase: str = "action") -> bo
 
 
 def enumerate_candidates(state, side: str, phase: str = "action") -> list[dict]:
-    """Return executable choices for one side without mutating the battle or RNG."""
+    """返回该侧可执行的行动；不修改战斗状态与随机数。"""
     if side not in ("A", "B"):
         raise ValueError(f"unknown side: {side!r}")
     if phase == "replacement":

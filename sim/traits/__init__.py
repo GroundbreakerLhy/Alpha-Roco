@@ -1,15 +1,9 @@
 """特性系统（接口层）。
 
-引擎用法
---------
-- 事件：``traits.emit(state, "事件名", scope=..., side=..., subject=..., ...)``
-  scope 决定特性所有者集合：all（双方全部，默认）/ side（单方全部）/ active（双方在场）/ self（单个）。
-  事件默认广播（scope="all"），handler 用 ctx.side / ctx.subject / ctx.active 判断与自己相关与否。
-- 致命伤害判定：``traits.emit_lethal(state, side, defender, damage, ...)``，返回 True 表示特性免死。
-- 修正查询：``traits.query_*``（见下），在伤害/能耗/速度等计算处汇总增量。
-- 形态变化后：``traits.rebind(pet)`` 重新绑定特性。
-
-实现某个特性：新建 TraitHandler 子类覆写钩子，``register(handler)`` 覆盖 no-op 占位。
+事件：traits.emit(...)，scope = all（默认）/ side / active / self，决定特性所有者集合。
+致命伤害：traits.emit_lethal(...) 返回 True 表示特性免死。
+修正：traits.query_* 在伤害/能耗/速度等计算处汇总增量；形态变化后 traits.rebind(pet)。
+实现特性：新建 TraitHandler 子类覆写钩子，register(handler) 覆盖 no-op 占位。
 """
 
 from __future__ import annotations
@@ -44,6 +38,8 @@ __all__ = [
     "query_energy_limit",
     "query_heal",
     "query_energy_gain",
+    "take_skip_windup",
+    "query_base_energy_cost",
     "query_energy_shortfall",
     "query_burn_growth",
     "query_skill_usable",
@@ -111,7 +107,6 @@ def emit(
     pet: BattlePet | None = None,
     **kw,
 ) -> None:
-    """广播事件。scope: all / side / active / self。"""
     for p in _scope_pets(state, scope, side, pet):
         handler = get_handler(p.trait_id)
         if handler is None:
@@ -217,7 +212,7 @@ def on_round_end(state: BattleState, order: list | None = None) -> None:
         b_speed = _effective_speed(state, "B")
         order = (["A", "B"] if a_speed > b_speed else ["B", "A"]
                  if b_speed > a_speed else random.sample(["A", "B"], 2))
-    # 保留全场额外触发/禁止触发的汇总语义，不将光环缩小成仅影响自身。
+    # 全场额外触发/禁止触发按汇总语义处理，不缩小为仅影响自身。
     repeats = 1
     for side in order:
         idx = state.active[side]
@@ -243,9 +238,8 @@ def on_buff_gain(
     source_kind: str = "",
     **kw,
 ) -> None:
-    """精灵获得 buff（含特性施加）：广播 buff_gain，供增益/冻结响应类特性使用。
+    """广播 buff_gain（引擎在 buffs.add_buff 调用处调用）。
 
-    引擎在 buffs.add_buff 调用处（battle.py / weather.py）调用；
     ctx.extra 携带 buff_type/value/source_side/source_pet/source_kind。
     """
     emit(
@@ -271,9 +265,8 @@ def _modifier_pets(
 ) -> list:
     """修正查询涉及的特性所有者。
 
-    默认只查被查询精灵自身（绝大多数特性是自身效果）。
-    include_enemy=True 时额外查敌方在场精灵——仅用于存在"敌方光环"类的查询：
-    能耗（冰封：在场时敌方全技能能耗+1）、连击（无差别过滤/强制过滤：全场固定）。
+    默认只查被查询精灵自身；include_enemy=True 额外查敌方在场精灵，
+    仅用于敌方光环类查询（能耗、连击）。
     """
     pets = [pet]
     if include_enemy:
@@ -415,9 +408,8 @@ def query_hit_count(
 ) -> tuple:
     """连击修正，返回 (固定值增量, 百分比增量, 强制值|None)。
 
-    多个"连击数固定为N"光环同时存在时取较大值（无差别过滤固定2 优先于
-    强制过滤固定1），保证双方查询结果一致、与遍历顺序无关。
-    ctx 约定：ctx.target=被查询精灵，ctx.subject=敌方。"""
+    多个“固定为N”光环同时存在时取较大值，保证双方结果一致、与遍历顺序无关。
+    ctx.target=被查询精灵，ctx.subject=敌方。"""
     flat = 0
     percent = 0
     forced = None
@@ -480,6 +472,30 @@ def query_energy_gain(state: BattleState, pet: BattlePet, amount: int, **kw) -> 
     return max(0, total)
 
 
+def query_base_energy_cost(
+    state: BattleState, pet: BattlePet, skill: BattleSkill | None
+) -> Optional[int]:
+    """技能基础能耗覆盖；None = 不覆盖，使用技能自身基础能耗。"""
+    for owner in _modifier_pets(state, pet):
+        handler = get_handler(owner.trait_id)
+        if handler is None:
+            continue
+        ctx = _make_ctx(state, owner, "modify_base_energy_cost", target=pet, skill=skill)
+        result = handler.modify_base_energy_cost(ctx)
+        if result is not None:
+            return result
+    return None
+
+
+def take_skip_windup(state: BattleState, pet: BattlePet) -> bool:
+    """是否跳过本次蓄力；命中即消费。"""
+    for owner in _modifier_pets(state, pet):
+        handler = get_handler(owner.trait_id)
+        if handler is not None and handler.consume_skip_windup(pet):
+            return True
+    return False
+
+
 def query_energy_shortfall(
     state: BattleState, pet: BattlePet, need: int, skill: BattleSkill | None,
     dry_run: bool = False, **kw,
@@ -507,6 +523,7 @@ def grant_energy(state: BattleState, pet: BattlePet, amount: int, **kw) -> int:
     """给精灵回复能量（含能量上限修正），返回实际回复量并广播 energy_gain。
     供引擎（battle._add_energy）与特性 handler 共用，保证能量上限一致。"""
     limit = query_energy_limit(state, pet)
+    amount = query_energy_gain(state, pet, amount)
     before = pet.energy
     pet.energy = min(limit, pet.energy + amount)
     gained = pet.energy - before
@@ -549,7 +566,7 @@ def query_skill_usable(
 
 
 def query_windup_any(state: BattleState, pet: BattlePet) -> bool:
-    """蓄力状态下是否允许使用任意携带技能（嫉妒 200174）；默认 False。"""
+    """蓄力状态下是否允许使用任意携带技能；默认 False。"""
     for owner in _modifier_pets(state, pet):
         handler = get_handler(owner.trait_id)
         if handler is None:

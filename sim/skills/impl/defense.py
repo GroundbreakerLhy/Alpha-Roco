@@ -1,15 +1,8 @@
 """防御类技能（category 2）。
 
-防御技能按“应对成功后的效果”归并：
-
-* ``PureDefense``：只有减伤/静态属性的纯防御；
-* ``DefenseAfterSelfBuff``：防御后给自己增益；
-* ``DefenseAfterEnemyDebuff``：防御后给敌方施加减益；
-* ``DefenseAfterSelfMark``：防御后给己方添加印记；
-* ``DefenseAfterEnemyMark``：防御后给敌方添加印记；
-* ``SpecialDefense``：离场、动态减伤、巧变、打断等无法安全合并的防御。
-
-效果全部显式写在代码中，``skills.json`` 只用于展示和人工校对。
+按应对成功后的效果归并为若干语义子类（纯防御 / 给自己增益 / 给敌方减益 /
+印记 / 无法合并的 SpecialDefense），效果全部显式写在代码中，
+``skills.json`` 只用于展示和人工校对。
 """
 
 from __future__ import annotations
@@ -41,8 +34,7 @@ GUARD = COUNTER_ATTACK
 class DefenseSkill(OpsSkill):
     """防御技能的统一声明器。
 
-    简单防御只需在下方表格声明一行；应对效果通过对应语义子类挂入
-    ``counter_effects``，不再为每个技能创建一套只有静态字段的类。
+    简单防御在下方表格声明一行；应对效果挂入 ``counter_effects``。
     """
 
     def __init__(
@@ -93,7 +85,7 @@ class SpecialDefense(DefenseSkill):
 
 # ---------------- 7060150 镜像反射 ----------------
 class MirrorReflection(DefenseSkill):
-    """减伤70%；应对攻击时复制本次被应对技能的当前全部技能属性。"""
+    """应对攻击时复制本次被应对技能的全部当前属性（含 skill_state 成长）。"""
 
     def __init__(self):
         super().__init__(7060150, "镜像反射", 0.70, implemented=True)
@@ -126,12 +118,9 @@ def _register_group(cls, rows):
         register(cls(skill_id, name, reduction, **kwargs))
 
 
-# 纯防御：只有“防御”本身
 register(PureDefense(7020780, "防御", 0.70, implemented=True))
-# 风墙：减伤 50% + 迅捷
 register(PureDefense(7150150, "风墙", 0.50, implemented=True, swift=True))
 
-# 防御后给自己增益。只有明确属于该语义的技能放在这里。
 _register_group(
     DefenseAfterSelfBuff,
     (
@@ -295,7 +284,6 @@ _register_group(
     ),
 )
 
-# 防御后给敌方减益。
 _register_group(
     DefenseAfterEnemyDebuff,
     (
@@ -368,7 +356,6 @@ _register_group(
     ),
 )
 
-# 防御后给自己印记。
 _register_group(
     DefenseAfterSelfMark,
     (
@@ -393,7 +380,6 @@ _register_group(
     ),
 )
 
-# 防御后给敌方印记。
 _register_group(
     DefenseAfterEnemyMark,
     (
@@ -419,10 +405,8 @@ _register_group(
 )
 
 
-# ---------------- 单独的防御 ----------------
-# 溶解的“驱散敌方1种增益”是独立机制，不归入普通敌方减益组。
-# 可驱散的增益多于 1 种时随机选取（S27）；驱散覆盖全部增益（含永久时长），
-# 但特性自身的展示效果不是增益、不在范围内（S26）。
+# 可驱散的增益多于 1 种时随机选取（S18）；驱散覆盖全部增益（含永久时长），
+# 但特性自身的展示效果不是增益、不在范围内（S18）。
 _register_group(
     SpecialDefense,
     (
@@ -445,7 +429,6 @@ _register_group(
     (
         (7020810, "无畏之心", 1.00),
         (7030330, "蜡质膜", 0.80),
-        (7070080, "能量守恒", 0.80),
         (7080240, "壁垒", 0.90),
         (7090350, "雪替身", 0.70),
         (7100250, "龙血", 0.70),
@@ -459,15 +442,48 @@ _register_group(
 )
 
 
+# ---------------- 7070080 能量守恒 ----------------
+class EnergyConservation(SpecialDefense):
+    """减伤 80%；应对攻击：两侧技能能耗永久 -1。
+
+    "两侧"与其他技能位相邻判定一致：按技能列表循环取左右两位（1号位两侧是
+    4、2号位）。永久减耗按技能 id 记入 ``energy_cost_boost_<id>``（PERMANENT，
+    离场保留），每人每技能最多累计到 0 能耗（引擎最后统一钳制）。
+    """
+
+    def __init__(self):
+        super().__init__(7070080, "能量守恒", 0.80, implemented=True)
+
+    def on_counter(self, ctx):
+        if ctx.counter_category != COUNTER_ATTACK:
+            return
+        pet = ctx.actor
+        skills_list = pet.skills
+        if len(skills_list) <= 1:
+            return
+        index = next(
+            (i for i, candidate in enumerate(skills_list) if candidate is ctx.skill), -1
+        )
+        if index < 0:
+            return
+        for neighbor in {(index - 1) % len(skills_list), (index + 1) % len(skills_list)}:
+            ApplyBuff(
+                buff_type=buffs.skill_energy_boost_type(skills_list[neighbor].skill_id),
+                value=-1,
+                duration=buffs.DurationKind.PERMANENT,
+            ).apply(ctx)
+
+
+register(EnergyConservation())
+
+
 # ---------------- 7140180 硬门 ----------------
 class HardGate(SpecialDefense):
-    """应对攻击：打断被应对技能，并造成 90 威力物伤。
+    """应对攻击：打断被应对技能，并造成物理伤害。
 
-    减伤 0%（desc 无减伤，能耗 2 取自 skills.json）。打断是静态属性
-    （counter_interrupt，SPEC B40）：对方本次攻击行动立即作废——故自身不会受到
-    这次攻击。90 威力物伤在**自己的行动结算时**产生（防御应对攻击强制先手，
-    先给对面计算伤害）：若打死对方则直接力竭。附加伤害直接在 on_defense
-    里用 calc_damage 结算，缺省沿用本技能属性（武系 element 11），类别显式给物理（category 0）。
+    打断是静态属性（counter_interrupt，B19）：对方本次攻击行动立即作废，故自身
+    不会受到这次攻击。附加伤害在自己的行动结算时产生（防御应对攻击强制先手），
+    若打死对方则直接力竭；缺省沿用本技能属性，类别显式给物理。
     """
 
     def __init__(self):
@@ -485,14 +501,12 @@ register(HardGate())
 
 # ---------------- 7140190 听桥 ----------------
 class ListenBridge(SpecialDefense):
-    """减伤 60%；应对攻击：先对敌方造成武系物理伤害（威力与被应对技能相等）。
+    """应对攻击：先对敌方造成武系物理伤害，威力与被应对技能相等。
 
-    应对判定使听桥强制先手，反击伤害在**自己的行动结算时**产生：
-    **先给对面计算伤害，对面若还存活，自己才吃这次攻击**——反击直接打死的话，
-    对方的行动不再结算、自己不扣血。威力取被应对技能的**当前威力**
-    （数据威力 + 永久成长 skill_state["power"]，结算当时实时读取）；被应对行动
-    无技能实体（聚能等）时无对象则不结算。附加伤害直接在 on_defense 里用
-    calc_damage 结算（武系 element 11、物理类别，完整经统一威力管线修正）。
+    附加伤害在自己的行动结算时产生：先给对面计算伤害，对面若还存活，自己才吃
+    这次攻击——反击直接打死的话，对方的行动不再结算、自己不扣血。威力取被应对
+    技能的当前威力（数据威力 + skill_state["power"] 成长，结算时读取）；被应对
+    行动无技能实体（聚能等）时不结算。伤害走统一威力管线。
     """
 
     def __init__(self):
@@ -513,10 +527,10 @@ register(ListenBridge())
 
 
 class PhaseShift(SpecialDefense):
-    """减伤 50%；本技能位于 1 号位或 3 号位时额外减伤 40%；应对攻击；传动 1。
+    """应对攻击；位于 1 号位或 3 号位时额外减伤。
 
-    槽位按**使用时**位置判定（传动重排每回合改变槽位，加成随之变化）；减伤总
-    上限由引擎钳制到 [0, 1]。
+    槽位按使用时位置判定（传动重排每回合改变槽位，加成随之变化）；减伤总上限
+    由引擎钳制到 [0, 1]。
     """
 
     def __init__(self):
@@ -562,9 +576,8 @@ register(
         7021130,
         "吓退",
         0.60,
-        # 应对从句（LEAVE_ENEMY）在回合末结算（B38）：敌方离场并按 B36 流程选人。
-        # 若自己同时被带减伤的攻击打死（减伤挡不住致死伤害），双方都要换人——
-        # 次序为"先脱离一侧（敌方）离场选入，再力竭一侧（自己）选人"（SPEC B36b）。
+        # 应对从句在回合末结算（B46）：敌方离场并按 B16 流程选人。若自己同时被
+        # 打死，次序为"先脱离一侧（敌方）离场选入，再力竭一侧（自己）选人"（B18）。
         counter_effects=(LeaveField(mode=LEAVE_ENEMY),),
         implemented=True,
     )
@@ -575,13 +588,11 @@ register(Untouchable())
 
 # ---------------- 7180330 虚假破产 ----------------
 class FakeBankruptcy(OpsSkill):
-    """减伤80%，能量不足时，消耗5%生命代替1能量，应对攻击。
+    """应对攻击；能量不足时消耗生命代替能量。
 
-    每代替 1 能量消耗 5% **最大**生命（至少 1 点，用户口径；基数同盛宴
-    280030，区别于石头大餐 200100 的当前生命）。
-    - 选择校验（dry_run）：当前生命不足以支付（付完 ≤0）时本技能不可选；
-    - 结算：不做死亡保护，全额支付——选择时够付但被攻击后生命不够的，
-      支付致死即直接力竭，技能不再结算。
+    每代替 1 能量消耗 5% 最大生命（至少 1 点）。
+    - 选择校验（dry_run）：付完生命 ≤0 时本技能不可选；
+    - 结算：不做死亡保护，全额支付——支付致死即直接力竭，技能不再结算。
     走技能侧能量不足兜底管线（skills.query_energy_shortfall，特性兜底之后结算）。
     """
 
@@ -597,6 +608,7 @@ class FakeBankruptcy(OpsSkill):
         if dry_run:
             return need if ctx.actor.hp > need * cost else 0
         ctx.actor.hp -= need * cost
+        ctx.log(f"{ctx.actor.side} {ctx.actor.name} 失去 {need * cost} 生命")
         return need
 
 
@@ -605,16 +617,13 @@ register(FakeBankruptcy())
 
 # ---------------- 7020800 血气 ----------------
 class BloodVigor(OpsSkill):
-    """减伤60%，应对攻击：本回合受到致命伤害时，保留1生命值。
+    """应对攻击：本回合受到致命伤害时保留 1 点生命。
 
-    "本回合保留1血"必须在对方本次攻击落位前生效，是 B38 延迟结算的例外
-    （与"应对状态：本次威力N倍"同类）：防御应对攻击时强制先手，本效果在
-    STAGE_DEFENSE（我方行动结算）按 ctx.is_counter 即时挂上
+    必须在对方本次攻击落位前生效，是 B46 延迟结算的例外：防御应对攻击强制
+    先手，本效果在 STAGE_DEFENSE 按 ctx.is_counter 即时挂上
     ``survive_lethal_turn``（记录生效回合，跨回合自动失效）。
-    消费范围（用户确认的完整回合语义）：攻击伤害走引擎致命判定处
-    （特性免死优先）；回合末持续伤害（中毒/灼烧/寄生，buffs._apply_damage）
-    同样保留 1 血；冰冻是阈值力竭（非伤害），不受保护——有冰冻回合末
-    必力竭，换出也救不了（冰冻 PERMANENT，回合末结算覆盖场下）。
+    攻击伤害（走引擎致命判定，特性免死优先）与回合末持续伤害（buffs._apply_damage）
+    都保留 1 血；冰冻是阈值力竭、非伤害，不受保护。
     """
 
     skill_id = 7020800
@@ -634,12 +643,11 @@ register(BloodVigor())
 
 # ---------------- 7080230 硬化 ----------------
 class Harden(OpsSkill):
-    """减伤90%，若上次使用攻击技则本技能能耗-2，应对攻击。
+    """应对攻击；上次使用攻击技时本技能能耗 -2。
 
-    "上次使用"= 本精灵上一次使用技能的记录（BattlePet.last_used_skill_id，
-    引擎在技能使用记录处同一时点更新；聚能/换人不改变，疾风连袭的重放不算
-    新的使用）。上次使用的是攻击技（类别 0/1）时本技能能耗 -2，走统一能耗
-    管线（付费/校验/显示同步）；首次使用（无记录）不减。
+    "上次使用"= BattlePet.last_used_skill_id（引擎在技能使用记录处更新；聚能/
+    换人不改变，疾风连袭的重放不算新的使用）。类别 0/1 时减 2 费，走统一能耗
+    管线；首次使用（无记录）不减。
     """
 
     skill_id = 7080230
@@ -664,15 +672,12 @@ register(Harden())
 
 # ---------------- 7021120 嗜痛 ----------------
 class PainTolerance(OpsSkill):
-    """减伤80%，应对攻击：期间自己每受到1次攻击伤害，获得双攻+40%。
+    """应对攻击：本回合每受到 1 次攻击伤害，获得双攻增益。
 
-    "期间"= 本回合减伤生效期间（减伤每回合开始清零，跨回合自动失效）：
-    应对攻击成功时在 STAGE_DEFENSE 打上回合戳（skill_state，本技能自己的
-    运行时状态），此后每次受到攻击技能伤害时由引擎经 STAGE_TAKE_DAMAGE 广播
-    （skills.emit_take_damage）——伤害即时叠加，同一回合内多次受击可累积。
-    "1次"按**连击段数**计（一次 3 连击的攻击算 3 次；数据里写明"（不含连击）"
-    的技能才是按攻击次数计），故层数 = 4 × ctx.hit_count；双攻+40% = 各 4 层
-    （属性增益 10%/层）。
+    "期间"= 本回合（减伤每回合开始清零，跨回合自动失效）：应对成功时在
+    STAGE_DEFENSE 打上回合戳（skill_state），此后每次受到攻击伤害由引擎经
+    STAGE_TAKE_DAMAGE 广播（skills.emit_take_damage），伤害即时叠加、同回合可累积。
+    "1 次"按连击段数计（一次 3 连击算 3 次），层数 = 4 × ctx.hit_count。
     """
 
     skill_id = 7021120

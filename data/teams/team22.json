@@ -1,31 +1,12 @@
 {
   "issue": "53期",
   "type": "上分",
-  "name": "无敌队",
-  "resonance": 1,
+  "name": "亚龙章脑队",
+  "resonance": 0,
   "team": [
     {
-      "spirit": "罗隐",
-      "nature": 22,
-      "ivs": {
-        "hp": 10,
-        "atk": 10,
-        "def": 0,
-        "spatk": 0,
-        "spdef": 0,
-        "speed": 10
-      },
-      "bloodline": 18,
-      "skills": [
-        "地震",
-        "彼岸之手",
-        "泥浆铠甲",
-        "地陷"
-      ]
-    },
-    {
-      "spirit": "克莱因龙",
-      "nature": 27,
+      "spirit": "伊兰亚龙",
+      "nature": 10,
       "ivs": {
         "hp": 10,
         "atk": 0,
@@ -34,36 +15,74 @@
         "spdef": 0,
         "speed": 10
       },
-      "bloodline": 13,
+      "bloodline": 2,
       "skills": [
+        "氧输送",
         "绵里藏针",
-        "防御",
-        "润泽",
-        "水花四溅"
+        "突袭",
+        "撒花"
       ]
     },
     {
-      "spirit": "岚鸟（春天的样子）",
-      "nature": 22,
+      "spirit": "寂灭骨龙",
+      "nature": 27,
       "ivs": {
         "hp": 10,
         "atk": 10,
         "def": 0,
         "spatk": 0,
-        "spdef": 0,
-        "speed": 10
+        "spdef": 10,
+        "speed": 0
       },
-      "bloodline": 18,
+      "bloodline": 14,
       "skills": [
-        "俯冲猛击",
-        "筛管奔流",
-        "水刃",
+        "力量增效",
+        "报复",
+        "偷袭",
         "隼鳞"
       ]
     },
     {
+      "spirit": "智辉章脑",
+      "nature": 25,
+      "ivs": {
+        "hp": 10,
+        "atk": 0,
+        "def": 10,
+        "spatk": 10,
+        "spdef": 0,
+        "speed": 0
+      },
+      "bloodline": 2,
+      "skills": [
+        "感电",
+        "水光冲击",
+        "打湿",
+        "加大功率"
+      ]
+    },
+    {
+      "spirit": "帕帕斯卡",
+      "nature": 1,
+      "ivs": {
+        "hp": 10,
+        "atk": 10,
+        "def": 0,
+        "spatk": 0,
+        "spdef": 0,
+        "speed": 10
+      },
+      "bloodline": 8,
+      "skills": [
+        "钢铁洪流",
+        "倾泻",
+        "俯冲猛击",
+        "轮班"
+      ]
+    },
+    {
       "spirit": "霹雳迪迪",
-      "nature": 27,
+      "nature": 20,
       "ivs": {
         "hp": 10,
         "atk": 0,
@@ -72,50 +91,31 @@
         "spdef": 0,
         "speed": 10
       },
-      "bloodline": 4,
+      "bloodline": 6,
       "skills": [
-        "镜像反射",
         "色散",
-        "放晴",
-        "落雷"
+        "落雷",
+        "取念",
+        "镜像反射"
       ]
     },
     {
-      "spirit": "飞飞钥",
-      "nature": 29,
+      "spirit": "圣剑-X",
+      "nature": 1,
       "ivs": {
         "hp": 10,
-        "atk": 0,
+        "atk": 10,
         "def": 10,
         "spatk": 0,
-        "spdef": 10,
+        "spdef": 0,
         "speed": 0
       },
-      "bloodline": 16,
+      "bloodline": 11,
       "skills": [
-        "倾泻",
-        "拟寄生",
-        "风隐",
-        "飞羽"
-      ]
-    },
-    {
-      "spirit": "伊贝粉粉",
-      "nature": 27,
-      "ivs": {
-        "hp": 10,
-        "atk": 0,
-        "def": 10,
-        "spatk": 0,
-        "spdef": 10,
-        "speed": 0
-      },
-      "bloodline": 1,
-      "skills": [
-        "富养化",
-        "光合作用",
-        "仙人掌刺击",
-        "藤绞"
+        "拖拉机",
+        "齿轮切开",
+        "啮合传递",
+        "鸣沙陷阱"
       ]
     }
   ]

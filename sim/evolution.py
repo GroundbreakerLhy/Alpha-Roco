@@ -1,4 +1,4 @@
-"""Evolution-chain helpers, including cute degeneration."""
+"""进化链查询与萌化退化。"""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def evolve(pet) -> bool:
     spirit = get_spirit_by_id(pet.spirit_id)
     if spirit is None:
         return False
-    # 萌化恢复优先沿实际退化记录返回，不能重新选默认进化分支。
+    # 萌化恢复沿实际退化记录返回，不重选默认进化分支。
     restoring_cute = bool(pet.cute_history)
     nxt = (
         get_spirit_by_id(pet.cute_history[-1])
@@ -116,7 +116,7 @@ def can_lordize(pet) -> bool:
 def lordize(pet, branch: int = 0) -> bool:
     if not can_lordize(pet):
         return False
-    # 萌化后再次首领化：只恢复上一阶段普通形态，不进入首领形态
+    # 萌化后首领化：只恢复上一阶段普通形态，不进入首领形态
     cute_buffs = [b for b in pet.buffs if b.buff_type == "cute"]
     if cute_buffs:
         if not evolve(pet):
@@ -160,7 +160,7 @@ def apply_cute(pet) -> bool:
     if prev is None:
         return False
 
-    # 使用精灵自身字段保存，特性 rebind 清理 trait_state 不会丢失退化链。
+    # 存在精灵自身字段：特性 rebind 清理 trait_state 不会丢失退化链。
     pet.cute_history.append(pet.spirit_id)
     pet.spirit_id = prev["id"]
     pet.name = prev["name"]

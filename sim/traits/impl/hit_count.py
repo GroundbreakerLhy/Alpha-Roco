@@ -1,17 +1,7 @@
-"""第 1 批-e：连击修正（modify_hit_count / force_hit_count）+ 嫁祸。
+"""连击修正（modify_hit_count / force_hit_count）。
 
-- 200143 嫁祸         自己每失去25%生命，连击数+2（累计失去量，回复不清零）。
-- 200183 自由飘       自己每有1层萌化，获得连击数+3。
-- 200204 侵蚀         敌方每有1层中毒效果，自己获得连击数+1。
-- 200209 无差别过滤    在场时，所有精灵连击数固定为2（全场光环）。
-- 280035 强制过滤     在场时，所有精灵连击数固定为1（全场光环）。
-
-语义说明：连击查询会额外查敌方在场精灵特性（全场光环类），
-无差别过滤/强制过滤用 ctx.is_active() 判断"在场时"，对双方都强制；
-多个"固定为N"光环同时在场时取较大值（无差别过滤固定2 优先于强制过滤固定1），
-由 traits.query_hit_count 统一处理。
-嫁祸累计实际失去的生命（on_take_damage 攻击伤害 + on_dot_damage 中毒等），
-每满 25% 最大生命给 2 层 HIT_COUNT_FLAT。
+连击查询会额外查敌方在场精灵的全场光环；多个“固定为N”光环同时存在时取较大值。
+嫁祸累计实际失去的生命（攻击伤害 + 持续伤害），每满 25% 最大生命加 2 层。
 """
 
 from __future__ import annotations
@@ -25,7 +15,6 @@ def _self(ctx):
     return ctx.target is ctx.actor
 
 
-# ---------------- 200143 嫁祸 ----------------
 class FrameUp(TraitHandler):
     trait_id = 200143
     name = "嫁祸"
@@ -53,7 +42,6 @@ class FrameUp(TraitHandler):
         ctx.set_state("count", new_count)
 
 
-# ---------------- 200183 自由飘 ----------------
 class FreeFloat(TraitHandler):
     trait_id = 200183
     name = "自由飘"
@@ -73,7 +61,6 @@ class FreeFloat(TraitHandler):
         return [{"name": "连击数", "layers": n, "per": "3", "gain": True}]
 
 
-# ---------------- 200204 侵蚀 ----------------
 class Erosion(TraitHandler):
     trait_id = 200204
     name = "侵蚀"
@@ -90,7 +77,6 @@ class Erosion(TraitHandler):
         return (poison, 0)
 
 
-# ---------------- 200209 无差别过滤 ----------------
 class NoDiscrimination(TraitHandler):
     trait_id = 200209
     name = "无差别过滤"
@@ -103,7 +89,6 @@ class NoDiscrimination(TraitHandler):
         return 2
 
 
-# ---------------- 280035 强制过滤 ----------------
 class ForcedFilter(TraitHandler):
     trait_id = 280035
     name = "强制过滤"

@@ -1,1 +1,1 @@
-"""Headless Roco battle simulator (MVP)."""
+"""无头 Roco 对战模拟器。"""

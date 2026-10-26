@@ -1,4 +1,4 @@
-"""Weather system for data/weather.json."""
+"""天气系统（data/weather.json）。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ BLIZZARD = 1
 SANDSTORM = 2
 THUNDERSTORM = 3
 
-# 天气对应的系别（"本技能系别和天气系别相同"类技能读取）：
-# 雨天=水系、暴风雪=冰系、沙暴=地系、雷鸣=电系（依据 data/weather.json 的描述）。
+# 天气对应系别（"本技能系别和天气相同"类技能读取）。
 WEATHER_ELEMENTS = {
     RAIN: 3,
     BLIZZARD: 6,
@@ -70,7 +69,7 @@ def on_round_end(state) -> None:
     weather_id = state.weather["id"]
 
     if weather_id == BLIZZARD:
-        # 暴风雪：双方当前出战精灵都获得1层冻结；按 state.round_end_order 顺序结算
+        # 暴风雪：双方在场精灵各获得1层冻结（按 round_end_order）。
         for side in order:
             if state.active[side] < 0:
                 continue
@@ -85,14 +84,14 @@ def on_round_end(state) -> None:
                 state.log.append(f"暴风雪：{pet.name} 获得1层冻结")
 
     if weather_id == THUNDERSTORM:
-        # 雷鸣：双方每回合结束获得1层引电；电系精灵免疫；按 state.round_end_order 顺序结算
+        # 雷鸣：双方在场精灵各获得1层引电，电系免疫（按 round_end_order）。
         for side in order:
             if state.active[side] < 0:
                 continue
             pet = state.teams[side][state.active[side]]
             if pet.hp <= 0 or 8 in pet.attributes:
                 continue
-            if not buffs.grant_buff(pet, buffs.BuffType.LIGHTNING, 1):
+            if not buffs.grant_buff(pet, buffs.BuffType.LIGHTNING, 1, state=state):
                 continue
             state.log.append(f"雷鸣：{pet.name} 获得1层引电")
 

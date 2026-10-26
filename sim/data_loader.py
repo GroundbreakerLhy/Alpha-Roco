@@ -1,4 +1,4 @@
-"""Load JSON data and build battle entities."""
+"""加载 JSON 数据并构造战斗实体。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def load_skills():
 
 
 def load_skill_groups() -> dict:
-    """技能语义分组（data/skill_groups.json，人工校对的策划分组），返回 id -> 条目。"""
+    """技能语义分组（data/skill_groups.json），返回 id -> 条目。"""
     return {g["id"]: g for g in load_json("skill_groups.json")["groups"]}
 
 
@@ -177,16 +177,16 @@ def make_skill(raw: dict) -> BattleSkill:
 
 
 def skills_by_element(element: int) -> list:
-    """全游戏中指定元素（系别）的全部技能模板（不限类别）。"""
+    """指定元素的全部技能模板。"""
     return [make_skill(raw) for raw in load_skills() if raw["element"] == element]
 
 
-# 元素 -> 技能模板列表缓存（巧变随机池等使用，避免重复构造）
+# 元素 -> 技能模板缓存
 _SKILL_POOL_CACHE: dict = {}
 
 
 def skill_pool_for_element(element: int) -> list:
-    """带缓存的按元素技能池（返回模板列表的浅拷贝，元素级复用）。"""
+    """按元素的技能池（有缓存）；返回模板列表浅拷贝。"""
     if element not in _SKILL_POOL_CACHE:
         _SKILL_POOL_CACHE[element] = skills_by_element(element)
     return list(_SKILL_POOL_CACHE[element])

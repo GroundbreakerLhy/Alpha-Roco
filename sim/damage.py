@@ -1,4 +1,4 @@
-"""Damage calculation for the MVP battle engine."""
+"""伤害计算。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def stab_multiplier(
 
 
 def ability_stage(state, pet: BattlePet, stat: str) -> float:
-    """Buff and trait ability increments share the same clamped stage pool."""
+    """buff 与特性能力等级共享同一钳制池。"""
     stage = buffs.get_buff_value(pet, stat)
     if state is not None:
         stage += traits.query_stat_multiplier(state, pet, stat) * 10
@@ -85,9 +85,9 @@ def calc_damage(
     state=None,
     is_first: bool = False,
     power_override: int | None = None,
+    ignore_resist: bool = False,
 ) -> dict:
-    # power_override：威力由规则算出的技能（S17 绝对覆盖，如闪击/鸣沙按差值查表），
-    # 非空时替代 skills.json 的桩值作为基础威力，增量（威力buff/技能修正）照常叠加。
+    # power_override：D6 绝对覆盖；非空时替代桩值作为基础威力，增量照常叠加。
     if skill.category not in (0, 1) or (skill.power is None and power_override is None):
         return {"damage": 0, "display_power": 0, "type_multiplier": 1.0, "stab": 1.0}
 
@@ -116,6 +116,8 @@ def calc_damage(
     defender_elements = getattr(defender, "attributes", [])
     stab = stab_multiplier(attacker, skill, element)
     type_mult = type_multiplier(eff_element, defender_elements, typechart)
+    if ignore_resist:
+        type_mult = max(1.0, type_mult)
     power_percent, power_flat = buffs.get_skill_power_modifier(attacker)
     base_power = power_override if power_override is not None else skill.power
     modified_power = (base_power + power_flat + extra_power_flat) * (
@@ -151,10 +153,9 @@ def calc_mark_damage(
     extra_power_flat: float = 0.0,
     state=None,
 ) -> int:
-    """印记爆炸伤害（星陨）：与 calc_damage 共用能力等级换算与取整顺序。
+    """印记爆炸伤害：与 calc_damage 共用能力等级换算与取整顺序。
 
-    差异：威力由印记层数公式给出、不乘本系加成、不产生显示威力、
-    不查询造成伤害与受到伤害修正。
+    不乘本系加成、不产生显示威力、不查询伤害修正。
     """
     attack_key = "atk" if category == 0 else "spatk"
     defense_key = "def" if category == 0 else "spdef"

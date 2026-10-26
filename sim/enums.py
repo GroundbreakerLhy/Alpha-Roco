@@ -1,4 +1,4 @@
-"""Shared enums and simple constants."""
+"""共享枚举与常量。"""
 
 from enum import IntEnum
 
@@ -31,8 +31,7 @@ class SkillCategory(IntEnum):
     STATUS = 3
 
 
-# 血脉编号：0-17 为元素血脉（与 Element 一致，见 spirits.json bloodline）；
-# 首领血脉单独编号，接在元素之后。
+# 血脉：0-17 元素（同 Element）；18=首领。
 LORD_BLOODLINE = 18
 
 

@@ -1,7 +1,6 @@
-"""Mark system: each side has one positive mark slot and one negative mark slot.
+"""印记系统：每方各有一个正面/负面印记槽。
 
-Marks persist when a Pokémon leaves the field; the next Pokémon inherits them.
-Gaining a new mark replaces the previous mark on the same side.
+离场后保留、由下一只继承；同类叠层，异类替换。
 """
 
 from __future__ import annotations
@@ -52,7 +51,7 @@ def remove_mark(state, side: str, mark_id: int) -> None:
 
 
 def consume_mark_stacks(state, side: str, mark_id: int, amount: int) -> None:
-    """消耗印记部分层数（守望星 200210"仅消耗一半"类）；耗尽则移除印记。"""
+    """消耗部分层数；耗尽则移除印记。"""
     if amount <= 0:
         return
     side_name = mark_side(mark_id)
@@ -91,7 +90,7 @@ def get_stacks(state, side: str, mark_id: int) -> int:
     return 0
 
 
-# 印记 8：萌芽印记 —— 获得增益时额外获得一层
+# 印记 8：获得增益时额外获得一层
 def amplify_buff_gain(state, side: str, buff_type: str, value: int) -> int:
     if value == 0 or not buffs.is_buff(buff_type, value):
         return value
@@ -101,7 +100,7 @@ def amplify_buff_gain(state, side: str, buff_type: str, value: int) -> int:
     return value
 
 
-# 回合结束印记结算：中毒印记(4)、光合印记(10)
+# 回合结束：光合印记(10)、中毒印记(4)
 def on_round_end(state) -> None:
     typechart = load_typechart()
     order = list(getattr(state, "round_end_order", ["A", "B"]))
@@ -125,5 +124,6 @@ def on_round_end(state) -> None:
         if negative["id"] == 4:
             mult = type_multiplier(9, pet.attributes, typechart)
             damage = int(pet.max_hp * 0.03 * negative["stacks"] * mult)
-            pet.hp = max(0, pet.hp - damage)
-            state.log.append(f"{side} {pet.name} 受到中毒印记 {damage} 伤害")
+            if damage > 0:
+                pet.hp = max(0, pet.hp - damage)
+                state.log.append(f"{side} {pet.name} 受到中毒印记 {damage} 伤害")

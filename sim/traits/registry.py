@@ -1,7 +1,6 @@
 """特性注册表：trait_id -> handler 实例。
 
-默认把 data/traits.json 中的全部特性注册为 no-op handler（implemented=False），
-实现某个特性时用 register() 覆盖即可。这样注册表始终完整，引擎分发不会缺项。
+data/traits.json 中的未实现特性注册为 no-op 占位，保证注册表完整、分发不缺项。
 """
 
 from __future__ import annotations

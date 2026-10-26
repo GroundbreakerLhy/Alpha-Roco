@@ -1,22 +1,13 @@
 """攻击类技能（category 0 物理 / 1 魔法）。
 
-与 defense.py 同样的约定：效果全部以代码定义，desc 不参与运行时。
-威力/属性/能耗沿用 skills.json 的数据；只有"由规则算出"的威力才用
-``absolute_power`` 覆盖（见 README 第 1 节列出的 4 条桩值技能）。
-
-进度以 ``data/skills.json`` 的 ``done``/``tested`` 标志为准。
-
-排列规则（新增技能请照此插入，保持文件可扫读）：
-1. 家族（参数化声明器 + 登记表）在前：纯攻击基族置首，其余按族内最小技能 id 升序；
-2. 家族表内成员与后面的独立技能，统一按三级键排序：
-   无连击 → 连击（desc 带"N连击"字样者属连击组，含"1连击"；表中体现为显式
-   hits 参数）→ 物攻 → 魔攻 → 技能 id 升序；
-3. 独立技能共用同一排序键；共享辅助函数紧随其使用者之前。
+效果全部以代码定义，desc 不参与运行时；由规则算出的威力走 ``absolute_power``
+覆盖。表内成员按"无连击 → 连击 → 物攻 → 魔攻 → id"排序，新增同类技能只加一行。
 """
 
 from __future__ import annotations
 
 from ... import buffs, skill_utils, traits, weather
+from ... import marks
 from ...data_loader import build_skill_map, load_typechart, skill_group_ids
 from ...evolution import can_cute
 from ..ops import (
@@ -27,6 +18,7 @@ from ..ops import (
     GROWTH_ENERGY_COST,
     GROWTH_HIT_COUNT,
     GROWTH_POWER,
+    LEAVE_ENEMY,
     LEAVE_SELF,
     AddMark,
     ApplyBuff,
@@ -57,9 +49,10 @@ from ..ops import (
     per_stack,
     skill_by_id,
 )
-from ..registry import register
+from ..registry import bind_skill, register
 
 STAR_MARK = 7  # 星陨印记（负面）
+LIGHT_ELEMENT = 4  # 光系
 
 
 # ==================== 家族声明与登记表 ====================
@@ -67,12 +60,10 @@ STAR_MARK = 7  # 星陨印记（负面）
 
 # ---------------- 纯攻击技能（无附加效果） ----------------
 class PureAttack(OpsSkill):
-    """纯攻击技能：desc 只有"造成伤害（，N连击）"，无附加效果、无本次数值修正。
+    """纯攻击技能：无附加效果、无本次数值修正。
 
-    威力/能耗/属性全部取自 skills.json；固有 N 连击 = 基础 1 + hit_count_flat(N-1)
-    （与撕咬/打喷嚏同一条 compute_hit_count 管线，buff/特性修正照常叠加），
-    伤害由引擎攻击分支按段数整体结算。handler 仅作"已评审"记录（check()
-    核对 name/category 与数据一致）。新增同类技能只在下表加一行。
+    固有 N 连击 = 基础 1 + hit_count_flat(N-1)，走 compute_hit_count 管线，
+    buff/特性修正照常叠加。handler 仅用于 check() 核对 name/category 与数据一致。
     """
 
     def __init__(self, skill_id: int, name: str, category: int, hits: int = 1):
@@ -226,19 +217,18 @@ for _handler in (
 class GrowthAttack(OpsSkill):
     """造成伤害 + 本技能永久成长（威力 / 连击 / 能耗）。
 
-    成长统一经 ``SkillGrowth`` 写入 ``skill_state``，再由 ``modify_power`` /
-    ``modify_hit_count`` / ``modify_energy_cost`` 读出，因此成长值同时参与
-    伤害、显示与付费。trigger 决定成长时机：
+    成长经 ``SkillGrowth`` 写入 ``skill_state``，由 ``modify_power`` /
+    ``modify_hit_count`` / ``modify_energy_cost`` 读出，同时参与伤害、显示与付费。
+    trigger 决定成长时机：
 
-    - ``after_use``：使用后立即成长（"每次使用后…"）；
-    - ``round_end``：回合结束时成长，**只在本回合确实使用过本技能时成立**
-      ——聚能、换人、眩晕都不算使用，不得因此减费（冲撞）；
-    - ``round_end_any``：每个回合结束时都成长，与是否使用无关（抛石）；
-    - ``counter``：应对成功时成长（"每应对成功1次…"）。此触发要求描述自带
-      应对类别；只写"每应对成功1次"而没有类别的按特性式累计处理，见
-      ``EnergyEdge``。
+    - ``after_use``：使用后立即成长；
+    - ``round_end``：回合结束时成长，**只在本回合确实使用过本技能时成立**——
+      聚能、换人、眩晕都不算使用；
+    - ``round_end_any``：每个回合结束时都成长，与是否使用无关；
+    - ``counter``：应对成功时成长，要求描述自带应对类别；没有类别的按特性式
+      累计，见 ``EnergyEdge``。
 
-    hits 为固有连击数。新增同类技能只在下表加一行。
+    hits 为固有连击数。
     """
 
     def __init__(self, skill_id, name, category, field, delta,
@@ -281,14 +271,13 @@ for _handler in (
     register(_handler)
 
 
-# ---------------- 7020570 能量刃（自身每应对成功1次永久成长） ----------------
+# ---------------- 7020570 能量刃 ----------------
 class EnergyEdge(OpsSkill):
-    """造成物伤；自身每应对成功 1 次，本技能威力永久 +90。
+    """自身每应对成功 1 次，本技能威力永久 +90。
 
-    普通系（element 0）物攻，威力 80、能耗 3。描述**没有**写应对类别，因此
-    本技能不参与应对判定（不自带应对）；成长按**精灵级**应对计数累计：每次
-    回合末与上次记录的差值 × 90 写入威力成长，来源可以是任何技能或行动的
-    应对成功。计数跨离场保留，与 ``BattlePet.counter_stats`` 同生命周期。
+    描述没有应对类别，故本技能不自带应对；成长按**精灵级**应对计数累计：每次
+    回合末取与上次记录的差值 × 90，来源可以是任何技能或行动的应对成功。计数
+    跨离场保留，与 ``BattlePet.counter_stats`` 同生命周期。
     """
 
     skill_id = 7020570
@@ -310,12 +299,10 @@ register(EnergyEdge())
 
 # ---------------- 敌方换人奖励攻击 ----------------
 class SwitchRewardAttack(OpsSkill):
-    """造成伤害；若敌方本回合更换过精灵，追加奖励。
+    """若敌方本回合更换过精灵，追加威力或回能。
 
-    判定复用 ``EnemySwitchedThisTurn``（目标入场回合等于当前回合）。换人先于
-    行动结算（step 中 switch 先行），故敌方本回合主动换人在技能结算时即刻
-    成立。power_flat 计入本次威力增量；energy 在命中后回复。
-    新增同类技能只在下表加一行。
+    判定复用 ``EnemySwitchedThisTurn``：换人先于行动结算（step 中 switch 先行），
+    故敌方本回合主动换人在技能结算时即刻成立。
     """
 
     def __init__(self, skill_id, name, category, power_flat=0, energy=0, hits=1):
@@ -347,12 +334,11 @@ for _handler in (
 
 # ---------------- 命中附加减益攻击 ----------------
 class HitDebuffAttack(OpsSkill):
-    """造成伤害，命中后使敌方获得固定层数的减益。
+    """命中后使敌方获得固定层数的减益。
 
-    value 为 buff 层数（10%/层的属性类按层给：速度 -30 记 -3 层）。应对状态
-    成功时可追加层数（counter_value）并按倍率放大本次威力
-    （counter_power_mult，增量折算见 P11）。层数钳制、免疫与获得广播统一走
-    ``ApplyBuff``。新增同类技能只在下表加一行。
+    value 为 buff 层数（10%/层的属性类按层给：速度 -30 记 -3 层）；应对状态
+    成功时可追加层数，并按倍率放大本次威力（增量折算见 P11）。层数钳制、免疫
+    与获得广播统一走 ``ApplyBuff``。
     """
 
     def __init__(self, skill_id, name, category, buff_type, value,
@@ -395,11 +381,11 @@ for _handler in (
 
 # ---------------- 天气加成攻击 ----------------
 class WeatherAttack(OpsSkill):
-    """造成伤害；指定天气下追加本次威力或能耗修正。
+    """指定天气下追加本次威力或能耗修正。
 
-    天气在伤害计算与付费时实时读取（不是选择技能时的天气）。power_percent
-    为威力百分比增量（"威力+50%" = 50），energy_delta 为能耗增量（"能耗-2"
-    = -2）。新增同类技能只在下表加一行。
+    天气在伤害计算与付费时实时读取，不是选择技能时的天气。power_percent 为
+    威力百分比增量（"威力+50%" = 50），energy_delta 为能耗增量
+    （"能耗-2" = -2）。
     """
 
     def __init__(self, skill_id, name, category, weather_id,
@@ -435,10 +421,10 @@ for _handler in (
 
 # ---------------- 先手加成攻击 ----------------
 class FirstStrikeAttack(OpsSkill):
-    """造成伤害；先于敌方行动时追加威力或连击。
+    """先于敌方行动时追加威力或连击。
 
     先手判定用排序期给出的 ``ctx.is_first``。forced_hits 非空时按"改为 N 连击"
-    覆盖连击数（与追打同口径），否则只加威力百分比。
+    覆盖连击数，否则只加威力百分比。
     """
 
     def __init__(self, skill_id, name, category, power_percent=0.0,
@@ -516,7 +502,7 @@ class PoisonBurst(OpsSkill):
     """造成物伤；命中使敌方获得中毒，应对状态成功时改为更高层数。
 
     "改为"表示两档互斥：应对成功时只给 counter_layers，不再叠加命中那档；
-    应对奖励按 B38 在回合末结算，命中阶段因此用 ``When(Not(condition=IsCounter()))`` 拦掉。
+    应对奖励按 B46 在回合末结算，命中阶段因此用 ``When(Not(condition=IsCounter()))`` 拦掉。
     """
 
     def __init__(self, skill_id, name, category, layers, counter_layers, hits=1):
@@ -566,7 +552,7 @@ class RecoilStrike(OpsSkill):
 register(RecoilStrike(7180290, "跌落", 0, 5))
 
 
-# ---------------- 第三批：条件与资源类攻击 ----------------
+# ---------------- 条件与资源类攻击 ----------------
 FIRE_ELEMENT = 2
 CUTE_ELEMENT = 13
 
@@ -613,10 +599,9 @@ register(CuteEchoEnergy())
 
 
 class FireGrowth(OpsSkill):
-    """造成物伤；每使用 1 次其他火系技能，本技能威力永久翻倍。
+    """每使用 1 次其他火系技能，本技能威力永久翻倍。
 
-    威力由"其他火系技能使用次数"决定：基础威力 × 2^n，走绝对覆盖（D6）。
-    自身不计入；次数取整场使用记录。
+    威力 = 基础威力 × 2^n，走绝对覆盖（D6）。自身不计入，次数取整场使用记录。
     """
 
     skill_id = 7040250
@@ -688,7 +673,7 @@ register(WaveStack())
 
 
 class GrindingWheel(OpsSkill):
-    """造成物伤；每受到 1 次被抵抗的技能攻击，本技能能耗永久 -1。
+    """每受到 1 次被抵抗的技能攻击，本技能能耗永久 -1。
 
     "抵抗"按属性克制倍率 < 1 判定（受击广播带本次来招）。
     """
@@ -979,11 +964,7 @@ register(ThunderStrike())
 
 # ---------------- 攻击后自己回复能量 ----------------
 class GainEnergyAttack(OpsSkill):
-    """ "造成X伤，自己回复N能量"类：命中后自己回复固定能量。
-
-    同一语义仅回复数值不同（藤绞 5，其余 1）
-    新增同类技能只在下表加一行。
-    """
+    """命中后自己回复固定能量，数值由构造参数给出。"""
 
     def __init__(self, skill_id: int, name: str, category: int, gain: int = 1):
         self.skill_id = skill_id
@@ -1013,11 +994,10 @@ for _handler in (
 
 # ---------------- 攻击 + 吸血 ----------------
 class LifestealAttack(OpsSkill):
-    """ "造成X伤，并吸血100%"类。
+    """吸血类。
 
-    吸血走统一查询（`query_lifesteal`）：按本次**实际造成伤害**的比例回复生命
-    （经 traits.query_heal 的治疗修正与上限处理，与其它吸血同一管线）。
-    新增同类技能只在下表加一行。
+    吸血走统一查询（``query_lifesteal``）：按本次**实际造成伤害**的比例回复
+    生命，经 traits.query_heal 的治疗修正与上限处理。
     """
 
     def __init__(self, skill_id: int, name: str, category: int, lifesteal: float = 1.0):
@@ -1039,13 +1019,11 @@ for _handler in (
 
 # ---------------- 应对状态：本次威力变为N倍 ----------------
 class CounterPowerUp(OpsSkill):
-    """ "造成X伤，（迅捷，）应对状态：本次技能威力变为N倍"类。
+    """ "应对状态：本次技能威力变为N倍"类。
 
-    应对效果作用于**本次行动自身**（威力倍数在伤害计算时就需要），是 B38
-    延迟结算的例外——经 modify_power 在伤害计算时即时生效（ctx.is_counter
-    由排序期的应对判定给出），不走 STAGE_COUNTER 的回合末登记。
-    倍数按增量语义折算进威力百分比（P11："变为N倍" = +(N-1)×100%）。
-    新增同类技能只在下表加一行。
+    应对效果作用于**本次行动自身**，是 B46 延迟结算的例外——经 modify_power 在
+    伤害计算时即时生效（ctx.is_counter 由排序期判定），不走 STAGE_COUNTER 的
+    回合末登记。倍数按增量语义折算（P11："变为N倍" = +(N-1)×100%）。
     """
 
     def __init__(
@@ -1082,11 +1060,10 @@ for _handler in (
 
 # ---------------- 使用后本技能能耗永久增减 ----------------
 class AfterUseEnergyGrowthAttack(OpsSkill):
-    """ "（造成X伤，）每次使用后，本技能能耗永久±N"类。
+    """ "每次使用后，本技能能耗永久±N"类。
 
-    成长经 SkillGrowth(GROWTH_ENERGY_COST, delta) 写入 skill_state，
-    能耗查询/支付/显示同走 true_energy_cost，最后统一钳制到 0（B18）。
-    delta 正为增加（重击）、负为减少（水炮）。新增同类技能只在下表加一行。
+    成长经 SkillGrowth(GROWTH_ENERGY_COST, delta) 写入 skill_state，能耗查询 /
+    支付 / 显示同走 true_energy_cost，最后统一钳制到 0（B22）。
     """
 
     def __init__(self, skill_id: int, name: str, category: int, delta: int):
@@ -1108,12 +1085,11 @@ for _handler in (
 
 # ---------------- 击败触发攻击技能 ----------------
 class KillRewardAttack(OpsSkill):
-    """ "造成X伤，（N连击，）（每次/若使用本技能）击败敌方，X"类。
+    """ "击败敌方，X"类。
 
-    击败判定读命中登记时的快照（伤害结算后对方 hp≤0，B39 延迟到回合末结算
-    也不失真）；效果经 KilledTarget 条件门，未击败一律不执行；目标需要
-    "被击败的那只"的效果（中毒转化等）经 ctx.extra["hit_target"] 锚定。
-    hits 为固有连击数。新增同类技能只在下表加一行。
+    击败判定读命中登记时的快照（伤害结算后对方 hp≤0，B32 延迟到回合末结算也不
+    失真）；效果经 KilledTarget 条件门；目标需要"被击败的那只"的效果（中毒转化
+    等）经 ctx.extra["hit_target"] 锚定。hits 为固有连击数。
     """
 
     def __init__(
@@ -1133,7 +1109,7 @@ class KillRewardAttack(OpsSkill):
 
 
 def _double_current_power(ctx) -> int:
-    """阳火增辉"威力永久翻倍"：SkillGrowth 的增量 = 当前总威力（桩值+已累计成长）。"""
+    """威力永久翻倍：SkillGrowth 的增量 = 当前总威力（桩值+已累计成长）。"""
     return (ctx.skill.power or 0) + int(ctx.state_of(GROWTH_POWER, 0) or 0)
 
 
@@ -1176,11 +1152,10 @@ for _handler in (
 
 # ---------------- 攻击+自己立即脱离 ----------------
 class AttackAndLeave(OpsSkill):
-    """ "造成X伤，（N连击，）自己脱离"类：伤害照常结算，命中时登记脱离
-    （LeaveField 是 deferrable=False 的登记类效果，B39 例外）并立即按 B36
-    流程执行——使用技能后立即脱离、回合中暂停换人，新精灵本回合即上场
-    （面对本回合后续行动）。无存活替补时脱离不生效。hits 为固有连击数。
-    新增同类技能只在下表加一行。
+    """ "自己脱离"类：伤害照常结算，命中时登记脱离（LeaveField 是
+    deferrable=False 的登记类效果，B32 例外）并立即按 B16 流程执行——用后立即
+    脱离、回合中暂停换人，新精灵本回合即上场面对后续行动。无存活替补时脱离
+    不生效。
     """
 
     def __init__(self, skill_id: int, name: str, category: int, hits: int = 1):
@@ -1205,11 +1180,9 @@ for _handler in (
 
 # ---------------- 应对状态后本技能永久降能耗 ----------------
 class CounterStatusEnergyReductionAttack(OpsSkill):
-    """应对状态成功后，本技能能耗永久降低的攻击技能。
+    """应对状态成功后本技能能耗永久降低。
 
-    统一使用 ``SkillGrowth`` 写入本技能的 skill_state，能耗查询、实际支付和
-    显示继续走同一条管线。新增同类技能只需声明技能 ID、名称、类别和每次
-    应对成功的降幅。
+    成长经 ``SkillGrowth`` 写入 skill_state，能耗查询、支付与显示走同一管线。
     """
 
     def __init__(self, skill_id: int, name: str, category: int, reduction: int):
@@ -1231,12 +1204,10 @@ register(CounterStatusEnergyReductionAttack(7050210, "天洪", 1, 6))
 
 # ---------------- 槽位加成攻击技能（机械传动族） ----------------
 class SlotBonusAttack(OpsSkill):
-    """ "造成X伤，（N连击，）本技能位于M号位时威力+K，传动D"类。
+    """ "位于M号位时威力+K，传动D"类。
 
-    槽位按使用时位置判定（复用 SlotIn 条件，1-based）；传动重排每回合改变
-    槽位，加成随之变化。威力加成走 modify_power 条件增量（与 CuteAttack 同一
-    管线），攻击伤害与显示威力都计入；drive 为静态属性，构造期绑定。
-    新增同族技能只在下表加一行。
+    槽位按使用时位置判定（复用 SlotIn 条件，1-based）；传动重排每回合改变槽位，
+    加成随之变化。威力加成走 modify_power 条件增量，伤害与显示威力都计入。
     """
 
     def __init__(
@@ -1304,14 +1275,13 @@ for _handler in (
 
 # ---------------- 应对状态：额外打断被应对技能 ----------------
 class CounterStatusInterruptAttack(OpsSkill):
-    """ "造成X伤，应对状态：额外打断被应对技能"类。
+    """ "应对状态：额外打断被应对技能"类。
 
-    打断是**静态属性**（`counter_interrupt`，SPEC B40）：应对判定成功时立即作废
-    被应对方本次的技能/聚能行动，不走 B38 回合末从句（那时对方技能已结算过）。
-    能耗按"取消即未支付"处理，不额外发能量；若打断的是蓄力技能的**释放段**
-    （费用已在蓄力回合付过、本次为 0 费），不返还能量且蓄力状态保留。
-    **蓄力不是状态行动**（SPEC B41）：对方"开始蓄力"不会被本类技能应对。
-    新增同类技能只在下表加一行。
+    打断是**静态属性**（``counter_interrupt``，SPEC B19）：应对判定成功时立即
+    作废被应对方本次的技能/聚能行动，不走 B46 回合末从句（那时对方技能已结算
+    过）。能耗按"取消即未支付"处理，不额外发能量；打断蓄力技能的**释放段**
+    （费用已在蓄力回合付过）不返还能量且蓄力状态保留。**蓄力不是状态行动**
+    （SPEC B33），对方"开始蓄力"不会被本类技能应对。
     """
 
     def __init__(self, skill_id: int, name: str, category: int):
@@ -1364,14 +1334,11 @@ register(FirstActionBurstAttack(7110200, "超导", 1, energy_cost_reduction=2))
 
 # ---------------- "获得萌化：X"族攻击 ----------------
 class CuteAttack(OpsSkill):
-    """ "造成X伤，（N连击。）自己获得萌化：X"类（萌化族攻击技能）。
+    """ "自己获得萌化：X"类。
 
-    前置条件是**能获得萌化**（存在前一进化阶段）：不能萌化时本次威力加成与
-    附加效果、萌化一律不给。萌化在技能结算之后施加（STAGE_HIT 登记、回合末
-    结算，B39），本次伤害按退化前形态结算。
-    hits 固有连击数；power_on_cute 为能萌化时本次威力加成（固定值增量）；
-    bonus_effects 为能萌化时附加的效果（与萌化同门，When+CanCute 条件门）。
-    新增同族技能只在下表加一行。
+    前置条件是**能获得萌化**（存在前一进化阶段）：不能萌化时威力加成、附加效果
+    与萌化一律不给。萌化在技能结算之后施加（STAGE_HIT 登记、回合末结算，B32），
+    本次伤害按退化前形态结算。bonus_effects 与萌化同门（When+CanCute 条件门）。
     """
 
     def __init__(
@@ -1437,10 +1404,9 @@ for _handler in (
 
 # 7020530 穿膛
 class PiercingShot(OpsSkill):
-    """造成物伤；若敌方能量不高于 2，本次技能威力变为 5 倍。
+    """若敌方能量不高于 2，本次技能威力变为 5 倍。
 
-    普通系（element 0）物攻，威力 65、能耗 2。能量条件在
-    **使用技能时**实时读取（伤害计算时），选择技能时的能量不作数；
+    能量在**使用技能时**实时读取（伤害计算时），选择技能时的能量不作数；
     "5 倍"按增量语义折算为 +400%（P11）。
     """
 
@@ -1461,10 +1427,9 @@ register(PiercingShot())
 
 # 7020970 先发制人
 class Preemptive(OpsSkill):
-    """造成物理伤害，先手+1。
+    """先手+1。
 
-    普通系（element 0）物攻，威力 55、能耗 2。先手+1 是
-    技能侧静态增量（priority_delta），参与行动排序：应对强制先手之下、
+    先手是技能侧静态增量（priority_delta），参与行动排序：应对强制先手之下、
     有效速度之上（B10）——先手值高者先动，相等才比速度。
     """
 
@@ -1480,13 +1445,10 @@ register(Preemptive())
 
 # 7020980 天旋地转
 class Whirlwind(OpsSkill):
-    """造成物理伤害，先手+1，迸发：本次技能威力+30。
+    """先手+1，迸发：本次技能威力+30。
 
-    普通系（element 0）物攻，威力 60、能耗 3。
-    先手+1 = 技能侧静态增量（priority_delta，同先发制人）。
-    迸发 = 入场后首次行动生效：ctx.actor.has_acted_since_entry 为 False 时
-    威力 +30（modify_power 固定值增量，攻击伤害与显示威力同计入；
-    触发条件与超导一致，效果由技能自身声明）。
+    迸发 = 入场后首次行动生效：``has_acted_since_entry`` 为 False 时威力 +30
+    （modify_power 固定值增量，伤害与显示威力同计入）。
     """
 
     skill_id = 7020980
@@ -1507,11 +1469,10 @@ register(Whirlwind())
 
 # 7021020 后发制人
 class AfterStrike(OpsSkill):
-    """造成物理伤害，先手-1。
+    """先手-1。
 
-    普通系（element 0）物攻，威力 155、能耗 3。先手-1 是
-    技能侧静态增量（priority_delta），参与行动排序：应对强制先手之下、
-    有效速度之上（B10）——先手值低者后动，相等才比速度（先发制人的镜像）。
+    先手是技能侧静态增量（priority_delta），参与行动排序：应对强制先手之下、
+    有效速度之上（B10）——先手值低者后动，相等才比速度。
     """
 
     skill_id = 7021020
@@ -1526,11 +1487,9 @@ register(AfterStrike())
 
 # 7030480 筛管奔流
 class SieveSurge(OpsSkill):
-    """造成物伤，自己生命大于80%时，本次技能威力+75。
+    """自己生命大于80%时，本次技能威力+75。
 
-    草系（element 1）物攻，威力 80、能耗 3。"大于80%"按
-    整数比较（hp×5 > max_hp×4，恰好 80% 不加）；威力加成走 modify_power
-    固定值增量，攻击伤害与显示威力同计入。
+    "大于80%"按整数比较（hp×5 > max_hp×4，恰好 80% 不加）。
     """
 
     skill_id = 7030480
@@ -1550,11 +1509,10 @@ register(SieveSurge())
 
 # 7040200 吹火
 class FireBreath(OpsSkill):
-    """造成物伤，每次使用后，本技能威力永久+20。
+    """每次使用后，本技能威力永久+20。
 
-    火系（element 2）物攻，威力 50、能耗 1。威力成长经
-    SkillGrowth(GROWTH_POWER, +20) 写入 skill_state（与水炮能耗成长同一管线），
-    威力查询/伤害/显示同走 query_power，与威力 buff/特性增量叠加。
+    成长经 SkillGrowth(GROWTH_POWER, +20) 写入 skill_state，威力查询 / 伤害 /
+    显示同走 query_power，与威力 buff/特性增量叠加。
     """
 
     skill_id = 7040200
@@ -1567,14 +1525,56 @@ class FireBreath(OpsSkill):
 register(FireBreath())
 
 
+# ---------------- 7060260 透镜实验 ----------------
+class LensExperiment(OpsSkill):
+    """选择：敌方携带光系技能时本次威力 +50，或应对状态时被应对的技能变为透射。
+
+    明支路按使用时的敌方技能列表判定（光系 element 4）；暗支路应对成功后在回合末
+    把被应对的技能替换为透射（7060230，永久，替换该技能位）。
+    """
+
+    skill_id = 7060260
+    name = "透镜实验"
+    category = 0
+    choice = True
+    counter_target = COUNTER_STATUS
+    implemented = True
+
+    def modify_power(self, ctx):
+        percent, flat = super().modify_power(ctx)
+        enemy = ctx.target
+        if (
+            ctx.choice_branch == 0
+            and enemy is not None
+            and any(skill.element == LIGHT_ELEMENT for skill in enemy.skills)
+        ):
+            flat += 50
+        return (percent, flat)
+
+    def on_counter(self, ctx):
+        if ctx.choice_branch != 1:
+            return
+        enemy = ctx.target
+        incoming = ctx.extra.get("incoming_skill")
+        if enemy is None or incoming is None:
+            return
+        index = next(
+            (i for i, skill in enumerate(enemy.skills) if skill is incoming), None
+        )
+        if index is None:
+            return
+        enemy.skills[index] = bind_skill(skill_by_id(7060230), enemy)
+
+
+register(LensExperiment())
+
+
 # 7070020 齿轮扭矩
 class GearTorque(OpsSkill):
-    """造成物伤，每回合位置发生变化时，本技能威力永久+15。
+    """每回合位置发生变化时，本技能威力永久+15。
 
-    机械系（element 16）物攻，威力 70、能耗 3。位置变化由引擎
-    在传动重排后广播（STAGE_SLOT_CHANGE，覆盖开局排序 / 回合末重排 / 换人后的
-    重排，只结算在场精灵）；每次变化经 SkillGrowth(GROWTH_POWER, +15) 永久成长，
-    与威力 buff/特性增量叠加。
+    位置变化由引擎在传动重排后广播（STAGE_SLOT_CHANGE，覆盖开局排序 / 回合末
+    重排 / 换人后的重排，只结算在场精灵）。
     """
 
     skill_id = 7070020
@@ -1615,9 +1615,7 @@ register(ShiftAttack())
 
 
 # ---------------- 7080320 鸣沙陷阱 / 7150250 闪击（共用差值威力表） ----------------
-# 速度/物防差 → 威力（闪击与鸣沙共用）：差 ≤0 为 60（数据里的桩值），
-# 1-30→80，31-60→100，61-90→120，91-120→140，121-150→150，151-180→160，
-# 181-210→170，211-240→180，241-270→190，≥271→200。
+# 差值 → 威力（闪击与鸣沙共用）；差 ≤0 取数据桩值 60。
 _DIFF_POWER_TABLE = (
     (30, 80),
     (60, 100),
@@ -1644,7 +1642,7 @@ def _power_by_diff(diff: int) -> int:
 def _effective_speed_of(state, side: str) -> int:
     """在场精灵有效速度（buff/印记/特性修正全计入，同 battle._effective_speed）。
 
-    battle 在模块级导入本包（注册入口），这里只能惰性引用。
+    battle 在模块级导入本包，这里只能惰性引用。
     """
     from ...battle import _effective_speed
 
@@ -1661,11 +1659,10 @@ def _effective_def(state, pet) -> float:
 
 
 class SingingSand(OpsSkill):
-    """造成物伤，物防比敌方越高，本次技能威力越高。
+    """物防比敌方越高，本次技能威力越高。
 
-    地系（element 5）物攻，威力 60 是桩值（物防差 ≤0 时的威力，S17）：实际
-    威力按双方**有效**物防差查表（与闪击同表），经 absolute_power 绝对覆盖。
-    能耗 4。
+    数据威力 60 是桩值（物防差 ≤0 时，D6）：实际威力按双方**有效**物防差查表，
+    经 absolute_power 绝对覆盖。
     """
 
     skill_id = 7080320
@@ -1687,10 +1684,9 @@ register(SingingSand())
 
 # 7090110 暴风雪
 class Blizzard(OpsSkill):
-    """造成物伤，敌方获得1层冻结。
+    """敌方获得1层冻结。
 
-    冰系（element 6）物攻，威力 85、能耗 3。命中后
-    （STAGE_HIT）敌方获得 1 层冻结（含未造成伤害的情形，S9；一次施加
+    命中后（STAGE_HIT）敌方获得 1 层冻结（含未造成伤害的情形，S7；一次施加
     一个事件，"获得冻结时追加"类特性响应一次）。
     """
 
@@ -1707,13 +1703,11 @@ register(Blizzard())
 
 # 7090130 冰雹
 class Hail(OpsSkill):
-    """造成物伤，应对状态：额外使敌方获得全技能能耗+3。
+    """应对状态：额外使敌方获得全技能能耗+3。
 
-    冰系（element 6）物攻，威力 105、能耗 4。应对状态 =
-    counter_target 为 status：只有对方本回合使用状态行动时才算应对成功，
-    此时由引擎在 STAGE_COUNTER（回合末，B38）结算本条附加效果。
-    "全技能能耗+3"是敌方全技能能耗修正（ENERGY_COST 正值 = 减益），
-    常规时长、离场清除；付费/校验/显示同走 true_energy_cost 管线。
+    只有对方本回合使用状态行动才算应对成功，此时由引擎在 STAGE_COUNTER
+    （回合末，B46）结算。ENERGY_COST 正值 = 减益，常规时长、离场清除；付费 /
+    校验 / 显示同走 true_energy_cost 管线。
     """
 
     skill_id = 7090130
@@ -1734,10 +1728,9 @@ register(Hail())
 class DragonClaw(OpsSkill):
     """蓄力，造成物伤并吸血50%。
 
-    龙系（element 7）物攻，威力 130、能耗 3。蓄力是静态属性
-    （windup=True，同升龙咆哮）：首回合选择时支付能耗进入蓄力，次回合再次选择
-    该技能时释放。吸血 50% 走技能侧吸血修正查询（skills.query_lifesteal），
-    经引擎伤害结算的吸血管线生效（与 buff/特性吸血叠加）。
+    蓄力是静态属性（windup=True）：首回合选择时支付能耗进入蓄力，次回合再次
+    选择该技能时释放。吸血走技能侧吸血修正查询（skills.query_lifesteal），与
+    buff/特性吸血叠加。
     """
 
     skill_id = 7100160
@@ -1751,14 +1744,35 @@ class DragonClaw(OpsSkill):
 register(DragonClaw())
 
 
+# ---------------- 7130350 草虫冲击 ----------------
+class GrassBugCharge(OpsSkill):
+    """造成物伤；若敌方本回合更换精灵，本次威力 +90 且无视敌方系别抵抗。"""
+
+    skill_id = 7130350
+    name = "草虫冲击"
+    category = 0
+    implemented = True
+
+    def modify_power(self, ctx):
+        percent, flat = super().modify_power(ctx)
+        if EnemySwitchedThisTurn().test(ctx):
+            flat += 90
+        return (percent, flat)
+
+    def ignore_resist(self, ctx):
+        return EnemySwitchedThisTurn().test(ctx)
+
+
+register(GrassBugCharge())
+
+
 # 7140130 截拳
 class InterceptFist(OpsSkill):
-    """造成物伤；应对状态：造成打断，回复被打断技能能耗的能量。
+    """应对状态：造成打断，回复被打断技能能耗的能量。
 
-    武系（element 11）物攻，威力 85、能耗 3。打断是静态属性
-    （counter_interrupt，SPEC B40）：应对判定成功时对方的技能/聚能行动立即作废；
-    "回复被打断技能能耗的能量"是应对奖励从句，按 B38 回合末结算——取被应对技能
-    当前能耗回复自己（能量上限修正与能量广播同 GainEnergy 管线）。
+    打断是静态属性（counter_interrupt，SPEC B19）：应对成功时对方的技能/聚能
+    行动立即作废。"回复被打断技能能耗的能量"是应对奖励从句，按 B46 回合末结算，
+    取被应对技能当前能耗回复自己（同 GainEnergy 管线）。
     """
 
     skill_id = 7140130
@@ -1778,13 +1792,27 @@ class InterceptFist(OpsSkill):
 register(InterceptFist())
 
 
-class FlashStrike(OpsSkill):
-    """造成物伤，速度比敌方越高，本次技能威力越高。
+# ---------------- 7150200 羽刃 ----------------
+class FeatherBlade(OpsSkill):
+    """造成物伤；应对状态：回合结束使敌方紧急脱离。"""
 
-    翼系物攻，威力 60 是桩值（速度差 ≤0 时的威力，S17）：实际威力按双方
-    **有效**速度差查表（60/80/100/120/140/150/160/170/180/190/200），经
-    absolute_power 绝对覆盖；威力增量（buff/技能修正）照常叠加。能耗 4 取自
-    skills.json。
+    skill_id = 7150200
+    name = "羽刃"
+    category = 0
+    counter_target = COUNTER_STATUS
+    implemented = True
+
+    counter_effects = (LeaveField(mode=LEAVE_ENEMY),)
+
+
+register(FeatherBlade())
+
+
+class FlashStrike(OpsSkill):
+    """速度比敌方越高，本次技能威力越高。
+
+    数据威力 60 是桩值（速度差 ≤0 时，D6）：实际威力按双方**有效**速度差查表，
+    经 absolute_power 绝对覆盖；威力增量（buff/技能修正）照常叠加。
     """
 
     skill_id = 7150250
@@ -1806,11 +1834,10 @@ register(FlashStrike())
 
 # 7170100 惊吓盒子
 class ScareBox(OpsSkill):
-    """造成物伤；应对状态：使敌方失去 6 能量。
+    """应对状态：使敌方失去 6 能量。
 
-    幽灵系（element 14）物攻，威力 80、能耗 3。应对奖励从句
-    延迟到回合末结算（B38），因此对方本回合的行动不受扣能影响——不会把对方的
-    行动"吸"到无法支付。
+    应对奖励从句延迟到回合末结算（B46），因此对方本回合的行动不受扣能影响——
+    不会把对方的行动"吸"到无法支付。
     """
 
     skill_id = 7170100
@@ -1827,10 +1854,9 @@ register(ScareBox())
 
 # 7170120 坟场搏击
 class GraveyardBrawl(OpsSkill):
-    """造成物伤；敌方每有 1 能量，本次技能威力 -10%。
+    """敌方每有 1 能量，本次技能威力 -10%。
 
-    幽灵系（element 14）物攻，威力 180、能耗 4。能量在
-    **使用技能时**实时读取（伤害计算时），按敌方当前能量逐点 -10%。
+    能量在**使用技能时**实时读取（伤害计算时），选择技能时的能量不作数。
     """
 
     skill_id = 7170120
@@ -1850,11 +1876,10 @@ register(GraveyardBrawl())
 
 # 7180130 极限撕裂
 class LimitTear(OpsSkill):
-    """造成物伤；若自己生命高于 50%，使用后自己获得双攻 -50%。
+    """若自己生命高于 50%，使用后自己获得双攻 -50%。
 
-    恶系（element 15）物攻，威力 135、能耗 4。生命条件在
-    **使用技能时**实时判定；满足时使用后给自己物攻/魔攻各 -5 层（属性 10%/层
-    = -50%），常规时长、离场清除。
+    生命条件在**使用技能时**实时判定；满足时给自己物攻/魔攻各 -5 层（属性
+    10%/层），常规时长、离场清除。
     """
 
     skill_id = 7180130
@@ -1874,10 +1899,10 @@ register(LimitTear())
 
 # 7180410 困兽
 class CorneredBeast(OpsSkill):
-    """造成物伤；若自己生命低于 50%，本次攻击吸血 50%。
+    """若自己生命低于 50%，本次攻击吸血 50%。
 
-    恶系（element 15）物攻，威力 90、能耗 3。生命条件在
-    **使用技能时**实时判定（吸血比例查询），由引擎按本次实际伤害结算吸血。
+    生命条件在**使用技能时**实时判定（吸血比例查询），由引擎按本次实际伤害
+    结算。
     """
 
     skill_id = 7180410
@@ -1897,13 +1922,10 @@ register(CorneredBeast())
 
 # 7180420 下注
 class BetWager(OpsSkill):
-    """造成物伤；选择：本次威力 +40 且使用后自己生命 -10%，或生命低于 50% 时本次威力 +100%。
+    """选择：本次威力 +40 且使用后自己生命 -10%，或生命低于 50% 时威力 +100%。
 
-    恶系（element 15）物攻，威力 85、能耗 3。
-    明支路：本次威力固定 +40，使用后自己失去 10% 最大生命（代价类，与
-    "彗星消耗全部生命"同一 LoseHp 管线）。
-    暗支路：生命低于 50% 时本次威力 +100%；**使用技能时**实时判定，条件
-    不成立时该支路无效果。
+    明支路使用后自己失去 10% 最大生命（代价类，LoseHp 管线）；暗支路条件在
+    **使用技能时**实时判定，不成立时该支路无效果。
     """
 
     skill_id = 7180420
@@ -1930,10 +1952,9 @@ register(BetWager())
 
 # 7020560 垂死反击
 class DesperateCounter(OpsSkill):
-    """造成物伤；自己每失去 5% 生命，本次技能威力 +5。
+    """自己每失去 5% 生命，本次技能威力 +5。
 
-    普通系（element 0）物攻，威力 80、能耗 4。步进用整数算术，满血为 0
-    （per_missing_hp，与彗星同一接口，目标为自己）。
+    步进用整数算术，满血为 0（per_missing_hp，目标为自己）。
     """
 
     skill_id = 7020560
@@ -1951,11 +1972,11 @@ register(DesperateCounter())
 
 # 7021150 逆袭
 class CostSurge(OpsSkill):
-    """造成物伤；本技能能耗每 +1，威力 +50。
+    """本技能能耗每 +1，威力 +50。
 
-    普通系（element 0）物攻，威力 55、能耗 1。能耗差 = 真实能耗 - 数据能耗，
-    真实能耗走 ``true_energy_cost``（buff / 印记 / 天气 / 特性 / 技能自身修正，
-    最后统一钳制到 0），与付费、显示同一条管线。能耗低于数据值时不减威力。
+    能耗差 = 真实能耗 - 数据能耗，真实能耗走 ``true_energy_cost``（buff / 印记 /
+    天气 / 特性 / 技能自身修正，最后钳制到 0），与付费、显示同一条管线。能耗
+    低于数据值时不减威力。
     """
 
     skill_id = 7021150
@@ -1977,10 +1998,10 @@ register(CostSurge())
 
 # 7030530 抽枝
 class BranchDraw(OpsSkill):
-    """造成物伤；应对状态成功时回复 50% 生命与 5 能量。
+    """应对状态成功时回复 50% 生命与 5 能量。
 
-    草系（element 4）物攻，威力 90、能耗 4。应对奖励在回合末第一步结算
-    （B38），回复与扣能的目标都按结算时的在场状态解析。
+    应对奖励在回合末第一步结算（B46），回复与扣能的目标都按结算时的在场状态
+    解析。
     """
 
     skill_id = 7030530
@@ -1996,10 +2017,9 @@ register(BranchDraw())
 
 # 7030590 丰收
 class Harvest(OpsSkill):
-    """造成物伤；命中后回复 20% 生命。
+    """命中后回复 20% 生命。
 
-    草系（element 4）物攻，威力 85、能耗 5。命中附加立即结算（B39），
-    回复量经 ``traits.query_heal`` 过滤后写入生命。
+    命中附加立即结算（B32），回复量经 ``traits.query_heal`` 过滤后写入生命。
     """
 
     skill_id = 7030590
@@ -2014,11 +2034,10 @@ register(Harvest())
 
 # 7040650 焚身
 class SelfImmolate(OpsSkill):
-    """造成高额物伤；自己下回合获得眩晕。
+    """自己下回合获得眩晕。
 
-    火系（element 2）物攻，威力 180、能耗 5。眩晕在**回合开始时**施加：
-    本回合命中只登记 ``BattlePet.pending_dizzy``，下一回合开始时转为眩晕层数，
-    因此下回合无法行动、该回合结束时减 1 层（B35）。
+    眩晕在**回合开始时**施加：本回合命中只登记 ``BattlePet.pending_dizzy``，
+    下一回合开始时转为眩晕层数，因此下回合无法行动、该回合结束时减 1 层（B45）。
     """
 
     skill_id = 7040650
@@ -2035,10 +2054,9 @@ register(SelfImmolate())
 
 # 7080470 砂石冲撞
 class SandRam(OpsSkill):
-    """造成物伤；若敌方本回合更换精灵，自己获得物防 +100%。
+    """若敌方本回合更换精灵，自己获得物防 +100%。
 
-    地系（element 5）物攻，威力 80、能耗 3。条件复用
-    ``EnemySwitchedThisTurn``；物防 +100% = 10 层（每层 10%）。
+    条件复用 ``EnemySwitchedThisTurn``；物防 +100% = 10 层（每层 10%）。
     """
 
     skill_id = 7080470
@@ -2056,10 +2074,9 @@ register(SandRam())
 
 # 7090430 冷凝
 class Condense(OpsSkill):
-    """造成物伤；敌方每有 1 层冻结，自己回复 1 能量。
+    """敌方每有 1 层冻结，自己回复 1 能量。
 
-    冰系（element 6）物攻，威力 95、能耗 4。层数在命中时实时读取
-    （per_stack，目标为敌方）。
+    层数在命中时实时读取（per_stack，目标为敌方）。
     """
 
     skill_id = 7090430
@@ -2074,10 +2091,9 @@ register(Condense())
 
 # 7080140 岩土暴击
 class RockCrit(OpsSkill):
-    """造成高额物伤；每被攻击 1 次，本技能能耗永久 -1。
+    """每被攻击 1 次，本技能能耗永久 -1。
 
-    地系（element 5）物攻，威力 140、能耗 8。受击广播按**攻击次数**计
-    （一次多段攻击只广播一次），成长经 ``SkillGrowth`` 写入能耗修正。
+    受击广播按**攻击次数**计（一次多段攻击只广播一次）。
     """
 
     skill_id = 7080140
@@ -2094,10 +2110,7 @@ register(RockCrit())
 
 # 7080160 裂石
 class RockSplit(OpsSkill):
-    """造成物伤；应对状态成功时使敌方获得物防 -80%。
-
-    地系（element 5）物攻，威力 95、能耗 3。物防 -80% = -8 层。
-    """
+    """应对状态成功时使敌方获得物防 -80%（-8 层）。"""
 
     skill_id = 7080160
     name = "裂石"
@@ -2114,10 +2127,9 @@ register(RockSplit())
 
 # 7110180 电弧
 class ArcBurst(OpsSkill):
-    """造成物伤；入场后首次行动威力 +40（迸发）。
+    """入场后首次行动威力 +40（迸发）。
 
-    电系（element 8）物攻，威力 80、能耗 3。与天旋地转同一判定：
-    ``has_acted_since_entry`` 为 False 时加成。
+    判定同超导 / 天旋地转：``has_acted_since_entry`` 为 False 时加成。
     """
 
     skill_id = 7110180
@@ -2137,10 +2149,7 @@ register(ArcBurst())
 
 # 7140060 崩拳
 class BreakingFist(OpsSkill):
-    """造成物伤；应对状态成功时自己获得物攻 +100%。
-
-    武系（element 11）物攻，威力 65、能耗 2。物攻 +100% = 10 层。
-    """
+    """应对状态成功时自己获得物攻 +100%（10 层）。"""
 
     skill_id = 7140060
     name = "崩拳"
@@ -2155,10 +2164,9 @@ register(BreakingFist())
 
 # 7140360 回旋踢
 class SpinKick(OpsSkill):
-    """造成物伤；若敌方本回合更换精灵，本次技能威力翻倍。
+    """若敌方本回合更换精灵，本次技能威力翻倍。
 
-    武系（element 11）物攻，威力 80、能耗 3。"翻倍"按增量折算为 +100%
-    （P11），条件复用 ``EnemySwitchedThisTurn``。
+    "翻倍"按增量折算为 +100%（P11），条件复用 ``EnemySwitchedThisTurn``。
     """
 
     skill_id = 7140360
@@ -2178,10 +2186,7 @@ register(SpinKick())
 
 # 7150390 俯冲
 class Dive(OpsSkill):
-    """造成物伤，先手 +1。
-
-    翼系（element 7）物攻，威力 105、能耗 7。先手是技能侧静态增量。
-    """
+    """先手 +1（技能侧静态增量）。"""
 
     skill_id = 7150390
     name = "俯冲"
@@ -2198,13 +2203,12 @@ register(Dive())
 
 # 7020470 追打
 class Pursuit(OpsSkill):
-    """造成魔伤，1连击，应对状态：本技能变为3连击。
+    """应对状态：本技能变为3连击。
 
-    普通系（element 0）魔攻，威力 75、能耗 3。基础 1 连击；
-    应对状态（对方本回合使用状态行动）成功时，本次连击数**变为 3**（强制值
-    覆盖 buff/技能增量，与特性强制值取较大者）。与"应对状态：本次威力N倍"
-    同属 B38 延迟结算的例外——连击数在伤害计算时就需要，故经 modify_hit_count
-    按 ctx.is_counter 即时判定，不走 STAGE_COUNTER 的回合末登记。
+    应对成功时连击数**变为 3**（强制值覆盖 buff/技能增量，与特性强制值取较大
+    者）。与"威力变为N倍"同属 B46 延迟结算的例外——连击数在伤害计算时就需要，
+    故经 modify_hit_count 按 ctx.is_counter 即时判定，不走 STAGE_COUNTER 的
+    回合末登记。
     """
 
     skill_id = 7020470
@@ -2225,12 +2229,10 @@ register(Pursuit())
 
 # 7020600 蓄能轰击
 class ChargedBlast(OpsSkill):
-    """造成魔伤，每使用1次其他普通系技能，本技能能耗永久-2。
+    """每使用1次其他普通系技能，本技能能耗永久-2。
 
-    普通系（element 0）魔攻，威力 120、能耗 6。能耗修正按
-    使用记录（BattlePet.used_skill_counts）中**其他**普通系技能的使用次数
-    逐次 -2——动态计算与"永久"等价：记录只增不减、整场保留，付费/校验/
-    显示同步（true_energy_cost 管线，最后统一钳制到 0）。自身使用不计入。
+    按使用记录（BattlePet.used_skill_counts）中**其他**普通系技能的次数逐次
+    -2——动态计算与"永久"等价：记录只增不减、整场保留。自身使用不计入。
     """
 
     skill_id = 7020600
@@ -2255,14 +2257,11 @@ register(ChargedBlast())
 
 # 7021060 彗星
 class Comet(OpsSkill):
-    """造成魔伤，每失去5%生命，本次技能威力-10，使用后消耗全部生命。
+    """每失去5%生命，本次技能威力-10，使用后消耗全部生命。
 
-    普通系（element 0）魔攻，威力 240、能耗 0。
-    威力减益按**自己**已失去生命的 5% 整数步进逐档 -10（per_missing_hp，
-    与燃尽同一接口，目标为自己；满血不减）。
-    "使用后消耗全部生命"：on_after_use 直接对自己扣血 9999（用户口径：
-    是扣血而非置零），由引擎在 STAGE_AFTER_USE 结算后按力竭处理
-    （倒下、扣魔力、等待换人）。
+    威力减益按**自己**已失去生命的 5% 整数步进逐档 -10（per_missing_hp，满血
+    不减）。"消耗全部生命"由 on_after_use 直接扣血 9999（是扣血而非置零），引擎
+    在 STAGE_AFTER_USE 结算后按力竭处理（倒下、扣魔力、等待换人）。
     """
 
     skill_id = 7021060
@@ -2283,12 +2282,11 @@ register(Comet())
 
 # 7021170 倾泻
 class PourOut(OpsSkill):
-    """造成魔伤，若本次攻击未被防御技能应对，则驱散双方所有印记。
+    """若本次攻击未被防御技能应对，则驱散双方所有印记。
 
-    "被防御技能应对"= 对方的防御技能本回合应对成功（防御克制攻击；引擎中
-    只有防御技能以攻击为应对目标，故 countered_by == "defense" 即被防御
-    应对）。排序期判定后随命中登记快照（ctx.extra["countered_by"]），回合末
-    按 B39 结算时判定；驱散覆盖双方阵营的正/负印记（DispelMarks target=FIELD）。
+    引擎中只有防御技能以攻击为应对目标，故 countered_by == "defense" 即被防御
+    应对。排序期判定后随命中登记快照（ctx.extra["countered_by"]），回合末按
+    B32 结算时判定。
     """
 
     skill_id = 7021170
@@ -2307,10 +2305,9 @@ register(PourOut())
 
 # 7021190 吹散
 class DisperseAttack(OpsSkill):
-    """造成魔伤；明支路驱散敌方全部增益，暗支路驱散双方各1层印记。
+    """明支路驱散敌方全部增益，暗支路驱散双方各1层印记。
 
-    明支路驱散敌方的**全部**增益（含永久时长）；特性自身的展示效果不是增益，
-    不受影响（S26）。
+    明支路含永久时长；特性自身的展示效果不是增益，不受影响（S18）。
     """
 
     skill_id = 7021190
@@ -2331,7 +2328,7 @@ register(DisperseAttack())
 
 # 7021220 同频
 class MagicMorphAttack(OpsSkill):
-    """造成魔伤，巧变为随机其他魔攻技能；巧变临时技能能耗 -1。"""
+    """巧变为随机其他魔攻技能；巧变临时技能能耗 -1。"""
 
     skill_id = 7021220
     name = "同频"
@@ -2352,10 +2349,9 @@ register(MagicMorphAttack())
 
 # 7030570 甜蜜陷阱
 class SweetTrap(OpsSkill):
-    """造成魔伤；自己每有 1 能量，本次技能威力 +10。
+    """自己每有 1 能量，本次技能威力 +10。
 
-    草系（element 1）魔攻，威力 50、能耗 4。能量在**使用技能时**
-    实时读取（伤害计算时），按自身当前能量逐点 +10（描述无 % → 固定值增量）。
+    能量在**使用技能时**实时读取，描述无 % → 固定值增量。
     """
 
     skill_id = 7030570
@@ -2373,12 +2369,10 @@ register(SweetTrap())
 
 # 7030580 撒花
 class FlowerScatter(OpsSkill):
-    """造成魔伤；选择：生命高于 80% 时威力 +50，或应对状态时自己回复 35% 生命。
+    """选择：生命高于 80% 时威力 +50，或应对状态时自己回复 35% 生命。
 
-    草系（element 1）魔攻，威力 95、能耗 4。
-    明支路：威力固定 +50，条件是**使用技能时**的生命（伤害计算时实时判定）。
-    暗支路：本技能应对状态成功时回复 35% 最大生命——应对判定属排序期快照，
-    奖励从句走回合末结算（B38）；条件不成立时该支路无效果。
+    明支路条件是**使用技能时**的生命（伤害计算时实时判定）。暗支路的应对判定
+    属排序期快照，奖励从句走回合末结算（B46）。
     """
 
     skill_id = 7030580
@@ -2404,18 +2398,15 @@ register(FlowerScatter())
 
 # 7040220 持续高温
 class SustainedHeat(OpsSkill):
-    """造成魔伤，应对状态：下次攻击技能威力翻倍。
+    """应对状态：下次攻击技能威力翻倍。
 
-    火系（element 2）魔攻，威力 70、能耗 2。应对从句延迟到
-    回合末结算（B38），故"下次攻击技能"必然指之后的回合。
+    应对从句延迟到回合末结算（B46），故"下次攻击技能"必然指之后的回合。
 
-    "威力翻倍"按 P11 增量语义折算成 +100%（与 CounterPowerUp 的"变为N倍"=
-    +(N-1)×100% 同口径），以一次性增益
+    "威力翻倍"按 P11 增量语义折算成 +100%，以一次性增益
     （BuffType.NEXT_ATTACK_POWER_PERCENT，真·百分比 1%/层，100 = +100%）挂在
-    自己身上：下一次攻击技能行动时由引擎取走并计入本次威力（只作用一次——
-    同一行动内多次执行（使用次数+1）时由首次执行消耗）；蓄力回合不算使用
-    攻击技能、不消耗，释放回合照常消耗。该增益为常规时长：离场清除、可被
-    驱散增益剥掉，与其它常规时长的增益一致。
+    自己身上：下一次攻击技能行动时由引擎取走并计入本次威力（只作用一次——同一
+    行动内多次执行时由首次执行消耗）；蓄力回合不算使用攻击技能、不消耗，释放
+    回合照常消耗。常规时长：离场清除、可被驱散增益剥掉。
     """
 
     skill_id = 7040220
@@ -2425,7 +2416,7 @@ class SustainedHeat(OpsSkill):
     implemented = True
 
     counter_effects = (
-        # target 缺省即 SELF（attack.py 不引 SELF 常量，同表内其它自身增益写法）
+        # target 缺省即 SELF
         ApplyBuff(
             buff_type=buffs.BuffType.NEXT_ATTACK_POWER_PERCENT,
             value=100,
@@ -2438,11 +2429,10 @@ register(SustainedHeat())
 
 # 7040460 燃尽
 class BurnOut(OpsSkill):
-    """造成魔伤，敌方每失去5%生命，本次技能威力-5。
+    """敌方每失去5%生命，本次技能威力-5。
 
-    火系（element 2）魔攻，威力 155、能耗 4。威力按敌方在场
-    精灵已失去生命的 5% 整数步进逐档 -5（固定值增量，满血不减），走引擎的
-    技能威力修正查询（query_power，与碎冰冰同一接口），显示威力同步计入。
+    按敌方在场精灵已失去生命的 5% 整数步进逐档 -5（固定值增量，满血不减），走
+    query_power，显示威力同步计入。
     """
 
     skill_id = 7040460
@@ -2460,13 +2450,11 @@ register(BurnOut())
 
 # 7050300 水波术
 class HydroPulse(OpsSkill):
-    """造成魔伤，回合结束时，本技能威力永久+20。
+    """回合结束时，本技能威力永久+20。
 
-    水系（element 3）魔攻，威力 90、能耗 6。
-    触发条件（用户口径）：在场上**无条件**成长、回合末结算——不要求本回合
-    使用过；场下不成长（引擎只对在场精灵发射 STAGE_ROUND_END，与
-    "每回合替换只对在场精灵抽取"同一口径）。成长经 SkillGrowth(GROWTH_POWER, +20)
-    写入 skill_state，威力查询/伤害/显示同走 query_power。
+    在场上**无条件**成长、回合末结算，不要求本回合使用过；场下不成长（引擎只对
+    在场精灵发射 STAGE_ROUND_END）。成长写入 skill_state，威力查询 / 伤害 / 显示
+    同走 query_power。
     """
 
     skill_id = 7050300
@@ -2482,12 +2470,11 @@ register(HydroPulse())
 
 # 7060130 折射
 class Refraction(OpsSkill):
-    """造成魔伤，携带其他系别技能会给本技能带来不同效果。
+    """携带其他系别技能会给本技能带来不同效果。
 
-    光系（element 4）魔攻，威力 50、能耗 4。每个**其他**携带
-    技能按其系别各贡献一次效果（同系别多个技能重复计入）：全部在命中后登记、
-    回合末统一结算（B39，紧随应对奖励之后；本次伤害按携带效果生效前的状态
-    结算——威力/连击类是给后续的 buff）。效果表见 _ON_HIT（策划口径）。
+    每个**其他**携带技能按其系别各贡献一次效果（同系别多个技能重复计入）：命中
+    后登记、回合末统一结算（B32，紧随应对奖励之后；本次伤害按携带效果生效前的
+    状态结算——威力/连击类是给后续的 buff）。效果表见 _ON_HIT。
     """
 
     skill_id = 7060130
@@ -2557,11 +2544,10 @@ register(Refraction())
 
 # 7060220 天光
 class SkyLight(OpsSkill):
-    """造成魔伤；本技能系别和天气系别相同。
+    """本技能系别和天气系别相同。
 
-    光系（element 4）魔攻，威力 95、能耗 3。使用时按当前天气改写
-    本技能系别（雨天=水系、暴风雪=冰系、沙暴=地系、雷鸣=电系）：STAB 与属性克制
-    都按改写后的系别结算；无天气时不改写，保持光系。
+    使用时按当前天气改写本技能系别（雨天=水系、暴风雪=冰系、沙暴=地系、
+    雷鸣=电系）：STAB 与属性克制都按改写后的系别结算；无天气时不改写。
     """
 
     skill_id = 7060220
@@ -2578,11 +2564,10 @@ register(SkyLight())
 
 # 7090290 寒风吹
 class ColdWind(OpsSkill):
-    """造成魔伤，敌方获得魔防-50%。
+    """敌方获得魔防-50%。
 
-    冰系（element 6）魔攻，威力 70、能耗 3。命中附加效果在
-    STAGE_HIT 登记、回合末统一结算（B39，同寒潮/瘴气喷射），结算时按在场状态
-    解析对象。魔防-50% = 5 层（属性增益 10%/层，与贮藏/魔攻+70% 同一换算）。
+    命中附加效果在 STAGE_HIT 登记、回合末统一结算（B32），结算时按在场状态解析
+    对象。魔防-50% = 5 层（属性增益 10%/层）。
     """
 
     skill_id = 7090290
@@ -2598,11 +2583,10 @@ register(ColdWind())
 
 # 7090310 碎冰冰
 class IceShard(OpsSkill):
-    """造成魔伤，敌方每有1层冻结，本次技能威力+20。
+    """敌方每有1层冻结，本次技能威力+20。
 
-    冰系（element 6）魔攻，威力 40、能耗 3。威力加成按敌方
-    在场精灵的冻结层数逐层 +20（固定值增量），走引擎的技能威力修正查询
-    （skills.query_power，与特性同一增量语义），显示威力同步计入。
+    按敌方在场精灵的冻结层数逐层 +20（固定值增量），与特性同一增量语义，显示
+    威力同步计入。
     """
 
     skill_id = 7090310
@@ -2620,12 +2604,13 @@ register(IceShard())
 
 # 7090440 寒潮
 class ColdSnap(OpsSkill):
-    """造成魔伤，敌方获得1层冻结，应对状态：额外获得4层冻结，巧变：冻结相关技能。
+    """敌方获得1层冻结，应对状态：额外获得4层冻结，巧变：冻结相关技能。
 
-    - 命中后（STAGE_HIT）敌方获得 1 层冻结（含未造成伤害的情形，S9）。
-    - 应对状态（对方本回合使用状态行动）时，STAGE_COUNTER 再追加 4 层（合计 5 层）。
-    - 巧变：用后随机变成 data/skill_groups.json 中 freeze_apply 组的一个技能
-      （能耗-1），该临时技能用后还原为寒潮（引擎 _apply_morph 既有规则）。
+    - 命中后（STAGE_HIT）获得 1 层冻结（含未造成伤害的情形，S7）。
+    - 应对状态（对方本回合使用状态行动）时，STAGE_COUNTER 再追加 4 层（合计
+      5 层）。
+    - 巧变：用后随机变成 skill_groups.json 中 freeze_apply 组的一个技能
+      （能耗-1），该临时技能用后还原为寒潮。
     """
 
     skill_id = 7090440
@@ -2640,7 +2625,6 @@ class ColdSnap(OpsSkill):
     )
 
     def on_bind(self, pet, skill):
-        # 巧变池 = 施加冻结的技能，不含寒潮自身
         pool = [
             skill_by_id(sid)
             for sid in skill_group_ids("freeze_apply")
@@ -2654,7 +2638,7 @@ register(ColdSnap())
 
 # 7100150 升龙咆哮
 class DragonRoar(OpsSkill):
-    """升龙咆哮：蓄力一回合后释放的龙系魔法攻击。"""
+    """蓄力一回合后释放。"""
 
     skill_id = 7100150
     name = "升龙咆哮"
@@ -2668,13 +2652,12 @@ register(DragonRoar())
 
 # 7100260 绵里藏针
 class SilkenThorn(OpsSkill):
-    """造成魔伤，若自己上回合未使用攻击技能，本技能威力永久+20。
+    """若自己上回合未使用攻击技能，本技能威力永久+20。
 
-    - 在上一回合结束时按 attack_used_this_turn 结算成长，使下一回合显示与
-      出招立即使用增长后的威力，避免回合末再读 attack_used_last_turn 而晚一回合。
-      蓄力回合、聚能、防御及状态技能不算使用攻击技能；攻击技能释放与重放算。
-    - 在场时每回合末检查刚结束的本回合：未使用攻击技能则永久 +20，进入下一
-      回合显示及出招时即已生效。不要求使用本技能；场下不成长，每回合最多一次。
+    - 在刚结束的回合末按 attack_used_this_turn 结算，使下一回合显示与出招立即用
+      增长后的威力，避免晚一回合。蓄力回合、聚能、防御及状态技能不算使用攻击
+      技能。
+    - 每回合最多一次，不要求使用本技能；场下不成长。
     """
 
     skill_id = 7100260
@@ -2693,13 +2676,51 @@ class SilkenThorn(OpsSkill):
 register(SilkenThorn())
 
 
+# ---------------- 7110380 感电 ----------------
+class StaticCharge(OpsSkill):
+    """造成魔伤；每离场 1 次，本技能使用次数永久 +1。"""
+
+    skill_id = 7110380
+    name = "感电"
+    category = 1
+    implemented = True
+
+    def modify_use_count(self, ctx):
+        return ctx.actor.leave_count
+
+
+register(StaticCharge())
+
+
+# ---------------- 7120100 毒液渗透 ----------------
+class VenomSeep(OpsSkill):
+    """造成魔伤；敌方每有 1 层中毒，本技能能耗 -1；敌方获得 1 层中毒。"""
+
+    skill_id = 7120100
+    name = "毒液渗透"
+    category = 1
+    implemented = True
+
+    hit_effects = (
+        ApplyBuff(buff_type=buffs.BuffType.POISON, value=1, target=ENEMY),
+    )
+
+    def modify_energy_cost(self, ctx):
+        enemy = ctx.opponent()
+        if enemy is None:
+            return 0
+        return -buffs.get_buff_value(enemy, buffs.BuffType.POISON)
+
+
+register(VenomSeep())
+
+
 # 7130340 拟寄生
 class PseudoParasite(OpsSkill):
-    """造成魔伤，偷取敌方1层印记。
+    """偷取敌方1层印记。
 
-    虫系（element 10）魔攻，威力 80、能耗 3。偷取 =
-    DispelMarks(count=1, steal=True)：敌方阵营正/负印记各被取走 1 层
-    转给己方阵营（同 id 印记、同层数）；命中登记、回合末结算（B39）。
+    偷取 = DispelMarks(count=1, steal=True)：敌方阵营正/负印记各被取走 1 层转给
+    己方阵营（同 id、同层数）；命中登记、回合末结算（B32）。
     """
 
     skill_id = 7130340
@@ -2713,13 +2734,25 @@ class PseudoParasite(OpsSkill):
 register(PseudoParasite())
 
 
+# ---------------- 7150080 翼击 ----------------
+class WingStrike(OpsSkill):
+    """造成魔伤，迅捷。"""
+
+    skill_id = 7150080
+    name = "翼击"
+    category = 1
+    swift = True
+    implemented = True
+
+
+register(WingStrike())
+
+
 # 7170110 背袭
 class AmbushFromBehind(OpsSkill):
-    """造成魔伤；若敌方能量等于 0，本次技能威力变为 20 倍。
+    """若敌方能量等于 0，本次技能威力变为 20 倍。
 
-    幽灵系（element 14）魔攻，威力 40、能耗 2。能量条件在
-    **使用技能时**实时读取（伤害计算时），选择技能时的能量不作数；
-    "20 倍"按增量语义折算为 +1900%（P11）。
+    能量在**使用技能时**实时读取；"20 倍"按增量语义折算为 +1900%（P11）。
     """
 
     skill_id = 7170110
@@ -2739,12 +2772,10 @@ register(AmbushFromBehind())
 
 # 7190240 四维降解
 class FourDimDegrade(OpsSkill):
-    """造成魔伤，敌方每有1层印记，本技能能耗-1。
+    """敌方每有1层印记，本技能能耗-1。
 
-    幻系（element 17）魔攻，威力 110、能耗 7。印记按**阵营**
-    计：敌方阵营正/负印记层数合计（不限种类），每层能耗 -1。能耗修正走
-    引擎统一管线（skill_utils.true_energy_cost 的技能自身修正项），与
-    buff/印记/天气/特性修正叠加后最后统一钳制到 0（B18）。
+    印记按**阵营**计：敌方阵营正/负印记层数合计（不限种类），每层 -1。能耗修正
+    走统一管线，与 buff/印记/天气/特性修正叠加后钳制到 0（B22）。
     """
 
     skill_id = 7190240
@@ -2759,16 +2790,33 @@ class FourDimDegrade(OpsSkill):
 register(FourDimDegrade())
 
 
+# ---------------- 7190260 多维击打 ----------------
+class DimensionStrike(OpsSkill):
+    """造成魔伤；1 连击，敌方每有 1 层星陨印记，本次技能连击数 +1。"""
+
+    skill_id = 7190260
+    name = "多维击打"
+    category = 1
+    implemented = True
+
+    def modify_hit_count(self, ctx):
+        flat, percent, forced = super().modify_hit_count(ctx)
+        enemy = ctx.opponent()
+        if enemy is not None:
+            flat += marks.get_stacks(ctx.state, enemy.side, STAR_MARK)
+        return (flat, percent, forced)
+
+
+register(DimensionStrike())
+
+
 # 7190270 错乱
 class Confusion(OpsSkill):
-    """造成魔伤，应对状态：敌方获得3层星陨印记。
+    """应对状态：敌方获得3层星陨印记。
 
-    幻系（element 17）魔攻，威力 65、能耗 2。
-    "应对状态"= counter_target 为 status：只有对方本回合使用状态行动时才算应对成功，
-    此时由引擎在 STAGE_COUNTER 结算本条附加效果。
-
-    星陨印记（7 号，负面）的触发条件是"非幻系攻击"（battle.py 中 `skill.element != 17`），
-    所以错乱自己施加的印记不会被本次攻击消耗掉，顺序上不存在自触发问题。
+    只有对方本回合使用状态行动才算应对成功，此时由引擎在 STAGE_COUNTER 结算。
+    星陨印记（7 号，负面）的触发条件是"非幻系攻击"，所以错乱自己施加的印记不会
+    被本次攻击消耗掉，顺序上不存在自触发问题。
     """
 
     skill_id = 7190270
@@ -2788,12 +2836,10 @@ register(Confusion())
 
 # 7140100 反击拳
 class CounterPunch(OpsSkill):
-    """造成物伤，2连击，若后手攻击，改为3连击。
+    """2连击，若后手攻击，改为3连击。
 
-    武系（element 11）物攻，威力 25、能耗 2。固有 2 连击 =
-    基础 1 + hit_count_flat 1；"后手"按本回合行动顺序判定（ctx.is_first，
-    由排序期给出，连击数在伤害计算时即需确定）。"改为"按强制值覆盖
-    （与追打"变为3连击"同口径）。
+    "后手"按本回合行动顺序判定（ctx.is_first，由排序期给出——连击数在伤害计算
+    时即需确定）。"改为"按强制值覆盖。
     """
 
     skill_id = 7140100
@@ -2814,12 +2860,11 @@ register(CounterPunch())
 
 # 7180110 撕咬
 class Bite(OpsSkill):
-    """造成物伤，3连击，若自己的生命低于50%，本次技能连击数+2。
+    """3连击，若自己的生命低于50%，本次技能连击数+2。
 
-    恶系（element 15）物攻，威力 20、能耗 3。固有 3 连击 =
-    基础 1 + hit_count_flat 2（与打喷嚏同管线）；自己生命**严格低于** 50%
-    （整数比较 hp*2 < max_hp，避免浮点边界）时再 +2，合计 5 连击。
-    连击数走统一汇总（compute_hit_count = 基础1 + 技能修正 + buff + 特性）。
+    生命**严格低于** 50%（整数比较 hp*2 < max_hp，避免浮点边界）时再 +2，合计
+    5 连击。连击数走统一汇总（compute_hit_count = 基础1 + 技能修正 + buff +
+    特性）。
     """
 
     skill_id = 7180110
@@ -2840,11 +2885,10 @@ register(Bite())
 
 # 7020460 连续爪击
 class DoubleClaw(OpsSkill):
-    """造成物伤，2 连击；应对状态成功时本次连击数翻倍。
+    """2 连击；应对状态成功时本次连击数翻倍。
 
-    普通系（element 0）物攻，威力 30、能耗 2。固有 2 连击 =
-    基础 1 + hit_count_flat 1。翻倍作用在**最终连击数**上（buff / 特性 /
-    成长之后），走 ``adjust_hit_count`` 乘算而不是强制值覆盖——与灵光同口径。
+    翻倍作用在**最终连击数**上（buff / 特性 / 成长之后），走
+    ``adjust_hit_count`` 乘算而不是强制值覆盖。
     """
 
     skill_id = 7020460
@@ -2863,10 +2907,9 @@ register(DoubleClaw())
 
 # 7140070 散手
 class Flurry(OpsSkill):
-    """造成物伤，2 连击；应对状态成功时改为 6 连击。
+    """2 连击；应对状态成功时改为 6 连击。
 
-    武系（element 11）物攻，威力 35、能耗 3。"改为"按强制值覆盖（与追打
-    "变为3连击"同口径），连击数在伤害计算时即时判定。
+    "改为"按强制值覆盖，连击数在伤害计算时即时判定。
     """
 
     skill_id = 7140070
@@ -2888,10 +2931,9 @@ register(Flurry())
 
 # 7120080 连续毒针
 class PoisonNeedles(OpsSkill):
-    """造成物伤，2 连击；每次连击使敌方获得 1 层中毒。
+    """2 连击；每次连击使敌方获得 1 层中毒。
 
-    毒系（element 9）物攻，威力 15、能耗 2。按实际连击数逐次施加，
-    每次独立触发获得事件（B28 / S28 的重复语义）。
+    按实际连击数逐次施加，每次独立触发获得事件（B36 / S19 的重复语义）。
     """
 
     skill_id = 7120080
@@ -2920,7 +2962,7 @@ class MomentumStack(OpsSkill):
     name = "叠势"
     category = 1
     counter_target = COUNTER_STATUS
-    hit_count_flat = 1  # 基础 1 + 1 = 2 连击
+    hit_count_flat = 1
     implemented = True
 
     counter_effects = (SkillGrowth(field=GROWTH_HIT_COUNT, delta=2),)
@@ -2931,14 +2973,12 @@ register(MomentumStack())
 
 # 7170230 灵光
 class SpiritLight(OpsSkill):
-    """造成魔伤，3连击，若敌方本回合更换精灵，本次技能连击数翻倍。
+    """3连击，若敌方本回合更换精灵，本次连击数翻倍。
 
-    幽系（element 14）魔攻，威力 25、能耗 3。固有 3 连击 =
-    基础 1 + hit_count_flat 2。"翻倍"作用在**最终连击数**上（buff/特性/成长
-    全部结算之后），故走 adjust_hit_count 钩子做乘算，而不是用 forced 覆盖
-    ——覆盖会连带丢掉连击 buff/特性（暴风眼 +100%、特性 +1 等）。
-    换人先于行动结算（step 中 switch 先行），故敌方本回合主动换人在状态
-    结算时 entry_turn == 当前回合，EnemySwitchedThisTurn 即刻成立。
+    "翻倍"作用在**最终连击数**上（buff/特性/成长全部结算之后），故走
+    ``adjust_hit_count`` 钩子做乘算，而不是用 forced 覆盖——覆盖会连带丢掉连击
+    buff/特性（暴风眼 +100%、特性 +1 等）。换人先于行动结算（step 中 switch
+    先行），故敌方本回合主动换人在结算时 EnemySwitchedThisTurn 即刻成立。
     """
 
     skill_id = 7170230

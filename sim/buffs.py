@@ -1,7 +1,4 @@
-"""Buff/debuff system: data structures and round-end resolution.
-
-This module intentionally does not depend on battle flow details.
-"""
+"""增减益系统：数据结构与回合末结算。"""
 
 from __future__ import annotations
 
@@ -13,35 +10,35 @@ from .typechart import type_multiplier
 
 
 class BuffType:
-    ATK = "atk"  # 物攻
-    SPATK = "spatk"  # 魔攻
-    DEF = "def"  # 物抗
-    SPDEF = "spdef"  # 魔抗
-    SKILL_POWER_PERCENT = "skill_power_percent"  # 技能威力_百分比
-    NEXT_ATTACK_POWER_PERCENT = "next_attack_power_percent"  # 下一次攻击技能威力_百分比（一次性，攻击技能用时消耗）
-    NEXT_ATTACK_POWER_FLAT = "next_attack_power_flat"  # 下一次攻击技能威力_固定值（一次性，攻击技能用时消耗）
-    LIFESTEAL = "lifesteal"  # 吸血
-    HIT_COUNT_PERCENT = "hit_count_percent"  # 连击数_百分比
-    SPEED = "speed"  # 速度_固定值（每层+10）
-    SPEED_PERCENT = "speed_percent"  # 速度_百分比（每层+10%）
-    SKILL_POWER_FLAT = "skill_power_flat"  # 技能威力_固定值
-    HIT_COUNT_FLAT = "hit_count_flat"  # 连击数_固定值
-    ENERGY_COST = "energy_cost"  # 能耗
-    ATTACK_ENERGY_COST = "attack_energy_cost"  # 攻击技能能耗（仅攻击技能生效）
-    OVERLOAD = "overload"  # 超载
-    PRIORITY = "priority"  # 先手
-    PRIORITY_DEBUFF = "priority_debuff"  # 先手减益
-    POISON = "poison"  # 中毒
-    BURN = "burn"  # 灼伤
-    DIZZY = "dizzy"  # 眩晕
-    LEECH = "leech"  # 寄生
-    FREEZE = "freeze"  # 冰冻
-    FREEZE_IMMUNE = "freeze_immune"  # 免疫冻结（特性给予，如吉利丁片 200253）
-    BURN_IMMUNE = "burn_immune"  # 免疫灼烧（特性给予，如美拉德反应 200254）
-    LEECH_IMMUNE = "leech_immune"  # 免疫寄生（特性给予，如茶多酚 200202）
-    CUTE = "cute"  # 萌化
-    LOCK = "lock"  # 禁足
-    LIGHTNING = "lightning"  # 引电
+    ATK = "atk"
+    SPATK = "spatk"
+    DEF = "def"
+    SPDEF = "spdef"
+    SKILL_POWER_PERCENT = "skill_power_percent"
+    NEXT_ATTACK_POWER_PERCENT = "next_attack_power_percent"  # 一次性，攻击技能用时消耗
+    NEXT_ATTACK_POWER_FLAT = "next_attack_power_flat"  # 一次性，攻击技能用时消耗
+    LIFESTEAL = "lifesteal"
+    HIT_COUNT_PERCENT = "hit_count_percent"
+    SPEED = "speed"
+    SPEED_PERCENT = "speed_percent"
+    SKILL_POWER_FLAT = "skill_power_flat"
+    HIT_COUNT_FLAT = "hit_count_flat"
+    ENERGY_COST = "energy_cost"
+    ATTACK_ENERGY_COST = "attack_energy_cost"  # 仅攻击技能生效
+    OVERLOAD = "overload"
+    PRIORITY = "priority"
+    PRIORITY_DEBUFF = "priority_debuff"
+    POISON = "poison"
+    BURN = "burn"
+    DIZZY = "dizzy"
+    LEECH = "leech"
+    FREEZE = "freeze"
+    FREEZE_IMMUNE = "freeze_immune"
+    BURN_IMMUNE = "burn_immune"
+    LEECH_IMMUNE = "leech_immune"
+    CUTE = "cute"
+    LOCK = "lock"
+    LIGHTNING = "lightning"
 
 
 ALWAYS_BUFF_TYPES = {
@@ -51,9 +48,7 @@ ALWAYS_BUFF_TYPES = {
     BuffType.LEECH_IMMUNE,
 }
 
-# 真·百分比型 buff（1%/层）：层数钳制放宽到 ±990（即 ±990%），
-# 与 10%/层 buff（属性/速度%/吸血，±99 层 = ±990%）的有效上限一致（SPEC B29）。
-# 其余 buff 仍按 ±99 层钳制。
+# 1%/层的 buff：钳制边界 ±990，与 10%/层 buff 的有效上限一致（B37）；其余 ±99。
 PERCENT_LAYER_BUFF_TYPES = frozenset(
     {
         BuffType.SKILL_POWER_PERCENT,
@@ -64,11 +59,13 @@ PERCENT_LAYER_BUFF_TYPES = frozenset(
 
 
 def layer_clamp_bound(buff_type: str) -> int:
-    """单条增减益的层数钳制边界（B29）。"""
-    return 990 if buff_type in PERCENT_LAYER_BUFF_TYPES else 99
+    """单条增减益的层数钳制边界（B37）。"""
+    if buff_type in PERCENT_LAYER_BUFF_TYPES or buff_type.startswith("power_boost_"):
+        return 990
+    return 99
 
 
-# 类减益 -> 免疫该减益的 buff 类型（特性给予的免疫，如吉利丁片/美拉德反应/茶多酚）
+# 减益 -> 对应免疫 buff（特性给予）
 IMMUNE_BUFF_FOR = {
     BuffType.FREEZE: BuffType.FREEZE_IMMUNE,
     BuffType.BURN: BuffType.BURN_IMMUNE,
@@ -131,32 +128,32 @@ def classify_buff(buff_type: str, value: int = 0) -> str:
         if value < 0:
             return "debuff"
         return "unknown"
-    # 按元素的技能威力增益（"X系技能威力+N%"，如点亮给光系；命名约定 power_boost_<元素id>）
+    # 按元素威力增益：power_boost_<元素id>
     if buff_type.startswith("power_boost_"):
         return "buff" if value >= 0 else "debuff"
-    # 按技能的能耗修正（"被应对技能能耗+N"；命名约定 energy_cost_boost_<技能id>）
+    # 按技能能耗修正：energy_cost_boost_<技能id>
     if buff_type.startswith("energy_cost_boost_"):
         return "debuff" if value > 0 else "buff"
     return "unknown"
 
 
 def element_power_buff_type(element: int) -> str:
-    """按元素的技能威力增益的 buff 类型名（"X系技能威力+N%"类）。"""
+    """按元素的威力增益 buff 类型名。"""
     return f"power_boost_{element}"
 
 
 def get_element_power_percent(pet, element: int) -> int:
-    """该精灵对指定元素技能的威力百分比增益（"X系技能威力+N%"类 buff 合计）。"""
+    """该精灵对指定元素技能的威力百分比增益。"""
     return get_buff_value(pet, element_power_buff_type(element))
 
 
 def skill_energy_boost_type(skill_id: int) -> str:
-    """按技能的能耗修正的 buff 类型名（"被应对技能能耗+N"类）。"""
+    """按技能能耗修正的 buff 类型名。"""
     return f"energy_cost_boost_{skill_id}"
 
 
 def get_skill_energy_boost(pet, skill_id: int) -> int:
-    """该精灵对指定技能（按 id）的能耗修正（"被应对技能能耗+N"类 buff 合计）。"""
+    """该精灵对指定技能的能耗修正。"""
     return get_buff_value(pet, skill_energy_boost_type(skill_id))
 
 
@@ -180,9 +177,9 @@ class DebuffType:
 
 
 class DurationKind:
-    PERMANENT = "permanent"  # 永久
-    NORMAL = "normal"  # 常规
-    TEMPORARY = "temporary"  # 临时
+    PERMANENT = "permanent"
+    NORMAL = "normal"
+    TEMPORARY = "temporary"
 
 
 @dataclass
@@ -194,17 +191,16 @@ class Buff:
     source_pet: str = ""
     expire_turn: int | None = None
     applied_turn: int = 0  # 获得时的回合（禁足等按回合递减的效果据此跳过当回合）
-    source_kind: str = ""  # "" = 技能/常规来源；"debuff" = 特性给敌方施加的减益；
-    # "trait" = 特性自身的展示效果（不是增益/减益，另一类别）
+    source_kind: str = ""  # ""=技能/常规；"debuff"=特性施加的减益；"trait"=特性展示
 
     def is_gain(self) -> bool:
-        """是否属于"增益"。特性自身的展示效果（source_kind="trait"）不是增益。"""
+        """是否属于增益；source_kind="trait" 不算。"""
         if self.source_kind == "trait":
             return False
         return classify_buff(self.buff_type, self.value) in ("buff", "both")
 
     def is_loss(self) -> bool:
-        """是否属于"减益"。特性自身的展示效果（source_kind="trait"）不是减益。"""
+        """是否属于减益；source_kind="trait" 不算。"""
         if self.source_kind == "trait":
             return False
         return classify_buff(self.buff_type, self.value) in ("debuff", "both")
@@ -264,6 +260,8 @@ def grant_buff(
     source_side: str = "",
     source_pet: str = "",
     source_kind: str = "",
+    state=None,
+    turns: int | None = None,
 ) -> int:
     """规则层入口：先拦截/执行即时效果，再调用纯状态写入；返回实际获得层数。
 
@@ -281,8 +279,7 @@ def grant_buff(
     if buff_type == BuffType.CUTE:
         applied = 0
         for _ in range(value):
-            # 再获得萌化响应类特性：只获得状态并交给 buff_gain 处理，
-            # 不先退化，否则会重绑定特性并丢失本次解除萌化的响应者。
+            # 可再获得萌化：只加状态不退化，避免重绑定特性丢失本次响应者。
             if _allows_cute_reapplication(pet):
                 applied += 1
                 continue
@@ -290,7 +287,7 @@ def grant_buff(
                 apply_cute(pet)
                 applied += 1
                 continue
-            # 萌化层数不受可退化次数限制的特性（无忧无虑）：形态不变，层数照加
+            # 层数不受可退化次数限制：形态不变，层数照加
             if _allows_cute_beyond_limit(pet):
                 applied += 1
                 continue
@@ -308,13 +305,14 @@ def grant_buff(
         source_side,
         source_pet,
         source_kind,
+        turns=turns,
     )
     gained = get_buff_value(pet, buff_type) - before
     if gained and buff_type == BuffType.FREEZE:
         check_freeze(pet)
     if gained and buff_type == BuffType.LIGHTNING:
         if get_buff_value(pet, BuffType.LIGHTNING) >= 2:
-            _trigger_lightning(pet)
+            _trigger_lightning(pet, state)
     return gained
 
 
@@ -327,6 +325,7 @@ def add_buff(
     source_side: str = "",
     source_pet: str = "",
     source_kind: str = "",
+    turns: int | None = None,
 ) -> None:
     if value == 0:
         return
@@ -358,11 +357,15 @@ def add_buff(
 
     if buff_type in (BuffType.FREEZE, BuffType.CUTE):
         duration = DurationKind.PERMANENT
-    expire_turn = (
-        current_turn + 1
-        if duration == DurationKind.TEMPORARY and current_turn is not None
-        else None
-    )
+    if turns is not None:
+        duration = DurationKind.TEMPORARY
+        expire_turn = (current_turn or 0) + turns
+    else:
+        expire_turn = (
+            current_turn + 1
+            if duration == DurationKind.TEMPORARY and current_turn is not None
+            else None
+        )
     pet.buffs.append(
         Buff(
             buff_type=buff_type,
@@ -438,9 +441,7 @@ def _immune(pet, element: int) -> bool:
 
 
 def _apply_damage(pet, damage: int, current_turn: int | None = None) -> None:
-    """持续伤害结算。血气类"本回合受到致命伤害保留1血"对回合末持续伤害
-    （中毒/灼烧/寄生）同样生效；冰冻力竭是阈值判定（非伤害），不受其保护。
-    """
+    """持续伤害结算；技能侧免死对中毒/灼烧/寄生生效，冰冻阈值判定不受保护。"""
     if (
         current_turn is not None
         and damage >= pet.hp
@@ -460,14 +461,18 @@ def _find_source_pet(state, source_side: str, source_pet: str):
     return None
 
 
-def _trigger_lightning(pet) -> None:
+def _trigger_lightning(pet, state=None) -> None:
     if _immune(pet, 8):
         remove_buff(pet, BuffType.LIGHTNING)
         return
     typechart = load_typechart()
     mult = type_multiplier(8, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.25 * mult)
+    hp_before = pet.hp
     _apply_damage(pet, damage)
+    lost = hp_before - pet.hp
+    if state is not None and lost > 0:
+        state.log.append(f"{pet.side} {pet.name} 受到引电 {lost} 伤害")
     remove_buff(pet, BuffType.LIGHTNING)
 
 
@@ -494,9 +499,11 @@ def _apply_poison(pet, typechart, state=None) -> None:
         return
     mult = type_multiplier(9, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.03 * layers * mult)
+    hp_before = pet.hp
     _apply_damage(pet, damage, state.turn if state is not None else None)
-    if damage > 0 and state is not None:
-        state.log.append(f"{pet.side} {pet.name} 受到中毒 {damage} 伤害")
+    lost = hp_before - pet.hp
+    if lost > 0 and state is not None:
+        state.log.append(f"{pet.side} {pet.name} 受到中毒 {lost} 伤害")
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
         traits.emit(
@@ -514,14 +521,15 @@ def _apply_burn(pet, typechart, state=None) -> None:
     layers = get_buff_value(pet, BuffType.BURN)
     if layers <= 0 or _immune(pet, 2):
         return
-    # 免疫灼烧（特性给予）：不受灼烧效果
     if is_immune_to(pet, BuffType.BURN):
         return
     mult = type_multiplier(2, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
+    hp_before = pet.hp
     _apply_damage(pet, damage, state.turn if state is not None else None)
-    if damage > 0 and state is not None:
-        state.log.append(f"{pet.side} {pet.name} 受到灼烧 {damage} 伤害")
+    lost = hp_before - pet.hp
+    if lost > 0 and state is not None:
+        state.log.append(f"{pet.side} {pet.name} 受到灼烧 {lost} 伤害")
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
         traits.emit(
@@ -555,14 +563,15 @@ def _apply_leech(pet, state, typechart) -> None:
     layers = get_buff_value(pet, BuffType.LEECH)
     if layers <= 0 or _immune(pet, 1):
         return
-    # 免疫寄生（特性给予）：不受寄生效果
     if is_immune_to(pet, BuffType.LEECH):
         return
     mult = type_multiplier(1, pet.attributes, typechart)
     damage = int(pet.max_hp * 0.02 * layers * mult)
+    hp_before = pet.hp
     _apply_damage(pet, damage, state.turn if state is not None else None)
-    if damage > 0:
-        state.log.append(f"{pet.side} {pet.name} 受到寄生 {damage} 伤害")
+    lost = hp_before - pet.hp
+    if lost > 0:
+        state.log.append(f"{pet.side} {pet.name} 受到寄生 {lost} 伤害")
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
         traits.emit(
@@ -590,12 +599,11 @@ def check_freeze(pet) -> None:
     layers = get_buff_value(pet, BuffType.FREEZE)
     if layers <= 0 or _immune(pet, 6):
         return
-    # 免疫冻结（特性给予）：不受冻结效果
     if is_immune_to(pet, BuffType.FREEZE):
         return
     threshold = int(pet.max_hp * 0.05 * layers)
     if threshold >= pet.hp:
-        # 避免 hp 写入入口递归触发；冻结不是伤害，不走免死/减伤。
+        # 绕过 hp 写入入口避免递归；冻结不是伤害，不走免死/减伤。
         object.__setattr__(pet, "hp", 0)
 
 
@@ -646,12 +654,9 @@ def get_skill_power_modifier(pet) -> tuple:
 
 
 def consume_next_attack_power(pet) -> tuple:
-    """ "下一次攻击技能威力"一次性增益的取用（攻击技能用时调用）。
+    """取用一次性"下一次攻击技能威力"增益，返回 (百分比, 固定值) 并清空。
 
-    返回增量 ``(百分比, 固定值)``（P11 增量语义：百分比 100 = 翻倍；固定值
-    1 层 = 1 点威力，同 SKILL_POWER_FLAT）；百分比/固定值两条通道一并清空，
-    无增益时返回 ``(0, 0)`` 且不动任何状态。常规时长（NORMAL）——离场清除、
-    可被驱散增益剥掉，故换人后不再保留（与其它常规时长的增益一致）。
+    无增益返回 (0, 0)；NORMAL 时长，离场清除（P11 增量语义）。
     """
     percent = get_buff_value(pet, BuffType.NEXT_ATTACK_POWER_PERCENT)
     flat = get_buff_value(pet, BuffType.NEXT_ATTACK_POWER_FLAT)

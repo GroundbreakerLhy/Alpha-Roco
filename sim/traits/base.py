@@ -1,12 +1,8 @@
 """特性系统接口：上下文 + handler 基类。
 
-设计约定
---------
-- 事件钩子（on_*）：引擎在关键时机调用 ``traits.emit(state, "事件名", ...)``，
-  广播给选定的精灵集合，handler 按需覆写。事件可以产生副作用（改 hp/能量/buff/印记）。
-- 修正钩子（modify_*）：数值计算处调用 ``traits.query_*`` 汇总修正值。
-  所有修正一律是"增量"语义：返回 0 表示无修正；伤害/属性乘数 = 1.0 + 增量之和。
-- 未实现的特性是 no-op handler（implemented=False），不打印任何日志。
+事件钩子（on_*）经 traits.emit 广播，可产生副作用（改 hp/能量/buff/印记）。
+修正钩子（modify_*）经 traits.query_* 汇总；一律增量语义：0 无修正，乘数 = 1.0 + 增量。
+未实现的特性是 no-op handler（implemented=False），不打印任何日志。
 """
 
 from __future__ import annotations
@@ -19,28 +15,7 @@ from ..models import Action, BattlePet, BattleSkill, BattleState
 
 @dataclass
 class TraitContext:
-    """传给特性 handler 的上下文。actor 永远是特性所有者。
-
-    常用字段（随事件/查询不同而部分生效）：
-      state       战斗状态（可读写）
-      actor       特性所有者精灵
-      active      actor 是否在场
-      side        事件发起方（"A"/"B"）
-      subject     事件主体（入场/离场/力竭/受击的精灵等）
-      target      作用目标（通常是被攻击方）
-      action      当回合 Action（skill/charge/switch）
-      skill       本次技能
-      is_first    是否先手行动
-      is_counter  是否由应对触发
-      weather     当前天气 id（dict 结构中的 id 字段）
-      energy_cost 本次技能实际能耗
-      energy_gain 本次获得能量
-      heal        本次回复量
-      damage      本次伤害量
-      hit_count   本次连击次数
-      damage_dealt 本次实际造成伤害
-      extra       事件专属扩展字段
-    """
+    """传给特性 handler 的上下文。actor 永远是特性所有者，字段随事件/查询部分生效。"""
 
     state: BattleState
     actor: BattlePet
@@ -65,7 +40,6 @@ class TraitContext:
     damage_dealt: int = 0
     extra: dict = field(default_factory=dict)
 
-    # ---- 便捷方法 ----
 
     def log(self, msg: str) -> None:
         self.state.log.append(msg)
@@ -81,7 +55,6 @@ class TraitContext:
             return None
         return self.state.teams[opp_side][idx]
 
-    # ---- 特性运行时状态（actor.trait_state） ----
 
     def state_of(self, key, default=None):
         return self.actor.trait_state.get(key, default)
@@ -94,11 +67,7 @@ class TraitContext:
 
 
 class TraitHandler:
-    """所有特性 handler 的基类。
-
-    子类覆写需要的钩子，其余保持默认空实现。注册方式：
-      register(MyTraitHandler(trait_id=200122, name="加个雪球", desc="...", implemented=True))
-    """
+    """所有特性 handler 的基类：子类按需覆写钩子，其余为空实现。"""
 
     trait_id: int = 0
     name: str = ""
@@ -155,7 +124,7 @@ class TraitHandler:
         """使用防御技能。"""
 
     def on_status_skill(self, ctx: TraitContext) -> None:
-        """使用状态技能（含聚能类，效果未实现前也会触发）。"""
+        """使用状态技能（含聚能类）。"""
 
     def on_skill_end(self, ctx: TraitContext) -> None:
         """技能结束：全部效果（含离场）结算后；ctx.damage_dealt/hit_count 可用。"""
@@ -173,8 +142,7 @@ class TraitHandler:
         """获得能量（ctx.energy_gain）。"""
 
     def on_dot_damage(self, ctx: TraitContext) -> None:
-        """属性伤害结算（中毒/灼烧/寄生等回合结束伤害；冻结斩杀不属于伤害；ctx.subject=受击精灵）。
-        接入点：buffs.py 的 _apply_poison/_apply_burn/_apply_leech（待接入）。"""
+        """属性伤害结算（中毒/灼烧/寄生等回合结束伤害；冻结斩杀不属于伤害；ctx.subject=受击精灵）。"""
 
     def on_heal(self, ctx: TraitContext) -> None:
         """回复生命（ctx.heal，ctx.extra["base_heal"]=修正前数值）。"""
@@ -190,18 +158,24 @@ class TraitHandler:
         return False
 
     def allow_cute_beyond_limit(self, pet: BattlePet) -> bool:
-        """无法继续退化时是否仍可获得萌化 buff（无忧无虑 200182：萌化层数不受可退化次数限制）；默认不允许。"""
+        """无法继续退化时是否仍可获得萌化 buff；默认不允许。"""
         return False
 
     def modify_buff_gain_layers(self, pet: BattlePet, buff_type: str, value: int) -> int:
         """获得效果时额外层数，沿原数值方向增加；默认无修正。"""
         return 0
 
+    def modify_base_energy_cost(self, ctx: TraitContext) -> Optional[int]:
+        """技能基础能耗覆盖：返回非 None 时替代技能自身的基础能耗，其余修正照常叠加。"""
+        return None
+
+    def consume_skip_windup(self, pet: BattlePet) -> bool:
+        """是否跳过本次蓄力；返回 True 时消费该状态。"""
+        return False
+
     # ================= 修正钩子 =================
-    # 修正查询默认只作用于"被查询精灵自身"的特性；
-    # 仅能耗（query_energy_cost）与连击（query_hit_count）两类会额外查询敌方在场精灵
-    # 的特性（冰封"敌方能耗+1"、无差别过滤"全场连击固定"等光环）。
-    # ctx.actor = 特性所有者，ctx.target = 被查询的精灵（自身效果判断用 ctx.target is ctx.actor）。
+    # 修正查询默认只查被查询精灵自身；仅能耗与连击额外查敌方在场精灵（敌方光环）。
+    # ctx.actor = 特性所有者，ctx.target = 被查询精灵（自身效果判断 ctx.target is ctx.actor）。
 
     def modify_stat(self, ctx: TraitContext, stat: str) -> float:
         """属性百分比增量（0.2 = +20%）；stat ∈ atk/spatk/def/spdef。"""
@@ -224,8 +198,7 @@ class TraitHandler:
         return 0
 
     def modify_star_consume(self, ctx: TraitContext, stacks: int) -> Optional[int]:
-        """星陨印记触发时消耗的层数（守望星 200210"仅消耗一半"类）：
-        返回非 None 覆盖默认全部消耗；ctx.target=触发方（攻击方）。"""
+        """星陨印记触发时消耗的层数；返回非 None 覆盖默认全部消耗；ctx.target=触发方（攻击方）。"""
         return None
 
     def modify_damage_dealt(self, ctx: TraitContext) -> float:
@@ -263,19 +236,18 @@ class TraitHandler:
     def modify_energy_shortfall(
         self, ctx: TraitContext, need: int, dry_run: bool = False
     ) -> int:
-        """能量不足兜底（"能量不足时消耗5%生命代替1能量"类）：
-        返回可补充的能量数，handler 自行支付代价；need=缺口。
-        dry_run=True 为选择校验探测：不得支付代价，只回答"当前状态能否补足"
-        （生命够付且付完不死才算能补足）；结算时（dry_run=False）不做死亡
-        保护——全额支付，生命 ≤0 由引擎直接力竭。"""
+        """能量不足兜底：返回可补充的能量数，handler 自行支付代价；need=缺口。
+
+        dry_run=True 只回答能否补足（不得支付代价）；dry_run=False 全额支付，
+        生命 ≤0 由引擎直接力竭。"""
         return 0
 
     def is_skill_usable(self, ctx: TraitContext, skill: BattleSkill) -> Optional[bool]:
-        """技能可用性（ctx.skill_index=槽位，正位宝剑类按槽位限制）：返回 True/False 强制，None 不干预。"""
+        """技能可用性（ctx.skill_index=槽位）：返回 True/False 强制，None 不干预。"""
         return None
 
     def allow_any_skill_in_windup(self, ctx: TraitContext) -> bool:
-        """蓄力状态下是否允许使用任意携带技能（嫉妒 200174）；默认 False（引擎默认只允许已蓄力技能）。"""
+        """蓄力状态下是否允许使用任意携带技能；默认 False。"""
         return False
 
     def modify_skill_element(
@@ -299,10 +271,8 @@ class TraitHandler:
     # ================= 显示 =================
 
     def display(self, state, pet) -> list | None:
-        """当前特性效果的显示行（服务端序列化给客户端 buff 区）。
+        """当前特性效果的显示行（序列化给客户端 buff 区）。
 
-        返回 [{"name": 中文名, "layers": 层数, "per": 单层增益文本, "gain": True/False}]；
-        None/[] = 无显示。层数与单层增益由特性自己定义
-        （如助燃：层数=火系技能使用次数，每层+20% 双攻）。
+        返回 [{"name", "layers", "per", "gain": bool}]；None/[] = 无显示。
         """
         return None
