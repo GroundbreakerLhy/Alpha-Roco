@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 
 from .arena import load_model, play_match, wilson_interval
+from .config import EvaluationConfig, SearchConfig
 from .features import ObservationEncoder
 
 
@@ -24,19 +25,23 @@ def _print_tally(label: str, tally: dict[str, int]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="固定种子评测Alpha Roco checkpoint")
+    defaults = EvaluationConfig()
+    search = SearchConfig()
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
-    parser.add_argument("--games", "--repeats", dest="games", type=int, default=256)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--games", "--repeats", dest="games", type=int, default=defaults.games
+    )
+    parser.add_argument("--seed", type=int, default=defaults.seed)
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
     parser.add_argument("--sample", action="store_true")
-    parser.add_argument("--workers", type=int, default=32)
-    parser.add_argument("--timeout", type=float, default=20)
+    parser.add_argument("--workers", type=int, default=defaults.workers)
+    parser.add_argument("--timeout", type=float, default=defaults.timeout)
     parser.add_argument("--search", action="store_true")
-    parser.add_argument("--search-top-k", type=int, default=5)
-    parser.add_argument("--search-risk", type=float, default=0.5)
+    parser.add_argument("--search-top-k", type=int, default=search.top_k)
+    parser.add_argument("--search-risk", type=float, default=search.risk)
     args = parser.parse_args()
     if args.games < 2:
         raise ValueError("games至少为2")

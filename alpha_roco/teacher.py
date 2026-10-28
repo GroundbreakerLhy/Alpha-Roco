@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from .config import TeacherConfig
 from .features import ObservationEncoder, selectable_candidates
 
 
 class Teacher:
-    def __init__(self, encoder=None, seed=0):
+    def __init__(self, encoder=None, seed=0, config=None):
         self.encoder = encoder or ObservationEncoder()
         self.seed = seed
+        self.config = config or TeacherConfig()
 
     def choose(self, request):
         phase = request.get("phase", "action")
@@ -55,17 +57,22 @@ class Teacher:
                 if "hp" in team[index] or "hp_percent" in team[index]
                 else 1.0
             )
-            score = attack - defense + 0.1 * speeds[index] / top_speed + 0.1 * hp
+            score = (
+                self.config.lead_attack * attack
+                - self.config.lead_defense * defense
+                + self.config.lead_speed * speeds[index] / top_speed
+                + self.config.lead_hp * hp
+            )
             if best is None or score > best[0]:
                 best = (score, candidate)
         return best[1] if best is not None else candidates[0]
 
     def _replacement_scores(self, encoded):
         return [
-            item["derived"][16] * 0.5
-            - item["derived"][17] * 0.5
-            + item["derived"][18] * 0.3
-            + item["derived"][19] * 0.2
+            item["derived"][16] * self.config.replacement_offense
+            + item["derived"][17] * self.config.replacement_defense
+            + item["derived"][18] * self.config.replacement_hp
+            + item["derived"][19] * self.config.replacement_speed
             for item in encoded
         ]
 
@@ -87,9 +94,12 @@ class Teacher:
         incoming = self._best_damage(enemy, current) if enemy and current else 0
         incoming_fraction = incoming / max(current_hp_value, 1)
         danger = (
-            current_hp < 0.2
-            or (current_hp < 0.35 and incoming_fraction >= 0.5)
-            or incoming_fraction >= 1.0
+            current_hp < self.config.danger_low_hp
+            or (
+                current_hp < self.config.danger_mid_hp
+                and incoming_fraction >= self.config.danger_incoming
+            )
+            or incoming_fraction >= self.config.danger_lethal
         )
         energy = current.get("energy")
         energy = (
@@ -120,25 +130,29 @@ class Teacher:
                 )
             )
             score = (
-                derived[2]
-                + 0.1 * max(0.0, mult - 1)
-                - 0.05 * max(0.0, 1 - mult)
-                + 0.02 * sum(derived[7:10])
-                + 0.05 * derived[4]
-                + 0.03 * derived[11]
-                - 0.05 * derived[13]
+                self.config.skill_damage * derived[2]
+                + self.config.skill_type_advantage * max(0.0, mult - 1)
+                + self.config.skill_type_disadvantage * max(0.0, 1 - mult)
+                + self.config.skill_counter_flags * sum(derived[7:10])
+                + self.config.skill_speed * derived[4]
+                + self.config.skill_drive * derived[11]
+                + self.config.skill_windup * derived[13]
             )
             if counter and counter == predicted:
-                score += {"attack": 0.30, "defense": 0.25, "status": 0.25}[counter]
+                score += {
+                    "attack": self.config.counter_attack,
+                    "defense": self.config.counter_defense,
+                    "status": self.config.counter_status,
+                }[counter]
                 if derived[10] > 0.5:
-                    score += 0.05
+                    score += self.config.counter_interrupt
             if (
                 self.encoder._skill(candidate.get("skill_id"))["category_raw"] == 2
                 and danger
             ):
-                score += 0.1
-            if 0 < derived[3] <= 0.1:
-                score += 1.0
+                score += self.config.defense_danger
+            if 0 < derived[3] <= self.config.kill_threshold:
+                score += self.config.kill_bonus
             scores[index] = score
             usable.append(
                 {
@@ -155,9 +169,12 @@ class Teacher:
         damaging = [item["mult"] for item in usable if item["fraction"] > 0]
         resisted = bool(damaging) and max(damaging) < 1.0
         finish_fast = any(
-            0 < item["hits"] <= 0.1 and item["speed"] > 0.5 for item in usable
+            0 < item["hits"] <= self.config.kill_threshold and item["speed"] > 0.5
+            for item in usable
         )
-        one_shot = any(0 < item["hits"] <= 0.1 for item in usable)
+        one_shot = any(
+            0 < item["hits"] <= self.config.kill_threshold for item in usable
+        )
 
         for index, candidate in enumerate(candidates):
             if candidate.get("kind") != "switch":
@@ -172,8 +189,13 @@ class Teacher:
             bench_incoming = min(
                 self._best_damage(enemy, bench) / max(bench_hp, 1), 1.0
             )
-            offensive = bench_fraction >= current_fraction + 0.15 or (
-                bench_fraction >= 0.35 and current_fraction <= 0.15
+            offensive = (
+                bench_fraction
+                >= current_fraction + self.config.switch_offensive_margin
+                or (
+                    bench_fraction >= self.config.switch_offensive_fraction
+                    and current_fraction <= self.config.switch_offensive_current
+                )
             )
             if finish_fast or (switched_last and not danger):
                 scores[index] = -1.0
@@ -182,33 +204,44 @@ class Teacher:
                 scores[index] = -1.0
                 continue
             score = (
-                0.4 * bench_fraction
-                - 0.35 * bench_incoming
-                + 0.1 * hp
-                + 0.05 * speed
-                + 0.2 * off
-                - 0.2 * defense
+                self.config.switch_damage * bench_fraction
+                + self.config.switch_incoming * bench_incoming
+                + self.config.switch_hp * hp
+                + self.config.switch_speed * speed
+                + self.config.switch_offense * off
+                + self.config.switch_defense * defense
             )
-            if bench_incoming >= 1.0:
-                score -= 0.25
+            if bench_incoming >= self.config.switch_lethal_threshold:
+                score += self.config.switch_lethal
             if danger:
-                score += 0.25
+                score += self.config.switch_danger
             if resisted:
-                score += 0.15
-            if hp < 0.25 or (
-                isinstance(bench_energy, (int, float)) and bench_energy < 2
+                score += self.config.switch_resisted
+            if hp < self.config.switch_hp_threshold:
+                score += self.config.switch_low_hp
+            if (
+                isinstance(bench_energy, (int, float))
+                and bench_energy < self.config.switch_energy_threshold
             ):
-                score -= 0.2
+                score += self.config.switch_low_energy
             if switched_last:
-                score -= 0.2
+                score += self.config.switch_switched_last
             scores[index] = score
         if usable and not (danger or resisted):
-            threshold = best_score + 0.05
+            threshold = best_score + self.config.switch_threshold
             for index, candidate in enumerate(candidates):
                 if candidate.get("kind") == "switch" and scores[index] < threshold:
                     scores[index] = -1.0
 
-        charge = 0.5 if not usable else (0.15 if energy < 4 and not one_shot else 0.0)
+        charge = (
+            self.config.charge_no_usable
+            if not usable
+            else (
+                self.config.charge_low_energy
+                if energy < self.config.charge_energy_threshold and not one_shot
+                else 0.0
+            )
+        )
         for index, candidate in enumerate(candidates):
             if candidate.get("kind") == "charge":
                 scores[index] = charge
@@ -229,7 +262,7 @@ class Teacher:
     def _best_damage(self, attacker, defender):
         energy = attacker.get("energy")
         if not isinstance(energy, (int, float)) or isinstance(energy, bool):
-            energy = 10
+            energy = self.config.default_energy
         return max(
             (
                 self.encoder._estimated_damage(skill, attacker, defender)

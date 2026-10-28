@@ -20,6 +20,7 @@ class AttentionBlock(nn.Module):
         self.attention = nn.MultiheadAttention(
             width, config.num_heads, batch_first=True
         )
+        self.dropout = nn.Dropout(config.dropout)
         self.norm2 = nn.LayerNorm(width)
         self.ffn = nn.Sequential(
             nn.Linear(width, width * config.ffn_multiplier),
@@ -39,8 +40,8 @@ class AttentionBlock(nn.Module):
             key_padding_mask=~mask,
             need_weights=False,
         )[0]
-        residual = x + attended
-        return residual + self.ffn(self.norm2(residual))
+        residual = x + self.dropout(attended)
+        return residual + self.dropout(self.ffn(self.norm2(residual)))
 
 
 class AttentionStack(nn.Module):
@@ -115,6 +116,12 @@ class OpponentModel(nn.Module):
         self.element = nn.Embedding(
             vocab_sizes["element"], config.category_embedding_dim, padding_idx=0
         )
+        self.trait_embedding = nn.Embedding(
+            vocab_sizes["trait"], config.category_embedding_dim, padding_idx=0
+        )
+        self.trait_projection = nn.Linear(config.category_embedding_dim, width)
+        nn.init.zeros_(self.trait_projection.weight)
+        nn.init.zeros_(self.trait_projection.bias)
         self.public_pet = nn.Sequential(
             nn.Linear(
                 config.identity_embedding_dim + config.category_embedding_dim * 2 + 42,
@@ -186,6 +193,8 @@ class OpponentModel(nn.Module):
                 ),
                 dim=-1,
             )
+        ) + self.trait_projection(
+            self.trait_embedding(batch["public_pet_traits"])
         )
         fields = self.field_encoder(batch["fields"])
         tokens = torch.cat((pets, fields), dim=1)
@@ -224,6 +233,7 @@ class AlphaRoco(nn.Module):
             "spirit": 640,
             "skill": 600,
             "effect": 128,
+            "trait": 256,
             "element": 24,
             "nature": 34,
             "category": 8,
@@ -253,6 +263,12 @@ class AlphaRoco(nn.Module):
             vocab_sizes["effect"], self.config.category_embedding_dim, padding_idx=0
         )
         width = self.config.hidden_dim
+        self.trait_embedding = nn.Embedding(
+            vocab_sizes["trait"], self.config.category_embedding_dim, padding_idx=0
+        )
+        self.trait_projection = nn.Linear(self.config.category_embedding_dim, width)
+        nn.init.zeros_(self.trait_projection.weight)
+        nn.init.zeros_(self.trait_projection.bias)
         self.skill_encoder = nn.Sequential(
             nn.Linear(
                 self.config.identity_embedding_dim
@@ -340,6 +356,17 @@ class AlphaRoco(nn.Module):
             nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 1)
         )
         self.aux_ko = nn.Sequential(nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 2))
+        effect_delta_dim = vocab_sizes["effect"] * 2 + vocab_sizes["mark"] * 2 + 2
+        self.aux_effect_delta = nn.Sequential(
+            nn.Linear(width * 2, 128), nn.GELU(), nn.Linear(128, effect_delta_dim)
+        )
+        self.aux_state_change = nn.Sequential(
+            nn.Linear(width * 2, 128), nn.GELU(), nn.Linear(128, effect_delta_dim)
+        )
+        self.aux_trait_trigger = nn.Sequential(
+            nn.Linear(width, 128), nn.GELU(), nn.Linear(128, vocab_sizes["trait"])
+        )
+        self.aux_trait_source = nn.Linear(self.config.category_embedding_dim, width)
 
     def _event_memory(self, batch, hidden):
         events = batch["events"]
@@ -409,6 +436,8 @@ class AlphaRoco(nn.Module):
                 ),
                 dim=-1,
             )
+        ) + self.trait_projection(
+            self.trait_embedding(batch[f"{prefix}_pet_traits"])
         )
         return pet, skills
 
@@ -553,6 +582,8 @@ class AlphaRoco(nn.Module):
             "interactions": interactions,
             "value": value,
             "aux": aux,
+            "battle_context": battle_context,
+            "action_embeddings": action_embeddings,
             "opponent_logits": opponent_logits,
             "memory": (hidden_self, hidden_public),
         }

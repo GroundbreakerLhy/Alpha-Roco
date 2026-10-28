@@ -98,6 +98,24 @@ def _scope_pets(
     return [p for s in order for p in state.teams[s]]
 
 
+def _record(ctx: TraitContext) -> dict:
+    record = {
+        "event": ctx.event,
+        "trait_id": ctx.actor.trait_id,
+        "side": ctx.actor.side,
+        "pet": ctx.actor.name,
+        "turn": ctx.state.turn,
+        "active": ctx.active,
+    }
+    if ctx.subject is not None:
+        record["subject"] = ctx.subject.name
+    if ctx.target is not None:
+        record["target"] = ctx.target.name
+    if ctx.skill is not None:
+        record["skill_id"] = ctx.skill.skill_id
+    return record
+
+
 def emit(
     state: BattleState,
     event: str,
@@ -112,7 +130,9 @@ def emit(
         if handler is None:
             continue
         fn = getattr(handler, "on_" + event, None)
-        if fn is None:
+        if fn is None or fn.__func__ is getattr(
+            TraitHandler, "on_" + event, None
+        ):
             continue
         active_idx = state.active[p.side]
         ctx = _make_ctx(
@@ -124,6 +144,7 @@ def emit(
             subject=subject,
             **kw,
         )
+        state.trait_events.append(_record(ctx))
         fn(ctx)
 
 
@@ -135,7 +156,7 @@ def emit_lethal(
     if handler is None:
         return False
     fn = getattr(handler, "on_lethal", None)
-    if fn is None:
+    if fn is None or fn.__func__ is getattr(TraitHandler, "on_lethal", None):
         return False
     ctx = _make_ctx(
         state,
@@ -147,7 +168,19 @@ def emit_lethal(
         damage=damage,
         **kw,
     )
-    return bool(fn(ctx))
+    result = bool(fn(ctx))
+    state.trait_events.append(
+        {
+            "event": "lethal",
+            "trait_id": defender.trait_id,
+            "side": defender.side,
+            "pet": defender.name,
+            "subject": defender.name,
+            "turn": state.turn,
+            "result": result,
+        }
+    )
+    return result
 
 
 def rebind(pet: BattlePet) -> None:

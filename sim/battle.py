@@ -2350,6 +2350,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         "turn": state.turn,
         "winner": state.winner,
         "log": state.log,
+        "trait_events": list(state.trait_events),
         "magic": state.magic,
         "active": state.active,
         "offerings": {

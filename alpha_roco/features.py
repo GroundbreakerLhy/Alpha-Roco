@@ -62,6 +62,7 @@ class ObservationEncoder:
         self.spirits = _load("spirits.json")["spirits"]
         self.skills = _load("skills.json")["skills"]
         self.buffs = _load("buff.json")["effects"]
+        self.traits = _load("traits.json")["traits"]
         self.spirit_by_name = {item["name"]: item for item in self.spirits}
         self.spirit_by_id = {str(item["id"]): item for item in self.spirits}
         self.skill_by_id = {str(item["id"]): item for item in self.skills}
@@ -76,6 +77,7 @@ class ObservationEncoder:
         self.spirit_vocab = _vocabulary(item["id"] for item in self.spirits)
         self.skill_vocab = _vocabulary(item["id"] for item in self.skills)
         self.effect_vocab = _vocabulary(item["id"] for item in self.buffs)
+        self.trait_vocab = _vocabulary(item["id"] for item in self.traits)
         self.element_vocab = _vocabulary(range(19))
         self.nature_vocab = _vocabulary(
             item["id"] for item in _load("natures.json")["natures"]
@@ -110,6 +112,7 @@ class ObservationEncoder:
             "spirit": self.spirit_vocab,
             "skill": self.skill_vocab,
             "effect": self.effect_vocab,
+            "trait": self.trait_vocab,
             "element": self.element_vocab,
             "nature": self.nature_vocab,
             "category": self.category_vocab,
@@ -284,6 +287,7 @@ class ObservationEncoder:
                 else 0
             ),
             "nature": _index(nature, self.nature_vocab) if nature is not None else 0,
+            "trait": _index(species.get("feature", {}).get("id"), self.trait_vocab),
             "numeric": values,
             "numeric_mask": numeric_mask,
             "skills": skills,
@@ -1028,6 +1032,9 @@ def collate_inputs(items, device="cpu"):
         result[f"{prefix}_pet_natures"] = torch.zeros(
             batch_size, max_pets, dtype=torch.long, device=device
         )
+        result[f"{prefix}_pet_traits"] = torch.zeros(
+            batch_size, max_pets, dtype=torch.long, device=device
+        )
         result[f"{prefix}_pet_mask"] = torch.zeros(
             batch_size, max_pets, dtype=torch.bool, device=device
         )
@@ -1119,6 +1126,7 @@ def collate_inputs(items, device="cpu"):
                     "sub_element"
                 ]
                 result[f"{prefix}_pet_natures"][batch_index, pet_index] = pet["nature"]
+                result[f"{prefix}_pet_traits"][batch_index, pet_index] = pet["trait"]
                 result[f"{prefix}_pet_mask"][batch_index, pet_index] = pet["mask"]
                 if prefix == "public":
                     continue

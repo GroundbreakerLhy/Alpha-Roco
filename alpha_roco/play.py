@@ -7,13 +7,14 @@ from pathlib import Path
 import torch
 
 from .arena import choose, load_model
-from .config import ModelConfig
+from .config import EvaluationConfig, ModelConfig
 from .features import ObservationEncoder
 from .network import AlphaRoco
 from .terminal import BattleSession
 
 
 def main():
+    defaults = EvaluationConfig()
     parser = argparse.ArgumentParser(description="使用现有对战服务运行 Alpha Roco")
     parser.add_argument("--team-a", default="team4")
     parser.add_argument("--team-b", default="team0")
@@ -23,8 +24,8 @@ def main():
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--timeout", type=float, default=20)
+    parser.add_argument("--seed", type=int, default=defaults.seed)
+    parser.add_argument("--timeout", type=float, default=defaults.timeout)
     parser.add_argument("--log-dir", type=Path)
     parser.add_argument("--log-jsonl", type=Path)
     args = parser.parse_args()

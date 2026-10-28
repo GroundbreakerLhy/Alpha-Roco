@@ -10,12 +10,14 @@ import torch
 import torch.nn.functional as F
 
 from alpha_roco.arena import TEAMS
-from alpha_roco.config import ModelConfig
+from alpha_roco.config import ModelConfig, PretrainConfig
 from alpha_roco.features import ObservationEncoder, selectable_candidates
 from alpha_roco.network import AlphaRoco
 from alpha_roco.teacher import Teacher
 from alpha_roco.terminal import BattleSession
 from alpha_roco.train import TrainConfig, _checkpoint, _replay_episode, _set_trainable
+
+PRETRAIN = PretrainConfig()
 
 
 def _collect_game(
@@ -56,7 +58,7 @@ def collect_games(
     games: int,
     seed: int,
     workers: int,
-    timeout: float = 20,
+    timeout: float = PRETRAIN.timeout,
 ) -> list[dict[str, list[dict[str, Any]]]]:
     if games < 1 or workers < 1:
         raise ValueError("games与workers必须为正数")
@@ -81,7 +83,7 @@ def train_bc(
     config: TrainConfig,
     device: torch.device,
     epochs: int,
-    learning_rate: float = 1e-4,
+    learning_rate: float = PRETRAIN.learning_rate,
 ) -> dict[str, float]:
     if epochs < 1:
         raise ValueError("epochs必须为正数")
@@ -121,15 +123,18 @@ def train_bc(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用教师对局预训练Alpha Roco策略")
-    parser.add_argument("--games", type=int, default=256)
-    parser.add_argument("--epochs", type=int, default=2)
-    parser.add_argument("--workers", type=int, default=16)
-    parser.add_argument("--chunk-size", type=int, default=64)
+    defaults = PretrainConfig()
+    parser.add_argument("--games", type=int, default=defaults.games)
+    parser.add_argument("--epochs", type=int, default=defaults.epochs)
+    parser.add_argument("--workers", type=int, default=defaults.workers)
+    parser.add_argument("--chunk-size", type=int, default=defaults.chunk_size)
     parser.add_argument("--device", choices=("cpu", "cuda"), default=None)
-    parser.add_argument("--output", default="logs/pretrain")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--timeout", type=float, default=20)
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--output", default=defaults.output)
+    parser.add_argument("--seed", type=int, default=defaults.seed)
+    parser.add_argument("--timeout", type=float, default=defaults.timeout)
+    parser.add_argument(
+        "--learning-rate", type=float, default=defaults.learning_rate
+    )
     return parser.parse_args()
 
 

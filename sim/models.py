@@ -153,6 +153,7 @@ class BattleState:
     )
     turn: int = 0
     log: list = field(default_factory=list)
+    trait_events: list = field(default_factory=list)
     winner: Optional[str] = None
     # 本回合行动顺序（先手方、后手方）
     last_order: list = field(default_factory=list)

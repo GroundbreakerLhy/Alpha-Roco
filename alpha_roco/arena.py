@@ -10,12 +10,81 @@ from typing import Any
 
 import torch
 
-from .config import ModelConfig
+from .config import EvaluationConfig, ModelConfig, SearchConfig
 from .features import ObservationEncoder, collate_inputs, selectable_candidates
 from .network import AlphaRoco
 from .terminal import BattleSession
 
-TEAMS = tuple(f"team{index}" for index in range(14))
+TEAMS = tuple(f"team{index}" for index in range(24))
+EVALUATION = EvaluationConfig()
+SEARCH = SearchConfig()
+LEGACY_VOCAB_KEYS = frozenset({"trait"})
+NEW_PARAM_PREFIXES = (
+    "trait_embedding.",
+    "trait_projection.",
+    "opponent.trait_embedding.",
+    "opponent.trait_projection.",
+    "aux_effect_delta.",
+    "aux_state_change.",
+    "aux_trait_trigger.",
+    "aux_trait_source.",
+)
+OBSOLETE_PARAM_PREFIXES = (
+    "aux_state_delta.",
+    "aux_trait_delta.",
+)
+
+
+def _vocab_signature(vocabularies: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(vocabularies, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()
+
+
+def _legacy_checkpoint(checkpoint: dict, encoder: ObservationEncoder) -> bool:
+    if checkpoint.get("vocab_sizes") == encoder.vocab_sizes:
+        return any(
+            key.startswith(OBSOLETE_PARAM_PREFIXES)
+            for key in checkpoint.get("model", {})
+        )
+    legacy_sizes = {
+        name: size
+        for name, size in encoder.vocab_sizes.items()
+        if name not in LEGACY_VOCAB_KEYS
+    }
+    if checkpoint.get("vocab_sizes") != legacy_sizes:
+        raise ValueError("checkpoint词表大小不匹配")
+    legacy_vocab = {
+        name: vocab
+        for name, vocab in encoder.vocabularies.items()
+        if name not in LEGACY_VOCAB_KEYS
+    }
+    if checkpoint.get("vocab_signature") not in (
+        None,
+        _vocab_signature(legacy_vocab),
+    ):
+        raise ValueError("checkpoint词表签名不匹配")
+    return True
+
+
+def _load_model_state(
+    model: AlphaRoco, state: dict, legacy: bool
+) -> None:
+    missing, unexpected = model.load_state_dict(state, strict=not legacy)
+    if not legacy:
+        return
+    allowed = tuple(
+        key
+        for key in missing
+        if key.startswith(NEW_PARAM_PREFIXES)
+    )
+    obsolete = tuple(
+        key
+        for key in unexpected
+        if key.startswith(OBSOLETE_PARAM_PREFIXES)
+    )
+    if len(allowed) != len(missing) or len(obsolete) != len(unexpected):
+        raise ValueError(f"checkpoint新增参数不匹配：{missing!r} {unexpected!r}")
 
 
 def wilson_interval(wins: int, games: int) -> tuple[float, float]:
@@ -39,18 +108,25 @@ def load_model(
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if checkpoint.get("format") != "single" or "model" not in checkpoint:
         raise ValueError(f"checkpoint不是当前单网络格式：{path}")
-    signature = hashlib.sha256(
-        json.dumps(encoder.vocabularies, ensure_ascii=False, sort_keys=True).encode()
-    ).hexdigest()
-    if checkpoint.get("vocab_sizes") != encoder.vocab_sizes:
-        raise ValueError(f"checkpoint词表大小不匹配：{path}")
-    if checkpoint.get("vocab_signature") not in (None, signature):
+    legacy = _legacy_checkpoint(checkpoint, encoder)
+    signature = _vocab_signature(encoder.vocabularies)
+    if checkpoint.get("vocab_signature") not in (
+        None,
+        signature,
+        _vocab_signature(
+            {
+                name: vocab
+                for name, vocab in encoder.vocabularies.items()
+                if name not in LEGACY_VOCAB_KEYS
+            }
+        ),
+    ):
         raise ValueError(f"checkpoint词表签名不匹配：{path}")
     model = AlphaRoco(
         config=ModelConfig(**checkpoint["config"]["model_config"]),
         vocab_sizes=encoder.vocab_sizes,
     ).to(device)
-    model.load_state_dict(checkpoint["model"])
+    _load_model_state(model, checkpoint["model"], legacy)
     model.eval()
     return model
 
@@ -77,8 +153,8 @@ def choose(
     device,
     sample,
     search=False,
-    search_top_k=5,
-    search_risk=0.5,
+    search_top_k=SEARCH.top_k,
+    search_risk=SEARCH.risk,
 ):
     candidates = selectable_candidates(request)
     item = encoder.encode(request)
@@ -181,11 +257,11 @@ def play_match(
     seed: int,
     device: torch.device,
     sample: bool,
-    timeout: float = 20,
+    timeout: float = EVALUATION.timeout,
     workers: int = 1,
     search: bool = False,
-    search_top_k: int = 5,
-    search_risk: float = 0.5,
+    search_top_k: int = SEARCH.top_k,
+    search_risk: float = SEARCH.risk,
 ) -> dict[str, int]:
     if games < 1:
         raise ValueError("games必须为正数")

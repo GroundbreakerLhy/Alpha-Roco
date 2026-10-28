@@ -12,13 +12,13 @@ def write_table(input_path: Path, output_path: Path | None = None) -> str:
         if line.strip()
     ]
     lines = [
-        "| 批次 | 对局数 | 胜率 | 对比的best批次 |",
-        "|---:|---:|---:|---:|",
+        "| iter | 对局数 | 胜率 |",
+        "|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            f"| {row['batch']} | {row['games']} | "
-            f"{row['win_rate']:.3f} | {row['reference_batch']} |"
+            f"| {row.get('iter_num', row.get('batch'))} | {row['games']} | "
+            f"{row['win_rate']:.3f} |"
         )
     table = "\n".join(lines) + "\n"
     if output_path is not None:

@@ -11,7 +11,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from .config import EvaluationConfig
+
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TIMEOUT = EvaluationConfig().timeout
 
 
 def candidate_commands(request: dict, action: dict) -> list[str]:
@@ -55,7 +58,7 @@ class BattleSession:
         team_a="team4",
         team_b="team0",
         seed=0,
-        timeout=20,
+        timeout=DEFAULT_TIMEOUT,
         *,
         log_dir=None,
         log_jsonl=None,
