@@ -1036,6 +1036,7 @@ class Manipulate(OpsSkill):
             buff_type=buffs.BuffType.ENERGY_COST,
             value=7,
             target=ENEMY,
+            duration=buffs.DurationKind.TEMPORARY,
             turns=3,
         ),
     )

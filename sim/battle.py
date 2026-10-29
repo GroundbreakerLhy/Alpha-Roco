@@ -2228,10 +2228,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                     pet, mark_speed_bonus
                 ) + traits.query_speed(state, pet)
                 for skill_item in d["skills"]:
-                    skill_obj = next(
-                        (s for s in pet.skills if s.skill_id == skill_item["skill_id"]),
-                        None,
-                    )
+                    skill_obj = pet.skills[skill_item["index"]]
                     if skill_obj is not None:
                         # 己方显示真实能耗：天气/印记/buff/特性修正全部计入
                         skill_item["energy_cost"] = skill_utils.true_energy_cost(
