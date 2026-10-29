@@ -6,10 +6,10 @@ from pathlib import Path
 
 import torch
 
-from .arena import choose, load_model
+from .arena import choose, load_model, record_opponent_actions
 from .config import EvaluationConfig, ModelConfig
 from .features import ObservationEncoder
-from .network import AlphaRoco
+from .network import AlphaRoco, HistoryState
 from .terminal import BattleSession
 
 
@@ -44,7 +44,7 @@ def main():
         model = AlphaRoco(ModelConfig(), encoder.vocab_sizes).to(device)
         model.eval()
 
-    memories = {"A": None, "B": None}
+    histories = {"A": HistoryState(), "B": HistoryState()}
     actions = 0
     with BattleSession(
         team_a=args.team_a,
@@ -55,13 +55,24 @@ def main():
         log_jsonl=args.log_jsonl,
     ) as session:
         while session.winner is None:
+            chosen = {}
+            request_by_side = {}
             for request in session.requests():
                 side = request["side"]
-                action, memories[side] = choose(
-                    model, encoder, request, memories[side], device, args.sample
+                action, histories[side] = choose(
+                    model, encoder, request, histories[side], device, args.sample
                 )
+                chosen[side] = action
+                request_by_side[side] = request
                 session.submit(side, action)
                 actions += 1
+            record_opponent_actions(
+                histories,
+                {"A": model, "B": model},
+                encoder,
+                request_by_side,
+                chosen,
+            )
         print(json.dumps({"winner": session.winner, "decisions": actions}))
 
 

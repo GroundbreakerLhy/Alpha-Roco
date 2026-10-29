@@ -21,6 +21,7 @@ from alpha_roco.arena import (
     _vocab_signature,
     choose,
     load_model,
+    record_opponent_actions,
     play_match,
     wilson_interval,
 )
@@ -39,7 +40,7 @@ from alpha_roco.losses import (
     opponent_cross_entropy,
     ppo_loss,
 )
-from alpha_roco.network import AlphaRoco
+from alpha_roco.network import AlphaRoco, HistoryState, collate_histories
 from alpha_roco.report import write_table
 from alpha_roco.rewards import (
     apply_exploration_bonus,
@@ -182,33 +183,42 @@ def _forward(
     model: AlphaRoco,
     encoder: ObservationEncoder,
     item: dict[str, Any],
-    memory: Any,
+    history: HistoryState | None,
     device: torch.device,
 ):
     batch = collate_inputs([item], device)
-    return batch, model(batch, memory=memory)
+    return batch, model(
+        batch,
+        history=(
+            None
+            if history is None
+            else history.batch(device, model.config.hidden_dim)
+        ),
+    )
 
 
 def _sample_action(
     model: AlphaRoco,
     encoder: ObservationEncoder,
     request: dict[str, Any],
-    memory: Any,
+    history: HistoryState | None,
     device: torch.device,
     reward_config: RewardConfig,
 ):
     item = encoder.encode(request)
     summary = state_summary(request["state"], request["side"], reward_config)
     with torch.no_grad():
-        batch, output = _forward(model, encoder, item, memory, device)
+        batch, output = _forward(model, encoder, item, history, device)
         distribution = _masked_distribution(output["logits"], batch["action_mask"])
         action_index = distribution.sample()
         action = selectable_candidates(request)[int(action_index.item())]
         old_log_prob = float(distribution.log_prob(action_index).item())
         old_value = float(output["value"].reshape(-1)[0].item())
+        if history is not None:
+            history.observe(model, output, int(action_index.item()), request["phase"])
     return (
         action,
-        tuple(value.detach() for value in output["memory"]),
+        history,
         {
             "item": item,
             "phase": request["phase"],
@@ -218,6 +228,9 @@ def _sample_action(
             "reward": 0.0,
             "terminal": False,
             "opponent_target": None,
+            "opponent_action": None,
+            "opponent_action_data": None,
+            "opponent_actions_before": [],
             "summary": summary,
             "potential": potential(summary, reward_config),
             "action_kind": action.get("kind", ""),
@@ -241,12 +254,8 @@ def _paired_opponent_targets(
             continue
         other_side = "B" if side == "A" else "A"
         other_request = requests_by_side[other_side]
-        if (
-            request["phase"] != other_request["phase"]
-            or request["phase"] == "replacement"
-        ):
-            continue
         chosen = actions_by_side[other_side]
+        entries_by_side[side]["opponent_action_data"] = chosen
         if chosen.get("kind") == "skill" and chosen.get("skill_id") is None:
             continue
         chosen_key = action_key(chosen)
@@ -257,7 +266,12 @@ def _paired_opponent_targets(
             if action_key(candidate) == chosen_key
         ]
         if matches:
-            entries_by_side[side]["opponent_target"] = matches[0]
+            entries_by_side[side]["opponent_action"] = matches[0]
+            if (
+                request["phase"] == other_request["phase"]
+                and request["phase"] != "replacement"
+            ):
+                entries_by_side[side]["opponent_target"] = matches[0]
 
 
 def _collect_versus_game(
@@ -275,7 +289,8 @@ def _collect_versus_game(
     exploration: _Exploration | None = None,
 ) -> dict[str, Any]:
     episode: list[dict[str, Any]] = []
-    memories: dict[str, Any] = {"A": None, "B": None}
+    histories = {"A": HistoryState(), "B": HistoryState()}
+    pending_public_actions: list[dict[str, Any]] = []
     status_actions = 0
     total_actions = 0
     status_skill_ids: set[int] = set()
@@ -322,14 +337,16 @@ def _collect_versus_game(
                 )
             actions_by_side: dict[str, dict[str, Any]] = {}
             entries_by_side: dict[str, dict[str, Any]] = {}
+            requests_by_side: dict[str, dict[str, Any]] = {}
             for request in requests:
                 side = request["side"]
+                requests_by_side[side] = request
                 if side == "A":
-                    action, memories[side], entry = _sample_action(
+                    action, histories[side], entry = _sample_action(
                         candidate,
                         encoder,
                         request,
-                        memories[side],
+                        histories[side],
                         device,
                         reward_config,
                     )
@@ -363,13 +380,29 @@ def _collect_versus_game(
                             action.get("skill_id"),
                             entry["status"],
                         )
+                    entry["opponent_actions_before"] = pending_public_actions
+                    pending_public_actions = []
                     episode.append(entry)
                     entries_by_side[side] = entry
                 else:
-                    action, memories[side] = choose(
-                        opponent, encoder, request, memories[side], device, sample=False
+                    action, histories[side] = choose(
+                        opponent,
+                        encoder,
+                        request,
+                        histories[side],
+                        device,
+                        sample=False,
                     )
                 actions_by_side[side] = action
+            record_opponent_actions(
+                histories,
+                {"A": candidate, "B": opponent},
+                encoder,
+                requests_by_side,
+                actions_by_side,
+            )
+            if "A" not in actions_by_side and "B" in actions_by_side:
+                pending_public_actions.append(actions_by_side["B"])
             request_a = next(
                 (request for request in requests if request["side"] == "A"), None
             )
@@ -431,11 +464,30 @@ def _mark_vector(
     return vector
 
 
+def _duration_vector(
+    durations: dict[tuple[str, str, str], float], vocab: dict, size: int
+) -> list[float]:
+    vector = [0.0] * size
+    for (_, effect_type, _), code in durations.items():
+        index = vocab.get(effect_type, vocab.get(str(effect_type), 1))
+        if index >= 3:
+            vector[index] += code / 2.0
+    return vector
+
+
+def _weather_vector(weather, vocab: dict, size: int) -> list[float]:
+    vector = [0.0] * size
+    index = 2 if weather is None else vocab.get(weather, vocab.get(str(weather), 1))
+    vector[index] = 1.0
+    return vector
+
+
 def _effect_delta(
     before: dict, after: dict, encoder: ObservationEncoder
 ) -> list[float]:
     effect_size = encoder.vocab_sizes["effect"]
     mark_size = encoder.vocab_sizes["mark"]
+    weather_size = encoder.vocab_sizes["weather"]
     own_effect = _effect_vector(
         after["own_effects"], encoder.effect_vocab, effect_size
     )
@@ -448,6 +500,18 @@ def _effect_delta(
     before_enemy = _effect_vector(
         before["enemy_effects"], encoder.effect_vocab, effect_size
     )
+    own_duration = _duration_vector(
+        after["own_effect_durations"], encoder.effect_vocab, effect_size
+    )
+    enemy_duration = _duration_vector(
+        after["enemy_effect_durations"], encoder.effect_vocab, effect_size
+    )
+    before_own_duration = _duration_vector(
+        before["own_effect_durations"], encoder.effect_vocab, effect_size
+    )
+    before_enemy_duration = _duration_vector(
+        before["enemy_effect_durations"], encoder.effect_vocab, effect_size
+    )
     own_mark = _mark_vector(after["own_marks"], encoder.mark_vocab, mark_size)
     enemy_mark = _mark_vector(after["enemy_marks"], encoder.mark_vocab, mark_size)
     before_own_mark = _mark_vector(
@@ -456,11 +520,23 @@ def _effect_delta(
     before_enemy_mark = _mark_vector(
         before["enemy_marks"], encoder.mark_vocab, mark_size
     )
+    weather = _weather_vector(after["weather"], encoder.weather_vocab, weather_size)
+    before_weather = _weather_vector(
+        before["weather"], encoder.weather_vocab, weather_size
+    )
     return [
         *(current - previous for current, previous in zip(own_effect, before_own)),
         *(
             current - previous
             for current, previous in zip(enemy_effect, before_enemy)
+        ),
+        *(
+            current - previous
+            for current, previous in zip(own_duration, before_own_duration)
+        ),
+        *(
+            current - previous
+            for current, previous in zip(enemy_duration, before_enemy_duration)
         ),
         *(current - previous for current, previous in zip(own_mark, before_own_mark)),
         *(
@@ -469,6 +545,7 @@ def _effect_delta(
         ),
         (after["own_energy"] - before["own_energy"]) / 10.0,
         (after["enemy_energy"] - before["enemy_energy"]) / 10.0,
+        *(current - previous for current, previous in zip(weather, before_weather)),
     ]
 
 
@@ -580,10 +657,18 @@ def _replay_episode(
     episode: list[dict[str, Any]],
     device: torch.device,
 ):
-    memory = None
-    for entry in episode:
-        batch, output = _forward(model, encoder, entry["item"], memory, device)
-        memory = output["memory"]
+    history = HistoryState()
+    for index, entry in enumerate(episode):
+        if index:
+            history.commit_public(
+                model,
+                episode[index - 1]["opponent_action"],
+                episode[index - 1].get("opponent_action_data"),
+            )
+        for action in entry.get("opponent_actions_before", ()):
+            history.commit_public(model, None, action)
+        batch, output = _forward(model, encoder, entry["item"], history, device)
+        history.observe(model, output, entry["action"], entry["phase"])
         yield entry, batch, output
 
 
@@ -592,7 +677,7 @@ def _batched_episode_steps(
     episodes: list[list[dict[str, Any]]],
     device: torch.device,
 ):
-    memories = [None] * len(episodes)
+    histories = [HistoryState() for _ in episodes]
     max_steps = max((len(episode) for episode in episodes), default=0)
     for step in range(max_steps):
         active = [
@@ -600,23 +685,30 @@ def _batched_episode_steps(
         ]
         if not active:
             break
+        for index in active:
+            if step:
+                histories[index].commit_public(
+                    model,
+                    episodes[index][step - 1]["opponent_action"],
+                    episodes[index][step - 1].get("opponent_action_data"),
+                )
+            for action in episodes[index][step].get("opponent_actions_before", ()):
+                histories[index].commit_public(model, None, action)
         batch = collate_inputs(
             [episodes[index][step]["item"] for index in active], device
         )
-        memory = (
-            None
-            if step == 0
-            else (
-                torch.cat([memories[index][0] for index in active], dim=1),
-                torch.cat([memories[index][1] for index in active], dim=1),
-            )
+        output = model(
+            batch,
+            history=collate_histories(
+                [histories[index] for index in active],
+                device,
+                model.config.hidden_dim,
+            ),
         )
-        output = model(batch, memory=memory)
-        next_memory = output["memory"]
         for position, index in enumerate(active):
-            memories[index] = (
-                next_memory[0][:, position : position + 1],
-                next_memory[1][:, position : position + 1],
+            entry = episodes[index][step]
+            histories[index].observe(
+                model, output, entry["action"], entry["phase"], position
             )
         yield step, active, batch, output
 

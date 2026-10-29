@@ -10,7 +10,10 @@ class ModelConfig:
     num_heads: int = 8  # 注意力头数
     num_layers: int = 3  # Attention 层数
     ffn_multiplier: int = 4  # FFN 隐藏维度倍数
-    gru_layers: int = 2  # GRU 层数
+    history_heads: int = 8  # 历史 Attention 头数
+    history_layers: int = 2  # 历史 Attention 层数
+    position_embedding_limit: int = 1024  # 位置编码表大小
+    gru_layers: int = 2  # checkpoint 配置兼容
     identity_embedding_dim: int = 32  # 身份嵌入维度
     category_embedding_dim: int = 16  # 类别/属性嵌入维度
     dropout: float = 0.1  # dropout 比例
@@ -36,7 +39,7 @@ class RewardConfig:
     lead_survive_bonus: float = 0.05  # 首发不被对方一击击杀的奖励
     rare_skill_cap: float | None = None  # 激进探索阶段单局上限；None 表示不限制
     rare_skill_cap_late: float = 0.10  # 后续探索阶段单局上限
-    trait_novelty_bonus: float = 0.05  # 首次触发某类特性的探索奖励
+    trait_novelty_bonus: float = 0.10  # 首次触发某类特性的探索奖励
     switch_first_turn_penalty: float = 0.05  # 第一回合主动换人惩罚
     switch_consecutive_penalty: float = 0.1  # 连续主动换人惩罚
 
@@ -102,8 +105,8 @@ class SearchConfig:
 
 @dataclass
 class EvaluationConfig:
-    games: int = 256  # 评测局数
-    workers: int = 32  # 评测并行数
+    games: int = 196  # 评测局数
+    workers: int = 48  # 评测并行数
     timeout: float = 20.0  # 单局超时秒数
     seed: int = 0  # 评测种子
 
@@ -141,8 +144,8 @@ class TrainConfig:
     keep_checkpoints: int = 1  # 保留 checkpoint 数
     pool_size: int = 8  # best 池大小
     eval_interval: int = 8  # 评测间隔批数
-    eval_games: int = 256  # 每次评测局数
-    eval_workers: int = 32  # 评测并行数
+    eval_games: int = 196  # 每次评测局数
+    eval_workers: int = 48  # 评测并行数
     sample_workers: int = 16  # 采样并行数
     update_chunk: int = 16  # 更新分块局数
     terminal_timeout: float = 20.0  # 单局超时秒数

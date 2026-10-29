@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from alpha_roco.arena import TEAMS
 from alpha_roco.config import ModelConfig, PretrainConfig
-from alpha_roco.features import ObservationEncoder, selectable_candidates
+from alpha_roco.features import ObservationEncoder, action_key, selectable_candidates
 from alpha_roco.network import AlphaRoco
 from alpha_roco.teacher import Teacher
 from alpha_roco.terminal import BattleSession
@@ -29,6 +29,7 @@ def _collect_game(
 ) -> dict[str, list[dict[str, Any]]]:
     rng = random.Random(seed + game_index * 0x9E3779B1)
     episodes: dict[str, list[dict[str, Any]]] = {"A": [], "B": []}
+    pending: dict[str, list[dict[str, Any]]] = {"A": [], "B": []}
     with BattleSession(
         team_a=rng.choice(TEAMS),
         team_b=rng.choice(TEAMS),
@@ -36,19 +37,45 @@ def _collect_game(
         timeout=timeout,
     ) as session:
         while session.winner is None:
-            for request in session.requests():
+            requests = session.requests()
+            actions = {}
+            request_by_side = {}
+            entries = {}
+            for request in requests:
                 side = request["side"]
                 candidates = selectable_candidates(request)
                 action = teacher.choose(request)
-                episodes[side].append(
-                    {
-                        "item": encoder.encode(request),
-                        "action_index": candidates.index(action),
-                        "phase": request["phase"],
-                        "side": side,
-                    }
-                )
+                entries[side] = {
+                    "item": encoder.encode(request),
+                    "action": candidates.index(action),
+                    "phase": request["phase"],
+                    "side": side,
+                    "opponent_action": None,
+                    "opponent_action_data": None,
+                    "opponent_actions_before": pending[side],
+                }
+                pending[side] = []
+                episodes[side].append(entries[side])
+                actions[side] = action
+                request_by_side[side] = request
                 session.submit(side, action)
+            for side, entry in entries.items():
+                other = "B" if side == "A" else "A"
+                if other not in actions:
+                    pending[other].append(actions[side])
+                    continue
+                entry["opponent_action_data"] = actions[other]
+                key = action_key(actions[other])
+                entry["opponent_action"] = next(
+                    (
+                        index
+                        for index, candidate in enumerate(
+                            encoder.opponent_candidates(request_by_side[side])
+                        )
+                        if action_key(candidate) == key
+                    ),
+                    None,
+                )
     return episodes
 
 
@@ -99,7 +126,7 @@ def train_bc(
                 for entry, _, output in _replay_episode(
                     model, encoder, entries, device
                 ):
-                    target = torch.tensor([entry["action_index"]], device=device)
+                    target = torch.tensor([entry["action"]], device=device)
                     loss = F.cross_entropy(output["logits"], target)
                     losses.append(loss)
                     total_loss += float(loss.detach())

@@ -4,12 +4,207 @@ import torch
 from torch import Tensor, nn
 
 from .config import ModelConfig
-from .features import EVENT_FEATURES
+
+PUBLIC_HABIT_DIM = 11
 
 
-def _safe_ids(values, size):
-    values = values.long()
-    return torch.where((values >= 0) & (values < size), values, torch.ones_like(values))
+def _public_habit(actions: list[dict]) -> list[float]:
+    total = len(actions)
+    recent = actions[-8:]
+
+    def rates(items):
+        counts = {"skill": 0, "switch": 0, "charge": 0, "other": 0}
+        for action in items:
+            kind = action.get("kind", "other")
+            counts[kind if kind in counts else "other"] += 1
+        size = max(len(items), 1)
+        return [
+            counts["skill"] / size,
+            counts["switch"] / size,
+            counts["charge"] / size,
+            counts["other"] / size,
+        ]
+
+    skill_ids = {
+        str(action["skill_id"])
+        for action in actions
+        if action.get("kind") == "skill" and action.get("skill_id") is not None
+    }
+    magic = sum(action.get("magic_id") is not None for action in actions)
+    choice = sum(int(action.get("choice_branch", 0)) == 1 for action in actions)
+    return [
+        min(total, 50) / 50.0,
+        *rates(actions),
+        *rates(recent)[:3],
+        len(skill_ids) / max(total, 1),
+        magic / max(total, 1),
+        choice / max(total, 1),
+    ]
+
+
+class HistoryAttentionLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        width = config.hidden_dim
+        self.norm1 = nn.LayerNorm(width)
+        self.attention = nn.MultiheadAttention(
+            width,
+            config.history_heads,
+            dropout=config.dropout,
+            batch_first=True,
+        )
+        self.dropout = nn.Dropout(config.dropout)
+        self.norm2 = nn.LayerNorm(width)
+        self.ffn = nn.Sequential(
+            nn.Linear(width, width * config.ffn_multiplier),
+            nn.GELU(),
+            nn.Linear(width * config.ffn_multiplier, width),
+        )
+
+    def forward(self, query, keys, values, key_mask, causal_mask):
+        normalized = self.norm1(query)
+        valid = key_mask.any(dim=1)
+        safe_mask = key_mask.clone()
+        safe_mask[~valid, 0] = True
+        attended = self.attention(
+            normalized,
+            keys,
+            values,
+            attn_mask=~causal_mask,
+            key_padding_mask=~safe_mask,
+            need_weights=False,
+        )[0]
+        residual = query + self.dropout(attended * valid[:, None, None])
+        return residual + self.dropout(self.ffn(self.norm2(residual)))
+
+
+class HistoryAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.blocks = nn.ModuleList(
+            HistoryAttentionLayer(config) for _ in range(config.history_layers)
+        )
+        self.norm = nn.LayerNorm(config.hidden_dim)
+
+    def forward(self, query, keys=None, values=None, mask=None):
+        squeeze = query.dim() == 2
+        if squeeze:
+            query = query.unsqueeze(1)
+        if keys is None or keys.shape[1] == 0:
+            empty = torch.zeros_like(query)
+            return empty.squeeze(1) if squeeze else empty
+        if mask is None:
+            mask = torch.ones(keys.shape[:2], dtype=torch.bool, device=keys.device)
+        positions = torch.arange(keys.shape[1], device=keys.device)
+        limits = (
+            keys.shape[1]
+            - query.shape[1]
+            + torch.arange(query.shape[1], device=keys.device)
+        ).clamp_min(0)
+        causal = positions.unsqueeze(0) <= limits.unsqueeze(1)
+        for block in self.blocks:
+            query = block(query, keys, values, mask, causal)
+        query = self.norm(query) * mask.any(dim=1)[:, None, None]
+        return query.squeeze(1) if squeeze else query
+
+
+def collate_histories(histories, device, width):
+    own_length = max((len(history.own_keys) for history in histories), default=0)
+    public_length = max(
+        (len(history.public_keys) for history in histories), default=0
+    )
+    public_habit = [_public_habit(history.public_actions) for history in histories]
+    if own_length == 0 and public_length == 0 and not any(map(any, public_habit)):
+        return None
+
+    def pad(sequences, length):
+        values = torch.zeros(len(histories), length, width, device=device)
+        masks = torch.zeros(
+            len(histories), length, dtype=torch.bool, device=device
+        )
+        for index, sequence in enumerate(sequences):
+            if sequence:
+                size = len(sequence)
+                values[index, :size] = torch.stack(sequence).to(device)
+                masks[index, :size] = True
+        return values, masks
+
+    own_keys, own_mask = pad(
+        [history.own_keys for history in histories], own_length
+    )
+    own_values, _ = pad(
+        [history.own_values for history in histories], own_length
+    )
+    public_keys, public_mask = pad(
+        [history.public_keys for history in histories], public_length
+    )
+    public_values, _ = pad(
+        [history.public_values for history in histories], public_length
+    )
+    return {
+        "own_keys": own_keys,
+        "own_values": own_values,
+        "own_mask": own_mask,
+        "public_keys": public_keys,
+        "public_values": public_values,
+        "public_mask": public_mask,
+        "public_habit": torch.tensor(
+            public_habit, dtype=torch.float32, device=device
+        ),
+        "position": torch.tensor(
+            [history.position for history in histories],
+            dtype=torch.long,
+            device=device,
+        ),
+    }
+
+
+class HistoryState:
+    def __init__(self):
+        self.own_keys: list[Tensor] = []
+        self.own_values: list[Tensor] = []
+        self.public_keys: list[Tensor] = []
+        self.public_values: list[Tensor] = []
+        self.public_actions: list[dict] = []
+        self.position = 0
+        self.pending: tuple[Tensor, Tensor, int] | None = None
+
+    def batch(self, device, width):
+        return collate_histories([self], device, width)
+
+    def observe(self, model, output, action_index, phase, batch_index=0):
+        state = output["state"][batch_index]
+        action = (
+            output["lead_actions"]
+            if phase == "lead"
+            else output["action_embeddings"]
+        )[
+            batch_index, action_index
+        ]
+        self.own_keys.append(model.history_key(state, action, self.position))
+        self.own_values.append(model.history_value(state, action))
+        self.pending = (
+            output["public_state"][batch_index],
+            output["opponent_action_encodings"][batch_index],
+            self.position,
+        )
+        self.position += 1
+
+    def commit_public(self, model, index, action=None):
+        if action is not None:
+            self.public_actions.append(action)
+        if self.pending is None:
+            return
+        state, actions, position = self.pending
+        if index is not None:
+            action_encoding = actions[index]
+            self.public_keys.append(
+                model.history_key(state, action_encoding, position)
+            )
+            self.public_values.append(
+                model.history_value(state, action_encoding)
+            )
+        self.pending = None
 
 
 class AttentionBlock(nn.Module):
@@ -132,6 +327,9 @@ class OpponentModel(nn.Module):
             nn.LayerNorm(width),
         )
         self.public_attention = AttentionStack(config)
+        self.habit_projection = nn.Linear(PUBLIC_HABIT_DIM, width)
+        nn.init.zeros_(self.habit_projection.weight)
+        nn.init.zeros_(self.habit_projection.bias)
         self.decision = nn.Sequential(
             nn.Linear(width * 3, 256),
             nn.GELU(),
@@ -141,48 +339,13 @@ class OpponentModel(nn.Module):
         self.field_encoder = nn.Sequential(
             nn.Linear(5, width), nn.GELU(), nn.Linear(width, width), nn.LayerNorm(width)
         )
-        self.event_kind = nn.Embedding(vocab_sizes["event"], 16, padding_idx=0)
-        self.event_phase = nn.Embedding(vocab_sizes["phase"], 16, padding_idx=0)
-        self.event_action_kind = nn.Embedding(vocab_sizes["action"], 16, padding_idx=0)
-        self.event_skill = nn.Embedding(vocab_sizes["skill"], 32, padding_idx=0)
-        self.event_encoder = nn.Sequential(
-            nn.Linear(EVENT_FEATURES + 32 + 16 + 32, width),
-            nn.GELU(),
-            nn.LayerNorm(width),
-        )
-        self.public_gru = nn.GRU(
-            width, width, num_layers=config.gru_layers, batch_first=True
-        )
+        self.public_history = HistoryAttention(config)
         self.candidate_encoder = CandidateEncoder(config, vocab_sizes)
         self.candidate_score = nn.Sequential(
             nn.Linear(width * 3, 128), nn.GELU(), nn.Linear(128, 1)
         )
 
-    def _events(self, batch, hidden):
-        events = batch["events"]
-        encoded = self.event_encoder(
-            torch.cat(
-                (
-                    events,
-                    self.event_kind(batch["event_kinds"]),
-                    self.event_phase(batch["event_phases"]),
-                    self.event_action_kind(batch["event_action_kinds"]),
-                    self.event_skill(
-                        _safe_ids(
-                            batch["event_skill_ids"], self.event_skill.num_embeddings
-                        )
-                    ),
-                ),
-                dim=-1,
-            )
-        )
-        valid = batch["event_public_mask"]
-        for index in range(events.shape[1]):
-            next_hidden = self.public_gru(encoded[:, index : index + 1], hidden)[1]
-            hidden = torch.where(valid[:, index, None], next_hidden, hidden)
-        return hidden
-
-    def forward(self, batch, memory):
+    def forward(self, batch, history=None, position_embedding=None):
         pets = self.public_pet(
             torch.cat(
                 (
@@ -203,10 +366,25 @@ class OpponentModel(nn.Module):
         state = (state * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(
             dim=1, keepdim=True
         ).clamp_min(1)
-        public_hidden = self._events(batch, memory)
+        habit = None if history is None else history.get("public_habit")
+        query_state = state if habit is None else state + self.habit_projection(habit)
+        if history is None:
+            public_history = torch.zeros_like(state)
+        else:
+            public_query = (
+                query_state
+                if position_embedding is None
+                else query_state + position_embedding
+            )
+            public_history = self.public_history(
+                public_query,
+                history["public_keys"],
+                history["public_values"],
+                history["public_mask"],
+            )
         candidates = self.candidate_encoder(batch["opponent_candidates"])
         context = self.decision(
-            torch.cat((state, public_hidden[-1], state * public_hidden[-1]), dim=-1)
+            torch.cat((query_state, public_history, query_state * public_history), dim=-1)
         )
         logits = self.candidate_score(
             torch.cat(
@@ -220,7 +398,12 @@ class OpponentModel(nn.Module):
         ).squeeze(-1)
         if not batch["opponent_mask"].any(dim=1).all():
             raise ValueError("each sample requires at least one opponent candidate")
-        return logits.masked_fill(~batch["opponent_mask"], -torch.inf), public_hidden
+        return (
+            logits.masked_fill(~batch["opponent_mask"], -torch.inf),
+            state,
+            candidates,
+            public_history,
+        )
 
 
 class AlphaRoco(nn.Module):
@@ -309,20 +492,12 @@ class AlphaRoco(nn.Module):
         )
         self.lead_attention = AttentionStack(self.config)
         self.battle_attention = AttentionStack(self.config)
-        self.self_event_kind = nn.Embedding(vocab_sizes["event"], 16, padding_idx=0)
-        self.self_event_phase = nn.Embedding(vocab_sizes["phase"], 16, padding_idx=0)
-        self.self_event_action_kind = nn.Embedding(
-            vocab_sizes["action"], 16, padding_idx=0
+        self.self_history = HistoryAttention(self.config)
+        self.position_embedding = nn.Embedding(
+            self.config.position_embedding_limit, width
         )
-        self.self_event_skill = nn.Embedding(vocab_sizes["skill"], 32, padding_idx=0)
-        self.self_event_encoder = nn.Sequential(
-            nn.Linear(EVENT_FEATURES + 32 + 16 + 32, width),
-            nn.GELU(),
-            nn.LayerNorm(width),
-        )
-        self.self_gru = nn.GRU(
-            width, width, num_layers=self.config.gru_layers, batch_first=True
-        )
+        self.history_key_norm = nn.LayerNorm(width)
+        self.history_value_norm = nn.LayerNorm(width)
         self.opponent = OpponentModel(self.config, vocab_sizes)
         self.context = nn.Sequential(
             nn.Linear(width * 3, 256),
@@ -356,7 +531,12 @@ class AlphaRoco(nn.Module):
             nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 1)
         )
         self.aux_ko = nn.Sequential(nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 2))
-        effect_delta_dim = vocab_sizes["effect"] * 2 + vocab_sizes["mark"] * 2 + 2
+        effect_delta_dim = (
+            vocab_sizes["effect"] * 4
+            + vocab_sizes["mark"] * 2
+            + 2
+            + vocab_sizes["weather"]
+        )
         self.aux_effect_delta = nn.Sequential(
             nn.Linear(width * 2, 128), nn.GELU(), nn.Linear(128, effect_delta_dim)
         )
@@ -367,32 +547,6 @@ class AlphaRoco(nn.Module):
             nn.Linear(width, 128), nn.GELU(), nn.Linear(128, vocab_sizes["trait"])
         )
         self.aux_trait_source = nn.Linear(self.config.category_embedding_dim, width)
-
-    def _event_memory(self, batch, hidden):
-        events = batch["events"]
-        encoded = self.self_event_encoder(
-            torch.cat(
-                (
-                    events,
-                    self.self_event_kind(batch["event_kinds"]),
-                    self.self_event_phase(batch["event_phases"]),
-                    self.self_event_action_kind(batch["event_action_kinds"]),
-                    self.self_event_skill(
-                        _safe_ids(
-                            batch["event_skill_ids"],
-                            self.self_event_skill.num_embeddings,
-                        )
-                    ),
-                ),
-                dim=-1,
-            )
-        )
-        for index in range(events.shape[1]):
-            next_hidden = self.self_gru(encoded[:, index : index + 1], hidden)[1]
-            hidden = torch.where(
-                batch["event_mask"][:, index, None], next_hidden, hidden
-            )
-        return hidden
 
     def _pets(self, batch, prefix):
         skills = self.skill_encoder(
@@ -461,29 +615,32 @@ class AlphaRoco(nn.Module):
         selected_skill = selected_skill * is_skill.unsqueeze(-1)
         return own_pet, selected_skill
 
-    def forward(self, batch: dict, memory: tuple[Tensor, Tensor] | None = None) -> dict:
+    def history_key(self, state, action, position):
+        positions = torch.as_tensor(
+            position, dtype=torch.long, device=state.device
+        ).clamp(0, self.position_embedding.num_embeddings - 1)
+        return self.history_key_norm(
+            state + action + self.position_embedding(positions)
+        )
+
+    def history_value(self, state, action):
+        return self.history_value_norm(state + action)
+
+    def forward(self, batch: dict, history: dict | None = None) -> dict:
         batch_size = batch["phase"].shape[0]
         device = batch["phase"].device
-        hidden_self, hidden_public = (
-            memory
-            if memory is not None
-            else (
-                torch.zeros(
-                    self.config.gru_layers,
-                    batch_size,
-                    self.config.hidden_dim,
-                    device=device,
-                ),
-                torch.zeros(
-                    self.config.gru_layers,
-                    batch_size,
-                    self.config.hidden_dim,
-                    device=device,
-                ),
-            )
+        is_lead = batch["phase_is_lead"]
+        positions = (
+            torch.zeros(batch_size, dtype=torch.long, device=device)
+            if history is None
+            else history["position"]
         )
-        hidden_self = self._event_memory(batch, hidden_self)
-        opponent_logits, hidden_public = self.opponent(batch, hidden_public)
+        position_embedding = self.position_embedding(
+            positions.clamp(0, self.position_embedding.num_embeddings - 1)
+        )
+        opponent_logits, public_state, opponent_action_encodings, public_history = (
+            self.opponent(batch, history, position_embedding)
+        )
         own, own_skills = self._pets(batch, "own")
         enemy, _ = self._pets(batch, "enemy")
         own_mask = batch["own_pet_mask"]
@@ -503,9 +660,16 @@ class AlphaRoco(nn.Module):
         )
         lead_state = self.lead_attention(tokens, token_mask)[:, 0]
         battle_state = self.battle_attention(tokens, token_mask)[:, 0]
+        state = torch.where(is_lead[:, None], lead_state, battle_state)
+        own_history = self.self_history(
+            state + position_embedding,
+            None if history is None else history["own_keys"],
+            None if history is None else history["own_values"],
+            None if history is None else history["own_mask"],
+        )
         battle_context = self.context(
             torch.cat(
-                (battle_state, hidden_self[-1], hidden_public[-1].detach()), dim=-1
+                (battle_state, own_history, public_history.detach()), dim=-1
             )
         )
         candidates = batch["own_candidates"]
@@ -554,7 +718,6 @@ class AlphaRoco(nn.Module):
             ~batch["opponent_mask"][:, None, :], 0.0
         )
         battle_logits = base_logits + (interactions * q[:, None, :]).sum(dim=-1)
-        is_lead = batch["phase_is_lead"]
         logits = torch.where(is_lead[:, None], lead_logits, battle_logits)
         if not batch["action_mask"].any(dim=1).all():
             raise ValueError("each sample requires at least one own action candidate")
@@ -584,8 +747,15 @@ class AlphaRoco(nn.Module):
             "aux": aux,
             "battle_context": battle_context,
             "action_embeddings": action_embeddings,
+            "lead_actions": own_action_pet,
             "opponent_logits": opponent_logits,
-            "memory": (hidden_self, hidden_public),
+            "state": state,
+            "lead_state": lead_state,
+            "battle_state": battle_state,
+            "own_history_context": own_history,
+            "public_history_context": public_history,
+            "public_state": public_state,
+            "opponent_action_encodings": opponent_action_encodings,
         }
 
     def policy_parameters(self):

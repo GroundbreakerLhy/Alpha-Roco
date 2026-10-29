@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from alpha_roco.config import RewardConfig
 from alpha_roco.losses import terminal_rewards
+from alpha_roco.status import duration_code
 from sim.buffs import classify_buff
 
 DEFAULT_REWARD = RewardConfig()
@@ -66,6 +67,24 @@ def _mark_map(marks: dict) -> dict[tuple[str, int], float]:
     return result
 
 
+def _duration_map(pets: list[dict]) -> dict[tuple[str, str, str], float]:
+    result = {}
+    for pet in pets:
+        name = pet.get("name", "")
+        for effect in pet.get("buffs", []):
+            result[
+                (name, effect.get("type", ""), effect.get("source_kind", ""))
+            ] = duration_code(effect.get("duration"))
+    return result
+
+
+def _weather_id(state: dict):
+    weather = state.get("weather")
+    if isinstance(weather, dict):
+        return weather.get("id")
+    return weather
+
+
 def _active_energy(state: dict, side: str) -> float:
     teams = state.get("teams", {})
     active = state.get("active", {}).get(side, -1)
@@ -107,10 +126,13 @@ def state_summary(
         "effect": max(-config.effect_clip, min(config.effect_clip, effect)),
         "own_effects": _effect_map(own),
         "enemy_effects": _effect_map(enemy),
+        "own_effect_durations": _duration_map(own),
+        "enemy_effect_durations": _duration_map(enemy),
         "own_marks": _mark_map(state.get("marks", {}).get(side, {})),
         "enemy_marks": _mark_map(state.get("marks", {}).get(other, {})),
         "own_energy": _active_energy(state, side),
         "enemy_energy": _active_energy(state, other),
+        "weather": _weather_id(state),
     }
 
 

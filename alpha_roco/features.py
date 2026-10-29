@@ -11,6 +11,8 @@ from sim.data_loader import DATA_DIR, calc_all_stats, calc_speed_range, calc_sta
 from sim.skills import impl as _skills_impl  # noqa: F401
 from sim.typechart import type_multiplier
 
+from .status import duration_code
+
 SPECIAL = ("<PAD>", "<UNK>", "<NONE>")
 EVENT_FEATURES = 11
 
@@ -271,7 +273,7 @@ class ObservationEncoder:
                 "id": _index(effect.get("type"), self.effect_vocab),
                 "numeric": [
                     _number(effect.get("value"), 100),
-                    _number(effect.get("duration"), 10),
+                    duration_code(effect.get("duration")),
                     1.0,
                 ],
                 "mask": True,

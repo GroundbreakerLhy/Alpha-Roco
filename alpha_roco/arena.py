@@ -6,13 +6,17 @@ import math
 import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
 
 import torch
 
 from .config import EvaluationConfig, ModelConfig, SearchConfig
-from .features import ObservationEncoder, collate_inputs, selectable_candidates
-from .network import AlphaRoco
+from .features import (
+    ObservationEncoder,
+    action_key,
+    collate_inputs,
+    selectable_candidates,
+)
+from .network import AlphaRoco, HistoryState
 from .terminal import BattleSession
 
 TEAMS = tuple(f"team{index}" for index in range(24))
@@ -24,14 +28,40 @@ NEW_PARAM_PREFIXES = (
     "trait_projection.",
     "opponent.trait_embedding.",
     "opponent.trait_projection.",
+    "opponent.habit_projection.",
     "aux_effect_delta.",
     "aux_state_change.",
     "aux_trait_trigger.",
     "aux_trait_source.",
+    "self_history.",
+    "opponent.public_history.",
+    "position_embedding.",
+    "history_key_norm.",
+    "history_value_norm.",
 )
 OBSOLETE_PARAM_PREFIXES = (
     "aux_state_delta.",
     "aux_trait_delta.",
+    "history_norm.",
+    "self_gru.",
+    "opponent.public_gru.",
+    "self_event_kind.",
+    "self_event_phase.",
+    "self_event_action_kind.",
+    "self_event_skill.",
+    "self_event_encoder.",
+    "opponent.event_kind.",
+    "opponent.event_phase.",
+    "opponent.event_action_kind.",
+    "opponent.event_skill.",
+    "opponent.event_encoder.",
+)
+HISTORY_PARAM_PREFIXES = (
+    "self_history.",
+    "opponent.public_history.",
+    "position_embedding.",
+    "history_key_norm.",
+    "history_value_norm.",
 )
 
 
@@ -41,11 +71,30 @@ def _vocab_signature(vocabularies: dict) -> str:
     ).hexdigest()
 
 
+def _aux_effect_dim(vocab_sizes: dict) -> int:
+    return (
+        vocab_sizes["effect"] * 4
+        + vocab_sizes["mark"] * 2
+        + 2
+        + vocab_sizes["weather"]
+    )
+
+
 def _legacy_checkpoint(checkpoint: dict, encoder: ObservationEncoder) -> bool:
     if checkpoint.get("vocab_sizes") == encoder.vocab_sizes:
-        return any(
-            key.startswith(OBSOLETE_PARAM_PREFIXES)
-            for key in checkpoint.get("model", {})
+        state = checkpoint.get("model", {})
+        expected = _aux_effect_dim(encoder.vocab_sizes)
+        return (
+            any(key.startswith(OBSOLETE_PARAM_PREFIXES) for key in state)
+            or not any(key.startswith(HISTORY_PARAM_PREFIXES) for key in state)
+            or "opponent.habit_projection.weight" not in state
+            or any(
+                key in state and state[key].shape[0] != expected
+                for key in (
+                    "aux_effect_delta.2.weight",
+                    "aux_state_change.2.weight",
+                )
+            )
         )
     legacy_sizes = {
         name: size
@@ -70,9 +119,16 @@ def _legacy_checkpoint(checkpoint: dict, encoder: ObservationEncoder) -> bool:
 def _load_model_state(
     model: AlphaRoco, state: dict, legacy: bool
 ) -> None:
-    missing, unexpected = model.load_state_dict(state, strict=not legacy)
     if not legacy:
+        model.load_state_dict(state, strict=True)
         return
+    target = model.state_dict()
+    compatible = {
+        key: value
+        for key, value in state.items()
+        if key in target and target[key].shape == value.shape
+    }
+    missing, unexpected = model.load_state_dict(compatible, strict=False)
     allowed = tuple(
         key
         for key in missing
@@ -145,11 +201,43 @@ def _search_logits(output, batch, top_k, risk):
     return output["base_logits"] + (1 - risk) * expected + risk * worst
 
 
+def commit_public_action(history, model, candidates, action):
+    key = action_key(action)
+    index = (
+        next(
+            (
+                index
+                for index, candidate in enumerate(candidates)
+                if action_key(candidate) == key
+            ),
+            None,
+        )
+        if candidates is not None
+        else None
+    )
+    with torch.no_grad():
+        history.commit_public(model, index, action)
+
+
+def record_opponent_actions(histories, models, encoder, requests, actions):
+    for side, history in histories.items():
+        other = "B" if side == "A" else "A"
+        if other not in actions:
+            continue
+        request = requests.get(side)
+        commit_public_action(
+            history,
+            models[side],
+            None if request is None else encoder.opponent_candidates(request),
+            actions[other],
+        )
+
+
 def choose(
     model,
     encoder,
     request,
-    memory,
+    history,
     device,
     sample,
     search=False,
@@ -160,7 +248,14 @@ def choose(
     item = encoder.encode(request)
     batch = collate_inputs([item], device)
     with torch.no_grad():
-        output = model(batch, memory=memory)
+        output = model(
+            batch,
+            history=(
+                None
+                if history is None
+                else history.batch(device, model.config.hidden_dim)
+            ),
+        )
         logits = output["logits"]
         if search and request["phase"] == "action":
             logits = _search_logits(output, batch, search_top_k, search_risk)
@@ -171,7 +266,9 @@ def choose(
             index = int(torch.distributions.Categorical(logits=logits).sample().item())
         else:
             index = int(logits.argmax().item())
-    return candidates[index], tuple(value.detach() for value in output["memory"])
+        if history is not None:
+            history.observe(model, output, index, request["phase"])
+    return candidates[index], history
 
 
 def _play_game(
@@ -188,7 +285,7 @@ def _play_game(
     search_risk,
 ):
     models = {"A": candidate, "B": reference}
-    memories: dict[str, Any] = {"A": None, "B": None}
+    histories = {"A": HistoryState(), "B": HistoryState()}
     rng = random.Random(seed + game_index * 0x9E3779B1)
     with BattleSession(
         team_a=rng.choice(TEAMS),
@@ -197,20 +294,28 @@ def _play_game(
         timeout=timeout,
     ) as session:
         while session.winner is None:
-            for request in session.requests():
+            requests = session.requests()
+            actions = {}
+            request_by_side = {}
+            for request in requests:
                 side = request["side"]
-                action, memories[side] = choose(
+                action, histories[side] = choose(
                     models[side],
                     encoder,
                     request,
-                    memories[side],
+                    histories[side],
                     device,
                     sample,
                     search=search and side == "A",
                     search_top_k=search_top_k,
                     search_risk=search_risk,
                 )
+                actions[side] = action
+                request_by_side[side] = request
                 session.submit(side, action)
+            record_opponent_actions(
+                histories, models, encoder, request_by_side, actions
+            )
     if session.winner == "both_lose":
         return "both_lose"
     return "win" if session.winner == "A" else "loss"
