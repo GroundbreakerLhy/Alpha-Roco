@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from . import buffs, counter, evolution, traits
-from .enums import LORD_BLOODLINE
+from .enums import ELEMENT_NAMES, LORD_BLOODLINE
 from .data_loader import load_typechart, round_half_up
 from .models import BattleSkill
 from .damage import level_coefficient
@@ -41,6 +41,10 @@ def can_use(state, side: str, magic_id: int) -> bool:
         return False
     if state.resonance_cooldown[side].get(magic_id, 0) > 0:
         return False
+    if magic_id == WISH:
+        idx = state.active[side]
+        if idx < 0 or state.teams[side][idx].bloodline == LORD_BLOODLINE:
+            return False
     return True
 
 
@@ -77,14 +81,15 @@ def use_magic(
     elif magic_id == WISH:
         pet = state.teams[side][state.active[side]]
         category = 0 if pet.stats["atk"] >= pet.stats["spatk"] else 1
-        # 愿力冲击属性 = 血脉；首领血脉不是元素，退回主属性
-        blood = pet.bloodline if pet.bloodline != LORD_BLOODLINE else None
         element = (
-            blood if blood is not None else (pet.attributes[0] if pet.attributes else 0)
+            pet.bloodline
+            if pet.bloodline is not None
+            else (pet.attributes[0] if pet.attributes else 0)
         )
+        wish_name = f"{ELEMENT_NAMES[element]}系愿力冲击"
         wish_skill = BattleSkill(
             skill_id=-1,
-            name="愿力冲击",
+            name=wish_name,
             element=element,
             category=category,
             power=200 if opponent_is_status else 80,
@@ -94,7 +99,6 @@ def use_magic(
         wish_skill.counter_target = "status"
         pet.wish_original_skill = pet.skills[0]
         pet.skills[0] = wish_skill
-        state.log.append(f"{side} {pet.name} 使用愿力冲击")
     elif magic_id == EVOLVE:
         if not _evolve(state, side, branch):
             return False

@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from sim.actions import enumerate_candidates, is_valid_action
+from sim.actions import enumerate_candidates
 
 from sim.battle import (
     apply_drive,
@@ -263,9 +263,21 @@ def read_action_with_energy(f, conn, state, side):
                 conn, {"type": "error", "message": "换人行动必须提供整数 pet_index"}
             )
             continue
-        if is_valid_action(state, side, raw):
-            return raw
-        send_line(conn, {"type": "error", "message": "行动不可用，请重新选择"})
+        if raw["kind"] == "switch" and (
+            not is_valid_switch(raw, state, side)
+            or raw["pet_index"] == state.active[side]
+        ):
+            send_line(
+                conn, {"type": "error", "message": "请选择一只存活且不同的上场精灵"}
+            )
+            continue
+        if raw["kind"] == "skill" and state.active[side] >= 0:
+            pet = state.teams[side][state.active[side]]
+            limit = len(pet.skills) + (3 if raw.get("magic_id") == 1 else 0)
+            if not (0 <= raw["skill_index"] < limit):
+                send_line(conn, {"type": "error", "message": "技能下标无效"})
+                continue
+        return raw
 
 
 def make_team(side, team_config, spirits):

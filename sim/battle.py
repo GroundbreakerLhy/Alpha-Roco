@@ -104,24 +104,6 @@ def _first_alive_index(state: BattleState, side: str):
     return None
 
 
-def _drive_reorder(skills: list, drives: list) -> list:
-    """按传动值重排技能列表：目标位被占时，从目标位往前找最近空位。"""
-    n = len(skills)
-    if n <= 1:
-        return list(skills)
-    slots: list = [None] * n
-    for old_pos, (skill, drive) in enumerate(zip(skills, drives)):
-        target = (old_pos + drive) % n
-        if slots[target] is None:
-            slots[target] = skill
-        else:
-            pos = target
-            while slots[pos] is not None:
-                pos = (pos - 1) % n
-            slots[pos] = skill
-    return slots
-
-
 def apply_drive(state: BattleState, side: str | None = None) -> None:
     """对指定方（或双方）在场精灵执行回合开始的传动重排。
 
@@ -138,7 +120,7 @@ def apply_drive(state: BattleState, side: str | None = None) -> None:
             for skill in pet.skills
         ]
         before = {id(skill): index for index, skill in enumerate(pet.skills)}
-        pet.skills = _drive_reorder(pet.skills, drives)
+        pet.skills = pet.skills.apply_drives(drives)
         for new_index, skill in enumerate(pet.skills):
             old_index = before.get(id(skill))
             if old_index is None or old_index == new_index:
@@ -804,6 +786,13 @@ def _settle_counters(state: BattleState) -> None:
 
 def _round_end(state: BattleState) -> None:
     """回合结束结算（step 主路径与脱离续接共用；离场精灵因出战位 -1 被跳过）。"""
+    # 应对回合的行动后脱离：双方技能全部结算完、进入回合结算前执行。
+    for side in ("A", "B"):
+        if state.pending_round_end_leave[side]:
+            state.pending_round_end_leave[side] = False
+            state.pending_action_leave[side] = True
+            if _try_pause_for_leave(state, side, {"do_second": False}):
+                return
     # 特性阶段最先执行；应对从句可能暂停并续接，特性阶段每回合只进入一次。
     if state.trait_round_end_turn != state.turn:
         state.trait_round_end_turn = state.turn
@@ -969,9 +958,12 @@ def _resolve_action(
             is_first=is_first,
             is_counter=is_counter,
         )
-        # 特性：行动完成后的条件性脱离（如哨兵）。
+        # 特性：行动完成后的条件性脱离（如哨兵）；本回合发生应对时延后到回合结算前。
         if pet.trait_state.pop("sentinel_leave_after_action", False):
-            state.pending_action_leave[side] = True
+            if is_counter or countered_by:
+                state.pending_round_end_leave[side] = True
+            else:
+                state.pending_action_leave[side] = True
         return logs
 
     if action.kind != "skill" or type(action.skill_index) is not int:
@@ -1039,9 +1031,8 @@ def _resolve_action(
             # 兜底支付耗尽生命：直接力竭，技能不再结算
             _apply_faint(state, side, logs)
             return logs
-        if pet.energy < total_cost:
-            logs.append(f"{side} {pet.name} 能量不足，无法使用 {skill.name}")
-            return logs
+        # 已提交的行动照常放出：能量不足时支付当前全部能量，不做拦截。
+        total_cost = min(total_cost, pet.energy)
         pet.energy -= total_cost
         if not replay:
             state.turn_costs[side] += total_cost
@@ -1117,7 +1108,7 @@ def _resolve_action(
         # "上回合双方使用X系技能"类判定的来源（麦芒/掠影）：按技能数据属性记本回合
         pet.last_skill_element = skill.element
         pet.last_skill_category = skill_utils.category_of(skill)
-    logs.append(f"{side} {pet.name} 使用 {skill.name}")
+    logs.append(f"{side} {pet.name} 使用 {'应对：' if is_counter else ''}{skill.name}")
     if used is not None:
         used.append(skill)
     # 特性：技能开始
@@ -1270,7 +1261,7 @@ def _resolve_action(
         total_damage = result["damage"] * hit_count
         if total_damage > 0:
             prevented = False
-            prevented_msg = ""
+            hp_before = opponent.hp
             if total_damage >= opponent.hp:
                 # 特性：致命伤害判定（免死类）
                 prevented = traits.emit_lethal(
@@ -1370,7 +1361,9 @@ def _resolve_action(
                         hit_count=hit_count,
                     )
             else:
-                logs.append(prevented_msg)
+                lost = hp_before - opponent.hp
+                if lost > 0:
+                    logs.append(f"  造成 {lost} 伤害")
 
         # 命中附加（STAGE_HIT）在命中后立即结算，脱离/返场请求也随之立即处理。
         hit_ctx = skills.emit(
@@ -1550,7 +1543,10 @@ def _resolve_action(
         )
 
     if pet.trait_state.pop("sentinel_leave_after_action", False):
-        state.pending_action_leave[side] = True
+        if is_counter or countered_by:
+            state.pending_round_end_leave[side] = True
+        else:
+            state.pending_action_leave[side] = True
     if leave:
         _force_switch_after_leave(state, side, logs)
 
@@ -1683,10 +1679,10 @@ def _resolve_repeated(
     if action.kind == "skill" and getattr(skill, "windup", False):
         count = 1
     used = []
-    for _ in range(count):
+    for attempt in range(count):
         if state.winner is not None or state.active[side] < 0:
             break
-        if action.kind == "skill":
+        if action.kind == "skill" and attempt > 0:
             skill = pet.skills[action.skill_index]
             # 蓄力释放的能量已在蓄力回合支付，释放回合不再校验。
             if pet.windup_skill is not skill and pet.energy < current_skill_cost(
@@ -1855,6 +1851,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     state.pending_counters = []
     for side in ("A", "B"):
         state.pending_action_leave[side] = False
+        state.pending_round_end_leave[side] = False
         state.pending_entry_energy[side] = 0
         state.pending_entry_inherit[side] = False
         state.pending_entry_buffs[side] = []
@@ -2019,6 +2016,19 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
         _apply_faint(state, "B" if first == "A" else "A")
         if state.winner is not None:
             return state
+        if interrupted is not None:
+            victim = _active_pet(state, interrupted)
+            if victim is not None:
+                victim_action = remaining.get(interrupted)
+                label = "聚能"
+                if (
+                    victim_action is not None
+                    and victim_action.kind == "skill"
+                    and victim_action.skill_index is not None
+                    and 0 <= victim_action.skill_index < len(victim.skills)
+                ):
+                    label = victim.skills[victim_action.skill_index].name
+                state.log.append(f"{interrupted} {victim.name} {label} 被打断")
         # 先手方行动后请求脱离（如移花接木"随后脱离"）：立即离场并暂停等待选人。
         # **双侧脱离**（风隐）同样在此刻进入收集阶段：双方盲选集齐后才"先退先入、
         # 后退后入"，后手方的行动随后照常结算（打到新精灵上）。
@@ -2229,6 +2239,13 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                             pet,
                             skill_obj,
                             skill_index=skill_item["index"],
+                        )
+                        # 己方在场精灵的可用性（含能量不足的生命替代探测）
+                        skill_item["payable"] = (
+                            pet is active_pet
+                            and can_use_skill(
+                                state, side, skill_obj, skill_index=skill_item["index"]
+                            )
                         )
                         # 己方显示真实威力：含特性威力/属性改写；先手条件按非先手计算。
                         # 对方力竭/缺席（active<0）时无法计算，保持 None。

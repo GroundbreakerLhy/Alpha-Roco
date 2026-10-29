@@ -46,6 +46,35 @@ class BattleSkill:
     skill_state: dict = field(default_factory=dict)
 
 
+class SkillRing(list):
+    """技能槽位环：首尾相接，传动沿环移动，相邻按环取左右。"""
+
+    def slot_of(self, skill) -> int:
+        return next(i for i, candidate in enumerate(self) if candidate is skill)
+
+    def neighbors(self, skill) -> list:
+        index = self.slot_of(skill)
+        count = len(self)
+        if count <= 1:
+            return []
+        left = self[(index - 1) % count]
+        right = self[(index + 1) % count]
+        return [left] if right is left else [left, right]
+
+    def apply_drives(self, drives) -> "SkillRing":
+        count = len(self)
+        slots = [None] * count
+        for index in range(count - 1, -1, -1):
+            if drives[index] == 0:
+                continue
+            position = (index + drives[index]) % count
+            while slots[position] is not None:
+                position = (position + 1) % count
+            slots[position] = self[index]
+        rest = iter(skill for i, skill in enumerate(self) if drives[i] == 0)
+        return SkillRing(skill if skill is not None else next(rest) for skill in slots)
+
+
 @dataclass
 class BattlePet:
     side: str
@@ -101,6 +130,9 @@ class BattlePet:
     last_skill_category: str = ""
     prev_skill_element: int | None = None
     prev_skill_category: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "skills", SkillRing(self.skills))
 
     def __setattr__(self, name, value) -> None:
         object.__setattr__(self, name, value)
@@ -174,6 +206,10 @@ class BattleState:
     pending_reenter_bursts: dict = field(default_factory=lambda: {"A": [], "B": []})
     # 技能脱离：该侧行动结算后立即离场并重新选人；回合中生效、跳过离场者的回合末结算。
     pending_action_leave: dict = field(default_factory=lambda: {"A": False, "B": False})
+    # 发生应对的行动：行动后脱离延后到双方技能结算完、回合结算前执行。
+    pending_round_end_leave: dict = field(
+        default_factory=lambda: {"A": False, "B": False}
+    )
     # 技能脱离附带"入场精灵回复 N 能量"，与 pending_action_leave 同生命周期。
     pending_entry_energy: dict = field(default_factory=lambda: {"A": 0, "B": 0})
     # 击鼓传花：离场前把 NORMAL 增益快照到 pending_entry_buffs，由下一只入场精灵继承；

@@ -350,6 +350,13 @@ def can_use_resonance(state):
     magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
     if magic_id is None:
         return False
+    if magic_id == 0:
+        active = state["active"][MY_SIDE]
+        if (
+            active < 0
+            or state["teams"][MY_SIDE][active].get("bloodline") == LORD_BLOODLINE
+        ):
+            return False
     key = str(magic_id)
     used = state.get("resonance_usage", {}).get(MY_SIDE, {}).get(key, 0)
     limit = 2 if magic_id == 0 else 1
@@ -442,10 +449,20 @@ def prompt_action(conn, state):
             show_bench(state)
             continue
         if lower == "w1":
+            magic = state.get("resonance_magic", {}).get(MY_SIDE)
+            active = state["active"][MY_SIDE]
+            if (
+                magic == 0
+                and active >= 0
+                and state["teams"][MY_SIDE][active].get("bloodline")
+                == LORD_BLOODLINE
+            ):
+                log("首领血脉无法使用愿力冲击")
+                continue
             if not can_use_resonance(state):
                 log("共鸣魔法不可用")
                 continue
-            magic_id = state.get("resonance_magic", {}).get(MY_SIDE)
+            magic_id = magic
             if magic_id == 1:
                 pet = state["teams"][MY_SIDE][state["active"][MY_SIDE]]
                 if pet.get("bloodline") != LORD_BLOODLINE:
@@ -472,6 +489,12 @@ def prompt_action(conn, state):
                     and not (magic_id == 0 and idx == 0)
                 ):
                     log(f"技能冷却中：{skill['name']}")
+                    continue
+                if (
+                    skill.get("payable") is False
+                    and not (magic_id == 0 and idx == 0)
+                ):
+                    log(f"无法使用：{skill['name']}")
                     continue
             choice_branch = 0
             if (

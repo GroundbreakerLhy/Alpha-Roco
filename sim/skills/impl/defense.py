@@ -446,9 +446,9 @@ _register_group(
 class EnergyConservation(SpecialDefense):
     """减伤 80%；应对攻击：两侧技能能耗永久 -1。
 
-    "两侧"与其他技能位相邻判定一致：按技能列表循环取左右两位（1号位两侧是
-    4、2号位）。永久减耗按技能 id 记入 ``energy_cost_boost_<id>``（PERMANENT，
-    离场保留），每人每技能最多累计到 0 能耗（引擎最后统一钳制）。
+    "两侧"按技能环取左右相邻。永久减耗按技能 id 记入
+    ``energy_cost_boost_<id>``（PERMANENT，离场保留），每人每技能最多累计到
+    0 能耗（引擎最后统一钳制）。
     """
 
     def __init__(self):
@@ -457,18 +457,9 @@ class EnergyConservation(SpecialDefense):
     def on_counter(self, ctx):
         if ctx.counter_category != COUNTER_ATTACK:
             return
-        pet = ctx.actor
-        skills_list = pet.skills
-        if len(skills_list) <= 1:
-            return
-        index = next(
-            (i for i, candidate in enumerate(skills_list) if candidate is ctx.skill), -1
-        )
-        if index < 0:
-            return
-        for neighbor in {(index - 1) % len(skills_list), (index + 1) % len(skills_list)}:
+        for neighbor in ctx.actor.skills.neighbors(ctx.skill):
             ApplyBuff(
-                buff_type=buffs.skill_energy_boost_type(skills_list[neighbor].skill_id),
+                buff_type=buffs.skill_energy_boost_type(neighbor.skill_id),
                 value=-1,
                 duration=buffs.DurationKind.PERMANENT,
             ).apply(ctx)

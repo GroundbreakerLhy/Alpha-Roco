@@ -5,7 +5,7 @@ from __future__ import annotations
 from ... import buffs as B
 from ... import skills as SK
 from ... import traits as T
-from ...enums import Element
+from ...enums import ELEMENT_NAMES, Element
 from ...models import BattleSkill
 from ..base import TraitHandler
 from ..registry import register
@@ -165,7 +165,7 @@ def _wish_skill(pet, element):
     category = 0 if pet.stats["atk"] >= pet.stats["spatk"] else 1
     wish = BattleSkill(
         skill_id=WISH_TRAIT_SKILL_ID,
-        name="愿力冲击",
+        name=f"{ELEMENT_NAMES[element]}系愿力冲击",
         element=element,
         category=category,
         power=80,

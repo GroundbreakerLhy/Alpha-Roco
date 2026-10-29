@@ -919,9 +919,8 @@ register(PassTheParcel())
 class BearingSupport(OpsSkill):
     """左右相邻技能的永久能耗支撑。
 
-    携带时当前技能列表中左右相邻的技能能耗 -1；每次主动使用后，该被动永久
-    额外 -1。相邻关系按当前技能列表循环判定，传动重排后随位置变化：
-    1 号位两侧是 4、2 号位，4 号位两侧是 3、1 号位。
+    携带时环上左右相邻的技能能耗 -1；每次主动使用后，该被动永久额外 -1。
+    相邻关系由技能环随传动重排维护。
     """
 
     skill_id = 7070060
@@ -936,17 +935,12 @@ class BearingSupport(OpsSkill):
         ctx.add_state(self._PASSIVE_REDUCTION, 1)
 
     def modify_other_skill_energy_cost(self, ctx, target_skill, target_index):
-        skills = ctx.actor.skills
-        source_index = next(
-            (i for i, candidate in enumerate(skills) if candidate is ctx.skill), -1
-        )
-        if source_index < 0 or target_index == source_index or len(skills) <= 1:
+        if not any(
+            neighbor is target_skill
+            for neighbor in ctx.actor.skills.neighbors(ctx.skill)
+        ):
             return 0
-        neighbors = {(source_index - 1) % len(skills), (source_index + 1) % len(skills)}
-        if target_index not in neighbors:
-            return 0
-        reduction = 1 + int(ctx.state_of(self._PASSIVE_REDUCTION, 0) or 0)
-        return -reduction
+        return -(1 + int(ctx.state_of(self._PASSIVE_REDUCTION, 0) or 0))
 
 
 register(BearingSupport())

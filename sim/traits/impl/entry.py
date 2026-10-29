@@ -318,6 +318,8 @@ class SuckerPunch(TraitHandler):
     implemented = True
 
     def on_leave(self, ctx):
+        if not ctx.is_active():
+            return
         # 敌方精灵离场时，给更换入场的精灵施加 5 层中毒（debuff 标记，含毒系免疫检查）
         if ctx.subject is None or ctx.subject.side == ctx.actor.side:
             return
@@ -665,6 +667,8 @@ class MirrorReflection(TraitHandler):
     implemented = True
 
     def on_leave(self, ctx):
+        if not ctx.is_active():
+            return
         # 任意精灵（含敌方）离场都触发；与 incoming 交换血量百分比
         incoming = ctx.extra.get("incoming")
         if incoming is None:
