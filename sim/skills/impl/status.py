@@ -937,7 +937,7 @@ class BearingSupport(OpsSkill):
     def modify_other_skill_energy_cost(self, ctx, target_skill, target_index):
         if not any(
             neighbor is target_skill
-            for neighbor in ctx.actor.skills.neighbors(ctx.skill)
+            for neighbor in ctx.actor.skills.neighbors_at(ctx.skill_index)
         ):
             return 0
         return -(1 + int(ctx.state_of(self._PASSIVE_REDUCTION, 0) or 0))

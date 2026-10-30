@@ -52,14 +52,16 @@ class SkillRing(list):
     def slot_of(self, skill) -> int:
         return next(i for i, candidate in enumerate(self) if candidate is skill)
 
-    def neighbors(self, skill) -> list:
-        index = self.slot_of(skill)
+    def neighbors_at(self, index: int) -> list:
         count = len(self)
-        if count <= 1:
+        if count <= 1 or not 0 <= index < count:
             return []
         left = self[(index - 1) % count]
         right = self[(index + 1) % count]
         return [left] if right is left else [left, right]
+
+    def neighbors(self, skill) -> list:
+        return self.neighbors_at(self.slot_of(skill))
 
     def apply_drives(self, drives) -> "SkillRing":
         count = len(self)

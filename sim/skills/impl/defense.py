@@ -457,7 +457,7 @@ class EnergyConservation(SpecialDefense):
     def on_counter(self, ctx):
         if ctx.counter_category != COUNTER_ATTACK:
             return
-        for neighbor in ctx.actor.skills.neighbors(ctx.skill):
+        for neighbor in ctx.actor.skills.neighbors_at(ctx.skill_index):
             ApplyBuff(
                 buff_type=buffs.skill_energy_boost_type(neighbor.skill_id),
                 value=-1,
