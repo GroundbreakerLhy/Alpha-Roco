@@ -367,6 +367,7 @@ def switch_in(
     _apply_round_replacements_for_pet(state, incoming)
     if active_switch:
         return _find_swift_skill(state, side, incoming)
+    _emit_round_ready(state)
     return None
 
 
@@ -862,7 +863,19 @@ def _round_end(state: BattleState) -> None:
             state.costs_settled_turn = state.turn
             state.prev_turn_costs = dict(state.turn_costs)
             state.turn_costs = {"A": 0, "B": 0}
-        traits.emit(state, "round_ready", scope="all")
+        state.pending_round_ready = True
+        _emit_round_ready(state)
+
+
+def _emit_round_ready(state: BattleState) -> None:
+    """回合准备：交战双方都有人在场时才成立（力竭空缺要等补位入场）。
+
+    例：哨兵的致命威胁判断必须按下一回合真正站场的敌方精灵。
+    """
+    if not state.pending_round_ready or any(state.active[s] < 0 for s in ("A", "B")):
+        return
+    state.pending_round_ready = False
+    traits.emit(state, "round_ready", scope="all")
 
 
 def _resolve_action(

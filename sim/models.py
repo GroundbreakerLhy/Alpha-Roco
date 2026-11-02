@@ -216,6 +216,8 @@ class BattleState:
     # 脱离未执行则作废。
     pending_entry_inherit: dict = field(default_factory=lambda: {"A": False, "B": False})
     pending_entry_buffs: dict = field(default_factory=lambda: {"A": [], "B": []})
+    # 回合准备：回合末存在空缺时挂起，补位入场后发出。
+    pending_round_ready: bool = False
     # 回合因脱离暂停：含续接上下文与应选人的一侧（leave_side）
     paused_turn: Optional[dict] = None
     # 应对奖励登记：回合末第一步统一结算（B46）。
