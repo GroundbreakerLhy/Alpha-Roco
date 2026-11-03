@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..models import Action, BattlePet, BattleSkill, BattleState
+from ..trait_source import trait_source_context
 from .base import TraitContext, TraitHandler
 from .registry import get_handler, info, register, report  # noqa: F401
 
@@ -98,19 +99,44 @@ def _scope_pets(
     return [p for s in order for p in state.teams[s]]
 
 
+def _pet_position(state: BattleState, pet: BattlePet | None) -> tuple[str | None, int]:
+    if pet is None:
+        return None, -1
+    for side, team in state.teams.items():
+        for index, item in enumerate(team):
+            if item is pet:
+                return side, index
+    return None, -1
+
+
 def _record(ctx: TraitContext) -> dict:
     record = {
         "event": ctx.event,
         "trait_id": ctx.actor.trait_id,
         "side": ctx.actor.side,
         "pet": ctx.actor.name,
+        "pet_index": next(
+            (
+                index
+                for index, pet in enumerate(ctx.state.teams.get(ctx.actor.side, []))
+                if pet is ctx.actor
+            ),
+            -1,
+        ),
+        "spirit_id": ctx.actor.spirit_id,
         "turn": ctx.state.turn,
         "active": ctx.active,
     }
     if ctx.subject is not None:
         record["subject"] = ctx.subject.name
+        record["subject_side"], record["subject_index"] = _pet_position(
+            ctx.state, ctx.subject
+        )
     if ctx.target is not None:
         record["target"] = ctx.target.name
+        record["target_side"], record["target_index"] = _pet_position(
+            ctx.state, ctx.target
+        )
     if ctx.skill is not None:
         record["skill_id"] = ctx.skill.skill_id
     return record
@@ -145,7 +171,8 @@ def emit(
             **kw,
         )
         state.trait_events.append(_record(ctx))
-        fn(ctx)
+        with trait_source_context(p.side, p.name, p.trait_id):
+            fn(ctx)
 
 
 def emit_lethal(
@@ -168,14 +195,43 @@ def emit_lethal(
         damage=damage,
         **kw,
     )
-    result = bool(fn(ctx))
+    with trait_source_context(defender.side, defender.name, defender.trait_id):
+        result = bool(fn(ctx))
     state.trait_events.append(
         {
             "event": "lethal",
             "trait_id": defender.trait_id,
             "side": defender.side,
             "pet": defender.name,
+            "pet_index": next(
+                (
+                    index
+                    for index, pet in enumerate(state.teams.get(defender.side, []))
+                    if pet is defender
+                ),
+                -1,
+            ),
+            "spirit_id": defender.spirit_id,
             "subject": defender.name,
+            "subject_side": defender.side,
+            "subject_index": next(
+                (
+                    index
+                    for index, pet in enumerate(state.teams.get(defender.side, []))
+                    if pet is defender
+                ),
+                -1,
+            ),
+            "target": defender.name,
+            "target_side": defender.side,
+            "target_index": next(
+                (
+                    index
+                    for index, pet in enumerate(state.teams.get(defender.side, []))
+                    if pet is defender
+                ),
+                -1,
+            ),
             "turn": state.turn,
             "result": result,
         }

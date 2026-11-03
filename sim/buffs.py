@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from .data_loader import load_typechart
 from .evolution import apply_cute, can_cute
+from .trait_source import current_trait_source
 from .typechart import type_multiplier
 
 
@@ -192,6 +193,7 @@ class Buff:
     expire_turn: int | None = None
     applied_turn: int = 0  # 获得时的回合（禁足等按回合递减的效果据此跳过当回合）
     source_kind: str = ""  # ""=技能/常规；"debuff"=特性施加的减益；"trait"=特性展示
+    source_trait_id: int | None = None
 
     def is_gain(self) -> bool:
         """是否属于增益；source_kind="trait" 不算。"""
@@ -251,6 +253,21 @@ def can_gain_buff(pet, buff_type: str, value: int) -> bool:
     return True
 
 
+def _trait_source(
+    source_side: str,
+    source_pet: str,
+    source_kind: str,
+    source_trait_id: int | None,
+) -> tuple[str, str, int | None]:
+    if source_kind not in ("trait", "debuff") or source_trait_id is not None:
+        return source_side, source_pet, source_trait_id
+    current = current_trait_source()
+    if current is None:
+        return source_side, source_pet, source_trait_id
+    side, pet, trait_id = current
+    return source_side or side, source_pet or pet, trait_id
+
+
 def grant_buff(
     pet,
     buff_type: str,
@@ -262,11 +279,15 @@ def grant_buff(
     source_kind: str = "",
     state=None,
     turns: int | None = None,
+    source_trait_id: int | None = None,
 ) -> int:
     """规则层入口：先拦截/执行即时效果，再调用纯状态写入；返回实际获得层数。
 
     不广播 buff_gain；调用方只在返回值非零时广播，特性内部仍可不广播。
     """
+    source_side, source_pet, source_trait_id = _trait_source(
+        source_side, source_pet, source_kind, source_trait_id
+    )
     if not can_gain_buff(pet, buff_type, value):
         return 0
     if source_kind != "trait" and is_buff(buff_type, value):
@@ -306,6 +327,7 @@ def grant_buff(
         source_pet,
         source_kind,
         turns=turns,
+        source_trait_id=source_trait_id,
     )
     gained = get_buff_value(pet, buff_type) - before
     if gained and buff_type == BuffType.FREEZE:
@@ -326,9 +348,13 @@ def add_buff(
     source_pet: str = "",
     source_kind: str = "",
     turns: int | None = None,
+    source_trait_id: int | None = None,
 ) -> None:
     if value == 0:
         return
+    source_side, source_pet, source_trait_id = _trait_source(
+        source_side, source_pet, source_kind, source_trait_id
+    )
 
     if buff_type != BuffType.LOCK and buff_type != BuffType.CUTE:
         current = get_buff_value(pet, buff_type)
@@ -351,6 +377,7 @@ def add_buff(
                 source_pet=source_pet,
                 applied_turn=current_turn or 0,
                 source_kind=source_kind,
+                source_trait_id=source_trait_id,
             )
         )
         return
@@ -375,6 +402,7 @@ def add_buff(
             source_pet=source_pet,
             expire_turn=expire_turn,
             source_kind=source_kind,
+            source_trait_id=source_trait_id,
         )
     )
 
@@ -550,11 +578,18 @@ def _apply_burn(pet, typechart, state=None) -> None:
             new_layers = layers // 2
     else:
         new_layers = layers // 2
+    source = next((b for b in pet.buffs if b.buff_type == BuffType.BURN), None)
     remove_buff(pet, BuffType.BURN)
     if new_layers > 0:
         pet.buffs.append(
             Buff(
-                buff_type=BuffType.BURN, value=new_layers, duration=DurationKind.NORMAL
+                buff_type=BuffType.BURN,
+                value=new_layers,
+                duration=DurationKind.NORMAL,
+                source_side=source.source_side if source else "",
+                source_pet=source.source_pet if source else "",
+                source_kind=source.source_kind if source else "",
+                source_trait_id=source.source_trait_id if source else None,
             )
         )
 
@@ -611,11 +646,18 @@ def _apply_dizzy(pet) -> None:
     layers = get_buff_value(pet, BuffType.DIZZY)
     if layers <= 0:
         return
+    source = next((item for item in pet.buffs if item.buff_type == BuffType.DIZZY), None)
     remove_buff(pet, BuffType.DIZZY)
     if layers > 1:
         pet.buffs.append(
             Buff(
-                buff_type=BuffType.DIZZY, value=layers - 1, duration=DurationKind.NORMAL
+                buff_type=BuffType.DIZZY,
+                value=layers - 1,
+                duration=DurationKind.NORMAL,
+                source_side=source.source_side if source else "",
+                source_pet=source.source_pet if source else "",
+                source_kind=source.source_kind if source else "",
+                source_trait_id=source.source_trait_id if source else None,
             )
         )
 

@@ -73,13 +73,71 @@ def raw_of(skill_id: int) -> dict | None:
     return _RAW.get(skill_id)
 
 
+def _effect_descriptors(effect) -> list[dict]:
+    target = getattr(effect, "target", None)
+    value = getattr(effect, "value", None)
+    duration = getattr(effect, "duration", None)
+    descriptor = {
+        "kind": type(effect).__name__,
+        "target": target if isinstance(target, str) else None,
+        "value": value if isinstance(value, (int, float)) else None,
+        "duration": duration if isinstance(duration, str) else None,
+    }
+    result = [descriptor]
+    for nested in getattr(effect, "effects", ()) or ():
+        result.extend(_effect_descriptors(nested))
+    return result
+
+
+def _effect_metadata(handler) -> tuple[set[str], list[dict]]:
+    targets: set[str] = set()
+    descriptors: list[dict] = []
+    for name in (
+        "entry_effects",
+        "slot_change_effects",
+        "use_start_effects",
+        "hit_effects",
+        "counter_effects",
+        "defense_effects",
+        "status_effects",
+        "after_use_effects",
+        "round_end_effects",
+    ):
+        for effect in getattr(handler, name, ()) or ():
+            for descriptor in _effect_descriptors(effect):
+                descriptors.append({"stage": name, **descriptor})
+                if descriptor["target"] is not None:
+                    targets.add(descriptor["target"])
+    return targets, descriptors
+
+
 def static_of(skill_id: int) -> dict:
     """构造 BattleSkill 用的静态属性字典。"""
     handler = get_handler(skill_id)
     if handler is None:
-        return {"counter_target": "", "counter_interrupt": False, "drive": 0,
-                "swift": False, "windup": False, "usable": True, "element": None,
-                "choice": False}
+        return {
+            "counter_target": "",
+            "counter_interrupt": False,
+            "drive": 0,
+            "swift": False,
+            "windup": False,
+            "usable": True,
+            "element": None,
+            "choice": False,
+            "hit_count_flat": 0,
+            "hit_count_percent": 0,
+            "lifesteal": 0.0,
+            "damage_reduction": 0.0,
+            "priority_delta": 0,
+            "energy_cost_delta": 0,
+            "power_percent": 0.0,
+            "power_flat": 0.0,
+            "round_replace": False,
+            "round_replace_cost_delta": 0,
+            "targets": (),
+            "effects": (),
+        }
+    targets, descriptors = _effect_metadata(handler)
     return {
         "counter_target": handler.counter_target,
         "counter_interrupt": handler.counter_interrupt,
@@ -89,6 +147,20 @@ def static_of(skill_id: int) -> dict:
         "usable": handler.usable,
         "element": handler.element,
         "choice": handler.choice,
+        "hit_count_flat": int(getattr(handler, "hit_count_flat", 0) or 0),
+        "hit_count_percent": int(getattr(handler, "hit_count_percent", 0) or 0),
+        "lifesteal": float(getattr(handler, "lifesteal", 0.0) or 0.0),
+        "damage_reduction": float(getattr(handler, "damage_reduction", 0.0) or 0.0),
+        "priority_delta": int(getattr(handler, "priority_delta", 0) or 0),
+        "energy_cost_delta": int(getattr(handler, "energy_cost_delta", 0) or 0),
+        "power_percent": float(getattr(handler, "power_percent", 0.0) or 0.0),
+        "power_flat": float(getattr(handler, "power_flat", 0.0) or 0.0),
+        "round_replace": bool(getattr(handler, "round_replace", False)),
+        "round_replace_cost_delta": int(
+            getattr(handler, "round_replace_cost_delta", 0) or 0
+        ),
+        "targets": tuple(sorted(targets)),
+        "effects": tuple(descriptors),
     }
 
 

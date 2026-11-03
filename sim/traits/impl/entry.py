@@ -41,7 +41,10 @@ class Focus(TraitHandler):
             buff_type=B.BuffType.ATK,
             value=10,
             duration=B.DurationKind.NORMAL,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
             source_kind="trait",
+            source_trait_id=ctx.actor.trait_id,
         )
         ctx.actor.buffs.append(buff)
         ctx.set_state("buff", buff)
@@ -208,7 +211,15 @@ class Cleanliness(TraitHandler):
         if incoming is None:
             # 技能脱离时替补尚未选定；在普通状态被清除前保存快照。
             ctx.state.pending_entry_buffs[ctx.actor.side].extend(
-                (b.buff_type, b.value, b.duration, b.source_side, b.source_pet, b.source_kind)
+                (
+                    b.buff_type,
+                    b.value,
+                    b.duration,
+                    b.source_side,
+                    b.source_pet,
+                    b.source_kind,
+                    b.source_trait_id,
+                )
                 for b in inherited
             )
             return
@@ -216,6 +227,7 @@ class Cleanliness(TraitHandler):
             B.grant_buff(
                 incoming, buff.buff_type, buff.value, buff.duration, ctx.state.turn,
                 buff.source_side, buff.source_pet, buff.source_kind,
+                source_trait_id=buff.source_trait_id,
             )
 
 
@@ -262,7 +274,10 @@ class Scavenge(TraitHandler):
             buff_type=B.BuffType.SPATK,
             value=charges * 2,
             duration=B.DurationKind.NORMAL,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
             source_kind="trait",
+            source_trait_id=ctx.actor.trait_id,
         )
         ctx.actor.buffs.append(buff)
         ctx.set_state("buff", buff)
@@ -294,9 +309,13 @@ class Raid(Scavenge):
             return
         new_buffs = [
             B.Buff(buff_type=B.BuffType.SPATK, value=charges * 2,
-                   duration=B.DurationKind.NORMAL, source_kind="trait"),
+                   duration=B.DurationKind.NORMAL, source_side=ctx.actor.side,
+                   source_pet=ctx.actor.name, source_kind="trait",
+                   source_trait_id=ctx.actor.trait_id),
             B.Buff(buff_type=B.BuffType.SPDEF, value=charges,
-                   duration=B.DurationKind.NORMAL, source_kind="trait"),
+                   duration=B.DurationKind.NORMAL, source_side=ctx.actor.side,
+                   source_pet=ctx.actor.name, source_kind="trait",
+                   source_trait_id=ctx.actor.trait_id),
         ]
         ctx.actor.buffs.extend(new_buffs)
         ctx.set_state("buffs", new_buffs)
@@ -696,7 +715,7 @@ class GelatinSheet(TraitHandler):
         )
         if incoming is None:
             ctx.state.pending_entry_buffs[ctx.actor.side].extend(
-                (buff_type, value, B.DurationKind.NORMAL, ctx.actor.side, ctx.actor.name, source_kind)
+                (buff_type, value, B.DurationKind.NORMAL, ctx.actor.side, ctx.actor.name, source_kind, ctx.actor.trait_id)
                 for buff_type, value, source_kind in effects
             )
             return
@@ -787,7 +806,10 @@ class SteamExpansion(TraitHandler):
             buff_type=B.BuffType.SKILL_POWER_FLAT,
             value=charges * 10,
             duration=B.DurationKind.NORMAL,
+            source_side=ctx.actor.side,
+            source_pet=ctx.actor.name,
             source_kind="trait",
+            source_trait_id=ctx.actor.trait_id,
         )
         ctx.actor.buffs.append(buff)
         ctx.set_state("buff", buff)

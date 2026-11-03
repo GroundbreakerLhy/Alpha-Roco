@@ -502,9 +502,17 @@ def _enter_after_leave(
     inherit_buffs = state.pending_entry_buffs[side]
     state.pending_entry_buffs[side] = []
     if inherit_buffs:
-        for btype, value, duration, sside, spet, skind in inherit_buffs:
+        for btype, value, duration, sside, spet, skind, strait in inherit_buffs:
             buffs.grant_buff(
-                incoming, btype, value, duration, state.turn, sside, spet, skind
+                incoming,
+                btype,
+                value,
+                duration,
+                state.turn,
+                sside,
+                spet,
+                skind,
+                source_trait_id=strait,
             )
 
 
@@ -656,6 +664,7 @@ def _execute_action_leave(
                 b.source_side,
                 b.source_pet,
                 b.source_kind,
+                b.source_trait_id,
             )
             for b in pet.buffs
             if buffs.is_buff(b.buff_type, b.value)
@@ -756,6 +765,29 @@ def _settle_counters(state: BattleState) -> None:
     state.pending_counters = []
     for item in pending:
         pet = item["pet"]
+        state.counter_events.append(
+            {
+                "side": pet.side,
+                "pet": pet.name,
+                "pet_index": next(
+                    (
+                        index
+                        for index, value in enumerate(state.teams.get(pet.side, []))
+                        if value is pet
+                    ),
+                    -1,
+                ),
+                "skill_id": item["skill"].skill_id,
+                "counter_category": item["counter_category"],
+                "incoming_skill_id": (
+                    None
+                    if item.get("incoming_skill") is None
+                    else item["incoming_skill"].skill_id
+                ),
+                "choice_branch": item.get("choice_branch", 0),
+                "turn": state.turn,
+            }
+        )
         counter_ctx = skills.emit(
             state,
             skills.STAGE_COUNTER,
@@ -1121,7 +1153,7 @@ def _resolve_action(
         # "上回合双方使用X系技能"类判定的来源（麦芒/掠影）：按技能数据属性记本回合
         pet.last_skill_element = skill.element
         pet.last_skill_category = skill_utils.category_of(skill)
-    logs.append(f"{side} {pet.name} 使用 {'应对：' if is_counter else ''}{skill.name}")
+    logs.append(f"{side} {pet.name} 使用 {'应对！' if is_counter else ''}{skill.name}")
     if used is not None:
         used.append(skill)
     # 特性：技能开始
@@ -2141,6 +2173,7 @@ def pet_to_dict(
     typechart: dict | None = None,
     hide_wish: bool = False,
     state: BattleState | None = None,
+    reveal: bool = True,
 ) -> dict:
     skills_source = pet.skills
     if hide_wish and pet.wish_original_skill is not None:
@@ -2154,6 +2187,7 @@ def pet_to_dict(
         if state is not None:
             element = traits.query_skill_element(state, pet, skill)
             element = skills.query_element(state, pet, skill, base=element)
+        origin = skill.round_replace_origin or skill.morph_origin
         item = {
             "index": i,
             "skill_id": skill.skill_id,
@@ -2163,8 +2197,30 @@ def pet_to_dict(
             "power": skill.power,
             "energy_cost": skill.energy_cost,
             "display_power": None,
+            "drive": int(getattr(skill, "drive", 0) or 0),
+            "swift": bool(getattr(skill, "swift", False)),
+            "windup": bool(getattr(skill, "windup", False)),
+            "windup_active": pet.windup_skill is skill,
+            "used_count": pet.used_skill_counts.get(skill.skill_id, 0),
             "choice": bool(getattr(skill, "choice", False)),
+            "usable": bool(getattr(skill, "usable", True)),
+            "counter_target": getattr(skill, "counter_target", ""),
+            "counter_interrupt": bool(getattr(skill, "counter_interrupt", False)),
+            "origin_skill_id": None if origin is None else origin.skill_id,
+            "temporary": origin is not None,
+            "growth": {
+                key: value
+                for key, value in getattr(skill, "skill_state", {}).items()
+                if isinstance(value, (int, float, bool))
+            },
         }
+        if reveal:
+            item.update(
+                {
+                    "cooldown": skill.skill_id in pet.skill_cooldowns,
+                    "cooldown_pending": skill.skill_id in pet.skill_cooldowns_pending,
+                }
+            )
         if (
             opponent is not None
             and typechart is not None
@@ -2180,7 +2236,7 @@ def pet_to_dict(
                 ignore_resist=skills.query_ignore_resist(state, pet, skill),
             )["display_power"]
         skill_items.append(item)
-    return {
+    result = {
         "name": pet.name,
         "spirit_id": pet.spirit_id,
         "side": pet.side,
@@ -2199,12 +2255,37 @@ def pet_to_dict(
                 "type": buff.buff_type,
                 "value": buff.value,
                 "duration": buff.duration,
+                "source_side": buff.source_side,
+                "source_pet": buff.source_pet,
                 "source_kind": buff.source_kind,
+                "source_trait_id": buff.source_trait_id,
             }
             for buff in pet.buffs
         ],
         "skills": skill_items,
+        "windup_skill_id": (
+            None if pet.windup_skill is None else pet.windup_skill.skill_id
+        ),
+        "defense_reduction": pet.defense_reduction,
+        "used_skill_counts": dict(pet.used_skill_counts),
+        "last_used_skill_id": pet.last_used_skill_id,
+        "counter_stats": dict(pet.counter_stats),
+        "has_acted_since_entry": pet.has_acted_since_entry,
+        "entry_turn": pet.entry_turn,
+        "light_heal_rounds": pet.light_heal_rounds,
+        "overload_next": dict(pet.overload_next),
+        "overload_current": dict(pet.overload_current),
+        "attack_used_this_turn": pet.attack_used_this_turn,
+        "attack_used_last_turn": pet.attack_used_last_turn,
+        "leave_count": pet.leave_count,
+        "last_skill_element": pet.last_skill_element,
+        "last_skill_category": pet.last_skill_category,
+        "prev_skill_element": pet.prev_skill_element,
+        "prev_skill_category": pet.prev_skill_category,
     }
+    if reveal:
+        result["skill_cooldowns_pending"] = sorted(pet.skill_cooldowns_pending)
+    return result
 
 
 def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
@@ -2226,6 +2307,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                 typechart,
                 hide_wish=(view_side is not None and side != view_side),
                 state=state,
+                reveal=view_side is None or side == view_side,
             )
             # 特性效果显示行（客户端 buff 区）：只给在场精灵，场下不下发
             d["trait_effects"] = (
@@ -2340,14 +2422,32 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                 visible_skills = pet.skills
                 if pet.wish_original_skill is not None:
                     visible_skills = [pet.wish_original_skill, *pet.skills[1:]]
-                d["skills"] = [
-                    {
-                        "name": skill.name,
-                        "energy_cost": skill.energy_cost,
-                        "element": skill.element,
-                    }
+                revealed_ids = {
+                    skill.skill_id
                     for skill in visible_skills
                     if skill.skill_id in pet.revealed_skills
+                }
+                public_keys = (
+                    "name",
+                    "energy_cost",
+                    "element",
+                    "drive",
+                    "swift",
+                    "windup",
+                    "windup_active",
+                    "used_count",
+                    "choice",
+                    "usable",
+                    "counter_target",
+                    "counter_interrupt",
+                    "origin_skill_id",
+                    "temporary",
+                    "growth",
+                )
+                d["skills"] = [
+                    {key: item[key] for key in public_keys}
+                    for item in d["skills"]
+                    if item["skill_id"] in revealed_ids
                 ]
                 d["hp_percent"] = (
                     max(0, round(pet.hp / pet.max_hp * 100)) if pet.max_hp else 0
@@ -2378,6 +2478,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
         "winner": state.winner,
         "log": state.log,
         "trait_events": list(state.trait_events),
+        "counter_events": list(state.counter_events),
         "magic": state.magic,
         "active": state.active,
         "offerings": {
