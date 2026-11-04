@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from ... import buffs as B
 from ... import marks as M
+from ... import skill_utils
 from ... import traits as T
 from ...enums import Element as E
-from ...models import BattleSkill
 from ..base import TraitHandler
 from ..registry import register
 
@@ -153,24 +153,29 @@ class Etching(TraitHandler):
         M.add_mark(ctx.state, enemy.side, 4, n)
 
 
-# 聚能按"0 能耗 / 状态类型 / 属性18"的虚拟技能参与比较（属性18 不与任何常规系别相同，
+# 聚能按"0 能耗 / 状态类型 / 属性18"参与比较（属性18 不与任何常规系别相同，
 # 只有双方都聚能时系别才算相同）。
-_CHARGE_VIRTUAL = BattleSkill(
-    skill_id=0, name="聚能", element=18, category=3, power=None, energy_cost=0, desc=""
-)
+_CHARGE_SNAPSHOT = (18, 3, 0)
 
 
-def _used_skill(pet, action):
-    """本回合行动使用的技能对象；聚能返回虚拟技能；其他非技能行动返回 None。"""
+def _skill_snapshot(state, pet, action):
+    """本回合行动技能的(属性, 类型, 实际能耗)；物攻与魔攻同属攻击类型。"""
     if action is None:
         return None
     if action.kind == "charge":
-        return _CHARGE_VIRTUAL
+        return _CHARGE_SNAPSHOT
     if action.kind != "skill" or action.skill_index is None:
         return None
     if not (0 <= action.skill_index < len(pet.skills)):
         return None
-    return pet.skills[action.skill_index]
+    skill = pet.skills[action.skill_index]
+    return (
+        skill.element,
+        0 if skill.category in (0, 1) else skill.category,
+        skill_utils.true_energy_cost(
+            state, pet, skill, skill_index=action.skill_index
+        ),
+    )
 
 
 class Sync(TraitHandler):
@@ -180,13 +185,17 @@ class Sync(TraitHandler):
     implemented = True
 
     def on_turn_start(self, ctx):
-        # 快照双方本回合使用的技能（聚能/换人为 None）
+        # 快照双方本回合技能的(属性, 类别, 实际能耗)；换人为 None
         if not ctx.is_active():
             return
         my_action = ctx.action_a if ctx.actor.side == "A" else ctx.action_b
         enemy_action = ctx.action_b if ctx.actor.side == "A" else ctx.action_a
-        ctx.set_state("own_skill", _used_skill(ctx.actor, my_action))
-        ctx.set_state("enemy_skill", _used_skill(ctx.opponent(), enemy_action))
+        foe = ctx.opponent()
+        ctx.set_state("own_skill", _skill_snapshot(ctx.state, ctx.actor, my_action))
+        ctx.set_state(
+            "enemy_skill",
+            _skill_snapshot(ctx.state, foe, enemy_action) if foe is not None else None,
+        )
 
     def on_round_end(self, ctx):
         own = ctx.state_of("own_skill")
@@ -195,9 +204,11 @@ class Sync(TraitHandler):
         ctx.set_state("enemy_skill", None)
         if not ctx.is_active() or own is None or foe is None:
             return
-        same = ((1 if own.element == foe.element else 0)
-                + (1 if own.category == foe.category else 0)
-                + (1 if own.energy_cost == foe.energy_cost else 0))
+        same = (
+            (1 if own[0] == foe[0] else 0)
+            + (1 if own[1] == foe[1] else 0)
+            + (1 if own[2] == foe[2] else 0)
+        )
         if same <= 0:
             return
         # 每项相同：物攻与物防永久各 +10%（1 层）

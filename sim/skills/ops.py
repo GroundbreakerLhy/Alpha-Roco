@@ -510,7 +510,7 @@ def deal_extra_damage(ctx: SkillContext, power: int, *,
             ctx.log(f"  额外造成 {damage} 伤害")
             traits.emit(ctx.state, "take_damage", scope="all", side=pet.side, subject=pet,
                         target=ctx.actor, skill=extra_skill, damage=damage,
-                        hit_count=1, is_first=ctx.is_first)
+                        hit_count=1, is_first=ctx.is_first, logs=ctx.logs)
 
 
 def _extra_power_modifiers(ctx: SkillContext, target_pet, extra_skill) -> tuple:

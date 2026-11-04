@@ -1340,6 +1340,7 @@ def _resolve_action(
                     hit_count=hit_count,
                     is_first=is_first,
                     type_mult=result["type_multiplier"],
+                    logs=logs,
                 )
                 traits.emit(
                     state,
@@ -1352,6 +1353,7 @@ def _resolve_action(
                     damage=applied_damage,
                     hit_count=hit_count,
                     is_first=is_first,
+                    logs=logs,
                 )
                 # 受击方技能侧反应（嗜痛"应对攻击：期间每受到1次攻击伤害获得
                 # 双攻+40%"）：伤害落位后按连击段数广播给受击方携带的技能。
@@ -1392,6 +1394,7 @@ def _resolve_action(
                             heal=heal,
                             base_heal=base_heal,
                             source="lifesteal",
+                            logs=logs,
                         )
                 if opponent.hp <= 0:
                     traits.emit(
@@ -1404,6 +1407,7 @@ def _resolve_action(
                         skill=skill,
                         damage=applied_damage,
                         hit_count=hit_count,
+                        logs=logs,
                     )
             else:
                 lost = hp_before - opponent.hp

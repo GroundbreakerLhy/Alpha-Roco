@@ -38,11 +38,12 @@ class TraitContext:
     damage: int = 0
     hit_count: int = 1
     damage_dealt: int = 0
+    logs: Optional[list] = None
     extra: dict = field(default_factory=dict)
 
 
     def log(self, msg: str) -> None:
-        self.state.log.append(msg)
+        (self.logs if self.logs is not None else self.state.log).append(msg)
 
     def is_active(self) -> bool:
         idx = self.state.active[self.actor.side]

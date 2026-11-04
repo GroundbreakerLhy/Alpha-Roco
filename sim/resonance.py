@@ -58,8 +58,9 @@ def _heal(state, side: str) -> None:
 
 def _evolve(state, side: str, branch: int = 0) -> bool:
     pet = state.teams[side][state.active[side]]
+    name_before = pet.name
     if evolution.lordize(pet, branch):
-        state.log.append(f"{side} {pet.name} 使用进化之力")
+        state.log.append(f"{side} {name_before} 使用进化之力 变成了 {pet.name}")
         traits.emit(state, "evolution", scope="self", side=side, subject=pet, pet=pet)
         # 首领化视作一次入场：重置入场状态并广播，新形态特性立即触发；
         # 不是换人，不结算印记/迸发，不触发迅捷。
