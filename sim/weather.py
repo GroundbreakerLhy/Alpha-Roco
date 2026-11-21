@@ -63,13 +63,6 @@ def get_weather_id(state):
     return state.weather["id"]
 
 
-def water_power_multiplier(weather) -> float:
-    if weather is None:
-        return 1.0
-    weather_id = weather["id"] if isinstance(weather, dict) else weather
-    return 1.5 if weather_id == RAIN else 1.0
-
-
 def sandstorm_energy_modifier(weather, skill_element: int) -> int:
     if weather is None:
         return 0

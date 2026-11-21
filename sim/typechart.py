@@ -1,33 +1,29 @@
-"""属性克制查表。"""
+"""属性克制倍率：效果拔群合并为 1+层数，其余倍率相乘。"""
+
+from .data_loader import load_json
+
+_MATRIX = None
 
 
 def type_multiplier(
-    attack_element: int, defender_elements: list, typechart: dict
+    attack_element: int, defender_elements: list, typechart: dict | None = None
 ) -> float:
     if not defender_elements:
         return 1.0
-    if len(defender_elements) == 1:
-        table = typechart["single"].get(str(defender_elements[0]))
-        if not table:
-            return 1.0
-        mult = 1.0
-        for entry in table.get("weak", []):
-            if entry["type"] == attack_element:
-                mult *= entry["value"]
-        for entry in table.get("vulnerable", []):
-            if entry["type"] == attack_element:
-                mult *= entry["value"]
-        return mult
-
-    a, b = sorted(defender_elements[:2])
-    table = typechart["dual"].get(f"{a}-{b}")
-    if not table:
-        return 1.0
-    mult = 1.0
-    for entry in table.get("weak", []):
-        if entry["type"] == attack_element:
-            mult *= entry["value"]
-    for entry in table.get("vulnerable", []):
-        if entry["type"] == attack_element:
-            mult *= entry["value"]
-    return mult
+    global _MATRIX
+    if typechart and "matrix" in typechart:
+        matrix = typechart["matrix"]
+    else:
+        if _MATRIX is None:
+            _MATRIX = load_json("typechart.json")["matrix"]
+        matrix = _MATRIX
+    row = matrix[attack_element]
+    supers = 0
+    other = 1.0
+    for element in defender_elements:
+        value = row[element]
+        if value == 2:
+            supers += 1
+        else:
+            other *= value
+    return (1 + supers if supers else 1) * other

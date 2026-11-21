@@ -1540,8 +1540,7 @@ def _resolve_action(
     # 一次性增益"下一次攻击技能威力+N%/+N"（持续高温/伺机而动/热身/淬火/暖气）：
     # 攻击技能用时取走（P11 增量语义：百分比翻倍 = +100%，固定值 1 层 = 1 点威力），
     # 只作用于一次攻击技能行动；蓄力回合在更早处 return，故蓄力不消耗（与"蓄力不算
-    # 使用攻击技能"一致），释放回合照常消耗并计入本次伤害。计入 extra_power_*，
-    # 故与其它通用威力 buff 一致，星陨印记的附加伤害同样吃（见下方星陨段）。
+    # 使用攻击技能"一致），释放回合照常消耗并计入本次伤害。
     if skill.category in (0, 1):
         next_attack_percent, next_attack_flat = buffs.consume_next_attack_power(
             pet, state
@@ -1564,7 +1563,7 @@ def _resolve_action(
             choice_branch=action.choice_branch,
         )
         extra_power_percent = (
-            50.0
+            75.0
             if weather.get_weather_id(state) == weather.RAIN and skill_element == 3
             else 0.0
         )
@@ -1598,8 +1597,7 @@ def _resolve_action(
             skill=skill,
         )
         # 技能自身威力修正（应对状态威力N倍等）：is_counter 供即时判定，是 B46 延迟
-        # 结算的例外；skill_index 供槽位条件威力按使用时槽位判定。只喂给本次伤害，
-        # 不并入 extra_power_*——星陨印记吃通用威力，但不吃专属修正。
+        # 结算的例外；skill_index 供槽位条件威力按使用时槽位判定。
         skill_power_percent, skill_power_flat = skills.query_power(
             state,
             pet,
@@ -1836,8 +1834,6 @@ def _resolve_action(
             and skill.element != 17
         ):
             n = negative_mark["stacks"]
-            # 星陨伤害同样吃技能威力类 buff/印记（含攻击印记、蓄势印记、迸发等）；
-            # 属性等级换算与取整顺序与 calc_damage 一致（见 calc_mark_damage）。
             star_dmg = calc_mark_damage(
                 pet,
                 opponent,
@@ -1846,8 +1842,6 @@ def _resolve_action(
                 17,
                 load_typechart(),
                 opponent.defense_reduction,
-                extra_power_percent=extra_power_percent,
-                extra_power_flat=extra_power_flat,
                 state=state,
             )
             lost = min(star_dmg, opponent.hp)
@@ -2893,7 +2887,7 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                                     weather.get_weather_id(state) == weather.RAIN
                                     and skill_element == 3
                                 ):
-                                    extra_percent += 50.0
+                                    extra_percent += 75.0
                                 positive = marks.get_mark(state, side, marks.POSITIVE)
                                 if positive is not None:
                                     if positive["id"] == 0:

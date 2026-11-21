@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 from . import buffs, traits
-from .data_loader import round_half_up
 from .models import BattlePet, BattleSkill
 from .typechart import type_multiplier
 
@@ -32,12 +31,6 @@ def ability_stage(state, pet: BattlePet, stat: str) -> float:
     return max(-99, min(99, stage))
 
 
-def ability_multiplier(stage: float) -> float:
-    stage = max(-99, min(99, stage))
-    percent = stage * 10
-    return (1 + max(percent, 0) / 100) / (1 + max(-percent, 0) / 100)
-
-
 def display_ability_multiplier(attack_stage: float, defense_stage: float) -> float:
     attack_percent = attack_stage * 10
     defense_percent = defense_stage * 10
@@ -54,7 +47,7 @@ def power_modifiers(state, attacker, defender, skill, *, element=None,
     eff_element = skill.element if element is None else element
     percent = buffs.get_element_power_percent(attacker, eff_element)
     if weather.get_weather_id(state) == weather.RAIN and eff_element == 3:
-        percent += 50.0
+        percent += 75.0
     flat = 0.0
     positive = marks.get_mark(state, attacker.side, marks.POSITIVE)
     if positive is not None:
@@ -95,21 +88,17 @@ def calc_damage(
     defense_key = "def" if skill.category == 0 else "spdef"
     attack_stage = ability_stage(state, attacker, attack_key)
     defense_stage = ability_stage(state, defender, defense_key)
-    attack_stat = round_half_up(
-        attacker.stats[attack_key] * ability_multiplier(attack_stage)
-    )
-    defense_stat = defender.stats[defense_key] * ability_multiplier(defense_stage)
-    if defense_stage >= 0:
-        defense_stat = round_half_up(defense_stat)
+    attack_stat = attacker.stats[attack_key]
+    defense_stat = defender.stats[defense_key]
     if defense_stat <= 0:
         raise ValueError("Effective defense must be greater than zero")
-    dealt_mod = 1.0
-    taken_mod = 1.0
+    dealt_delta = 0.0
+    taken_delta = 0.0
     if state is not None:
-        dealt_mod = 1.0 + traits.query_damage_dealt(
+        dealt_delta = traits.query_damage_dealt(
             state, attacker, defender, skill=skill
         )
-        taken_mod = 1.0 + traits.query_damage_taken(
+        taken_delta = traits.query_damage_taken(
             state, defender, attacker, skill=skill, is_first=is_first
         )
     eff_element = element if element is not None else skill.element
@@ -120,19 +109,33 @@ def calc_damage(
         type_mult = max(1.0, type_mult)
     power_percent, power_flat = buffs.get_skill_power_modifier(attacker)
     base_power = power_override if power_override is not None else skill.power
-    modified_power = (base_power + power_flat + extra_power_flat) * (
-        1.0 + (power_percent + extra_power_percent) / 100.0
+    base = max(
+        1,
+        math.floor(
+            (base_power + power_flat + extra_power_flat)
+            * (1.0 + (power_percent + extra_power_percent) / 100.0)
+        ),
     )
-    actual_power = math.floor(modified_power)
-    calculation_power = actual_power * stab * type_mult
-    display_power = math.floor(
-        calculation_power * display_ability_multiplier(attack_stage, defense_stage)
+    effective_power = (
+        display_ability_multiplier(attack_stage, defense_stage)
+        * base
+        * stab
+        * type_mult
     )
+    display_power = math.floor(effective_power)
     coeff = level_coefficient(attacker.level)
-    numerator = round_half_up(attack_stat * calculation_power * coeff)
     remaining = 1.0 - max(0.0, min(1.0, damage_reduction))
-    one_hit = math.floor(numerator / defense_stat * remaining)
-    damage = max(0, math.floor(one_hit * max(0.0, dealt_mod * taken_mod)))
+    damage = max(
+        0,
+        math.floor(
+            effective_power
+            * attack_stat
+            * coeff
+            / defense_stat
+            * remaining
+            * max(0.0, 1.0 + dealt_delta + taken_delta)
+        ),
+    )
     return {
         "damage": damage,
         "display_power": display_power,
@@ -149,36 +152,31 @@ def calc_mark_damage(
     element: int,
     typechart: dict,
     damage_reduction: float = 0.0,
-    extra_power_percent: float = 0.0,
-    extra_power_flat: float = 0.0,
     state=None,
 ) -> int:
-    """印记爆炸伤害：与 calc_damage 共用能力等级换算与取整顺序。
-
-    不乘本系加成、不产生显示威力、不查询伤害修正。
-    """
+    """印记爆炸伤害：面板攻防、攻防等级与克制参与，不吃本系、威力修正与伤害修正。"""
     attack_key = "atk" if category == 0 else "spatk"
     defense_key = "def" if category == 0 else "spdef"
-    attack_stage = ability_stage(state, attacker, attack_key)
-    defense_stage = ability_stage(state, defender, defense_key)
-    attack_stat = round_half_up(
-        attacker.stats[attack_key] * ability_multiplier(attack_stage)
-    )
-    defense_stat = defender.stats[defense_key] * ability_multiplier(defense_stage)
-    if defense_stage >= 0:
-        defense_stat = round_half_up(defense_stat)
+    attack_stat = attacker.stats[attack_key]
+    defense_stat = defender.stats[defense_key]
     if defense_stat <= 0:
         raise ValueError("Effective defense must be greater than zero")
-    power_percent, power_flat = buffs.get_skill_power_modifier(attacker)
-    actual_power = math.floor(
-        (base_power + power_flat + extra_power_flat)
-        * (1.0 + (power_percent + extra_power_percent) / 100.0)
-    )
-    calculation_power = actual_power * type_multiplier(
-        element, getattr(defender, "attributes", []), typechart
-    )
-    numerator = round_half_up(
-        attack_stat * calculation_power * level_coefficient(attacker.level)
+    effective_power = (
+        display_ability_multiplier(
+            ability_stage(state, attacker, attack_key),
+            ability_stage(state, defender, defense_key),
+        )
+        * max(1, base_power)
+        * type_multiplier(element, getattr(defender, "attributes", []), typechart)
     )
     remaining = 1.0 - max(0.0, min(1.0, damage_reduction))
-    return max(0, math.floor(numerator / defense_stat * remaining))
+    return max(
+        0,
+        math.floor(
+            effective_power
+            * attack_stat
+            * level_coefficient(attacker.level)
+            / defense_stat
+            * remaining
+        ),
+    )

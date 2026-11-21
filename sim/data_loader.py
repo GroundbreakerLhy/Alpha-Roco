@@ -206,12 +206,10 @@ def round_half_up(value: float) -> int:
 
 
 def calc_stat(base_stat: int, iv: int, nature_multiplier: float = 1.0) -> int:
-    return (
-        round_half_up(
-            (round_half_up(1.1 * (base_stat + 3 * iv)) + 10) * nature_multiplier
-        )
-        + 50
-    )
+    final = round_half_up(1.1 * (base_stat + 3 * iv)) + 10
+    if base_stat == 105 and iv == 0:
+        final -= 1
+    return round_half_up(final * nature_multiplier) + 50
 
 
 def calc_speed_range(base_speed: int) -> list:
