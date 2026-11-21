@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .. import events
 from ..models import BattlePet, BattleSkill, BattleState
 
 
@@ -42,6 +43,9 @@ class SkillContext:
     def log(self, msg: str) -> None:
         """写日志（**技能 handler 不得使用**，见 SPEC.md V3）。"""
         (self.logs if self.logs is not None else self.state.log).append(msg)
+
+    def event(self, kind: str, **kw):
+        return events.emit(self.state, kind, logs=self.logs, **kw)
 
     def is_active(self) -> bool:
         idx = self.state.active[self.actor.side]

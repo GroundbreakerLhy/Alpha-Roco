@@ -60,6 +60,7 @@ class BattleSession:
         seed=0,
         timeout=DEFAULT_TIMEOUT,
         *,
+        game_index=None,
         log_dir=None,
         log_jsonl=None,
         host="127.0.0.1",
@@ -68,6 +69,7 @@ class BattleSession:
         self.team_b = team_b
         self.seed = seed
         self.timeout = timeout
+        self.game_index = game_index
         self.requested_log_dir = Path(log_dir) if log_dir is not None else None
         self.log_jsonl = Path(log_jsonl) if log_jsonl is not None else None
         self.host = host
@@ -83,6 +85,21 @@ class BattleSession:
         self._stderr_files = []
         self._closed = False
         self._started_at = None
+
+    def _context(self):
+        fields = []
+        if self.game_index is not None:
+            fields.append(f"game={self.game_index}")
+        fields.extend(
+            (f"seed={self.seed}", f"team_a={self.team_a}", f"team_b={self.team_b}")
+        )
+        log_path = self.requested_log_dir or self.log_jsonl
+        if log_path is not None:
+            fields.append(f"log={log_path}")
+        return " ".join(fields)
+
+    def _timeout_error(self, detail):
+        return TimeoutError(f"{detail}（{self._context()}）")
 
     def __enter__(self):
         self._started_at = time.monotonic()
@@ -169,7 +186,7 @@ class BattleSession:
             while b"\n" not in self._buffers[side]:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or not selector.select(remaining):
-                    raise TimeoutError(f"client {side} 未及时确认服务端席位")
+                    raise self._timeout_error(f"client {side} 未及时确认服务端席位")
                 chunk = os.read(process.stdout.fileno(), 65536)
                 if not chunk:
                     raise RuntimeError(
@@ -200,7 +217,7 @@ class BattleSession:
             self._start_deadline = time.monotonic() + self.timeout
         remaining = self._start_deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError(f"battle session exceeded {self.timeout} seconds")
+            raise self._timeout_error(f"battle session exceeded {self.timeout} seconds")
         return remaining
 
     def _read_decision(self):
@@ -223,7 +240,7 @@ class BattleSession:
                     return request["side"], request
         ready = self._selector.select(self._remaining())
         if not ready:
-            raise TimeoutError(f"battle session exceeded {self.timeout} seconds")
+            raise self._timeout_error(f"battle session exceeded {self.timeout} seconds")
         for key, _ in ready:
             side = key.data
             chunk = os.read(key.fileobj.fileno(), 65536)

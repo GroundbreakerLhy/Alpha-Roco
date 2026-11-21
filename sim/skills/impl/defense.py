@@ -599,7 +599,15 @@ class FakeBankruptcy(OpsSkill):
         if dry_run:
             return need if ctx.actor.hp > need * cost else 0
         ctx.actor.hp -= need * cost
-        ctx.log(f"{ctx.actor.side} {ctx.actor.name} 失去 {need * cost} 生命")
+        ctx.event(
+            "life",
+            action="loss",
+            effect="cost",
+            source=ctx.actor,
+            target=ctx.actor,
+            value=need * cost,
+            line=f"{ctx.actor.side} {ctx.actor.name} 失去 {need * cost} 生命",
+        )
         return need
 
 

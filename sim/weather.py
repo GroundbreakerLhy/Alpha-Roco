@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import buffs, traits
+from . import buffs, events, traits
 
 RAIN = 0
 BLIZZARD = 1
@@ -28,12 +28,29 @@ def element_of(weather) -> int | None:
 
 def set_weather(state, weather_id: int, turns: int = 1) -> None:
     state.weather = {"id": weather_id, "remaining": turns}
-    state.log.append(f"天气变为 {weather_id}，持续 {turns} 回合")
+    events.emit(
+        state,
+        "weather",
+        action="set",
+        source=events.weather_entity(str(weather_id)),
+        target=events.field_entity(),
+        attribute=weather_id,
+        value=weather_id,
+        duration=turns,
+        line=f"天气变为 {weather_id}，持续 {turns} 回合",
+    )
 
 
 def clear_weather(state) -> None:
     state.weather = None
-    state.log.append("天气消失")
+    events.emit(
+        state,
+        "weather",
+        action="clear",
+        source=events.weather_entity(),
+        target=events.field_entity(),
+        line="天气消失",
+    )
 
 
 def get_weather(state):
@@ -76,12 +93,27 @@ def on_round_end(state) -> None:
             pet = state.teams[side][state.active[side]]
             if pet.hp > 0:
                 gained = buffs.grant_buff(
-                    pet, buffs.BuffType.FREEZE, 1, buffs.DurationKind.PERMANENT
+                    pet,
+                    buffs.BuffType.FREEZE,
+                    1,
+                    buffs.DurationKind.PERMANENT,
+                    state=state,
                 )
                 if gained == 0:
                     continue
                 traits.on_buff_gain(state, pet, buffs.BuffType.FREEZE, gained)
-                state.log.append(f"暴风雪：{pet.name} 获得1层冻结")
+                events.emit(
+                    state,
+                    "buff",
+                    action="apply",
+                    effect="weather",
+                    source=events.weather_entity(str(weather_id)),
+                    target=events.pet_entity(state, pet),
+                    attribute=buffs.BuffType.FREEZE,
+                    value=gained,
+                    stacks=gained,
+                    line=f"暴风雪：{pet.name} 获得1层冻结",
+                )
 
     if weather_id == THUNDERSTORM:
         # 雷鸣：双方在场精灵各获得1层引电，电系免疫（按 round_end_order）。
@@ -91,11 +123,31 @@ def on_round_end(state) -> None:
             pet = state.teams[side][state.active[side]]
             if pet.hp <= 0 or 8 in pet.attributes:
                 continue
-            if not buffs.grant_buff(pet, buffs.BuffType.LIGHTNING, 1, state=state):
+            if not buffs.grant_buff(
+                pet, buffs.BuffType.LIGHTNING, 1, state=state
+            ):
                 continue
-            state.log.append(f"雷鸣：{pet.name} 获得1层引电")
+            events.emit(
+                state,
+                "buff",
+                action="apply",
+                effect="weather",
+                source=events.weather_entity(str(weather_id)),
+                target=events.pet_entity(state, pet),
+                attribute=buffs.BuffType.LIGHTNING,
+                value=1,
+                stacks=1,
+                line=f"雷鸣：{pet.name} 获得1层引电",
+            )
 
     state.weather["remaining"] -= 1
     if state.weather["remaining"] <= 0:
-        state.log.append("天气消失")
+        events.emit(
+            state,
+            "weather",
+            action="clear",
+            source=events.weather_entity(str(weather_id)),
+            target=events.field_entity(),
+            line="天气消失",
+        )
         state.weather = None

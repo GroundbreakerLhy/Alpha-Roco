@@ -10,6 +10,7 @@ from . import (
     buffs,
     burst,
     counter,
+    events,
     marks,
     offerings,
     resonance,
@@ -56,6 +57,15 @@ def create_team_battle(
         log=[],
     )
     # 首发精灵的入场回合（返场免疫判定用）
+    events.emit(
+        state,
+        "system",
+        action="start",
+        effect="battle_start",
+        source=events.field_entity(),
+        target=events.field_entity(),
+        phase="setup",
+    )
     for side in ("A", "B"):
         idx = state.active[side]
         if idx >= 0 and state.teams[side]:
@@ -72,6 +82,14 @@ def create_team_battle(
         pet = _active_pet(state, side)
         if pet is None:
             continue
+        events.emit(
+            state,
+            "entry",
+            action="enter",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            phase="setup",
+        )
         for skill_index, skill in enumerate(pet.skills):
             skills.emit(
                 state,
@@ -125,6 +143,17 @@ def apply_drive(state: BattleState, side: str | None = None) -> None:
             old_index = before.get(id(skill))
             if old_index is None or old_index == new_index:
                 continue
+            events.emit(
+                state,
+                "slot",
+                action="move",
+                source=events.pet_entity(state, pet),
+                target=events.pet_entity(state, pet),
+                skill_id=skill.skill_id,
+                skill_index=new_index,
+                attribute=old_index,
+                value=new_index,
+            )
             skills.emit(
                 state,
                 skills.STAGE_SLOT_CHANGE,
@@ -146,24 +175,43 @@ def _settle_skill_cooldowns(state) -> None:
     """回合结束统一结算所有技能冷却。"""
     for side in ("A", "B"):
         for pet in state.teams[side]:
-            skill_utils.settle_skill_cooldowns(pet)
+            skill_utils.settle_skill_cooldowns(pet, state)
 
 
 def _apply_faint(state: BattleState, side: str, logs: list | None = None) -> None:
     pet = _active_pet(state, side)
     if pet is None or pet.hp > 0:
         return
+    events.flush_freeze_loss(state, pet, logs)
     state.active[side] = -1
     state.magic[side] -= 1
     # logs 缺省写 state.log；行动本地日志流（疾风连袭重放中途的力竭）传入以保持顺序
     stream = logs if logs is not None else state.log
     # 特性：力竭事件（广播；诈死/赎价类特性可在此回调魔力）
     traits.emit(state, "faint", scope="all", side=side, subject=pet)
-    stream.append(f"{side} {pet.name} 倒下了，剩余魔力 {state.magic[side]}")
+    events.emit(
+        state,
+        "faint",
+        action="faint",
+        source=events.pet_entity(state, pet),
+        target=events.team_entity(side),
+        value=state.magic[side],
+        line=f"{side} {pet.name} 倒下了，剩余魔力 {state.magic[side]}",
+        logs=stream,
+    )
     # 必须在 faint 特性结算后再判定胜负；诈死可能返还本次损失的魔力。
     if state.magic[side] <= 0:
         state.winner = "B" if side == "A" else "A"
-        stream.append(f"{state.winner} 获胜")
+        events.emit(
+            state,
+            "win",
+            action="win",
+            source=events.team_entity(state.winner),
+            target=events.team_entity(side),
+            attribute=state.winner,
+            line=f"{state.winner} 获胜",
+            logs=stream,
+        )
 
 
 def _apply_turn_limit(state: BattleState) -> None:
@@ -173,20 +221,43 @@ def _apply_turn_limit(state: BattleState) -> None:
     magic_b = state.magic["B"]
     if magic_a != magic_b:
         state.winner = "A" if magic_a > magic_b else "B"
-        state.log.append(
-            f"达到{MAX_TURN + 1}回合，魔力值 {magic_a}:{magic_b}，{state.winner} 获胜"
+        events.emit(
+            state,
+            "turn",
+            action="limit",
+            effect="winner",
+            source=events.team_entity(state.winner),
+            target=events.field_entity(),
+            value=magic_a - magic_b,
+            line=f"达到{MAX_TURN + 1}回合，魔力值 {magic_a}:{magic_b}，{state.winner} 获胜",
         )
         return
     hp_a = sum(Fraction(pet.hp, pet.max_hp) for pet in state.teams["A"] if pet.hp > 0)
     hp_b = sum(Fraction(pet.hp, pet.max_hp) for pet in state.teams["B"] if pet.hp > 0)
     if hp_a != hp_b:
         state.winner = "A" if hp_a > hp_b else "B"
-        state.log.append(
-            f"达到{MAX_TURN + 1}回合，按存活精灵血量百分比总和判定，{state.winner} 获胜"
+        events.emit(
+            state,
+            "turn",
+            action="limit",
+            effect="winner",
+            source=events.team_entity(state.winner),
+            target=events.field_entity(),
+            value=float(hp_a - hp_b),
+            line=f"达到{MAX_TURN + 1}回合，按存活精灵血量百分比总和判定，{state.winner} 获胜",
         )
         return
     state.winner = "both_lose"
-    state.log.append(f"达到{MAX_TURN + 1}回合，魔力与存活精灵血量百分比总和均相同，双方均失败")
+    events.emit(
+        state,
+        "turn",
+        action="limit",
+        effect="winner",
+        source=events.field_entity(),
+        target=events.field_entity(),
+        attribute="both_lose",
+        line=f"达到{MAX_TURN + 1}回合，魔力与存活精灵血量百分比总和均相同，双方均失败",
+    )
 
 
 def _skill_cost_after_bursts(
@@ -337,9 +408,38 @@ def switch_in(
 ) -> int | None:
     incoming.has_acted_since_entry = False
     incoming.entry_turn = state.turn
+    events.emit(
+        state,
+        "entry",
+        action="enter",
+        source=events.pet_entity(state, incoming),
+        target=events.team_entity(side),
+    )
+    with events.context(
+        state,
+        source=events.pet_entity(state, incoming),
+        target=events.team_entity(side),
+    ):
+        _switch_in_effects(state, side, incoming, logs, thorn, active_switch)
+    if active_switch:
+        return _find_swift_skill(state, side, incoming)
+    _emit_round_ready(state)
+    return None
+
+
+def _switch_in_effects(
+    state: BattleState,
+    side: str,
+    incoming: BattlePet,
+    logs: list,
+    thorn: bool,
+    active_switch: bool,
+) -> None:
     positive_mark = marks.get_mark(state, side, marks.POSITIVE)
     if positive_mark is not None and positive_mark["id"] == 6:
-        burst.add_burst(incoming, "attack_power_flat", 10 * positive_mark["stacks"])
+        burst.add_burst(
+            incoming, "attack_power_flat", 10 * positive_mark["stacks"], state=state
+        )
     if thorn:
         negative = marks.get_mark(state, side, marks.NEGATIVE)
         if negative is not None and negative["id"] == 1:
@@ -347,10 +447,32 @@ def switch_in(
             lost = min(loss, incoming.hp)
             incoming.hp = max(0, incoming.hp - loss)
             if lost > 0:
-                logs.append(f"{side} {incoming.name} 受到棘刺印记 {lost} 伤害")
+                events.emit(
+                    state,
+                    "damage",
+                    action="damage",
+                    effect="mark",
+                    source=events.mark_entity(side),
+                    target=events.pet_entity(state, incoming),
+                    attribute=1,
+                    value=lost,
+                    line=f"{side} {incoming.name} 受到棘刺印记 {lost} 伤害",
+                    logs=logs,
+                )
         if negative is not None and negative["id"] == 5:
             loss = negative["stacks"]
+            before = incoming.energy
             incoming.energy = max(0, incoming.energy - loss)
+            if before - incoming.energy:
+                events.emit(
+                    state,
+                    "energy",
+                    action="loss",
+                    source=events.mark_entity(side),
+                    target=events.pet_entity(state, incoming),
+                    attribute=5,
+                    value=before - incoming.energy,
+                )
         _apply_dark_surge(state, side, incoming, logs)
     traits.emit(state, "entry", scope="all", side=side, subject=incoming)
     for skill_index, skill in enumerate(incoming.skills):
@@ -365,10 +487,6 @@ def switch_in(
     # 每回合替换（借用/取念/复写类）：入场即抽取（只在场上才抽取），
     # 先于迅捷判定——迅捷技能从巧变后的槽位中选择。
     _apply_round_replacements_for_pet(state, incoming)
-    if active_switch:
-        return _find_swift_skill(state, side, incoming)
-    _emit_round_ready(state)
-    return None
 
 
 def _apply_dark_surge(state, side: str, incoming, logs: list) -> None:
@@ -377,11 +495,22 @@ def _apply_dark_surge(state, side: str, incoming, logs: list) -> None:
         return
     for _ in range(5):
         debuff_type = random.choice(["atk", "spatk", "def", "spdef", "speed"])
-        buffs.grant_buff(incoming, debuff_type, -1)
+        buffs.grant_buff(incoming, debuff_type, -1, state=state)
 
 
 def _emit_leave(state: BattleState, side: str, subject, incoming) -> None:
     subject.leave_count += 1
+    events.emit(
+        state,
+        "leave",
+        action="leave",
+        source=events.pet_entity(state, subject),
+        target=(
+            events.pet_entity(state, incoming)
+            if incoming is not None
+            else events.team_entity(side)
+        ),
+    )
     traits.emit(state, "leave", scope="all", side=side, subject=subject, incoming=incoming)
 
 
@@ -402,12 +531,21 @@ def _force_switch_after_leave(state: BattleState, side: str, logs: list) -> None
     incoming = state.teams[side][idx]
     # 特性：离场事件（subject=离场者，incoming=入场者）
     _emit_leave(state, side, outgoing, incoming)
-    buffs.clear_normal_buffs(outgoing)
+    buffs.clear_normal_buffs(outgoing, state)
     _revert_round_replacements(outgoing)
-    burst.clear_bursts(outgoing)
+    burst.clear_bursts(outgoing, state)
     outgoing.light_heal_rounds = 0
     state.active[side] = idx
-    logs.append(f"{side} 脱离换上 {incoming.name}")
+    events.emit(
+        state,
+        "switch",
+        action="switch",
+        effect="force_switch",
+        source=events.pet_entity(state, outgoing),
+        target=events.pet_entity(state, incoming),
+        line=f"{side} 脱离换上 {incoming.name}",
+        logs=logs,
+    )
     switch_in(state, side, incoming, logs, active_switch=False)
 
 
@@ -422,12 +560,21 @@ def trait_leave_switch(
     if _is_windup(outgoing):
         return
     _emit_leave(state, side, outgoing, incoming)
-    buffs.clear_normal_buffs(outgoing)
+    buffs.clear_normal_buffs(outgoing, state)
     _revert_round_replacements(outgoing)
-    burst.clear_bursts(outgoing)
+    burst.clear_bursts(outgoing, state)
     outgoing.light_heal_rounds = 0
     state.active[side] = state.teams[side].index(incoming)
-    logs.append(f"{side} 脱离换上 {incoming.name}")
+    events.emit(
+        state,
+        "switch",
+        action="switch",
+        effect="trait_switch",
+        source=events.pet_entity(state, outgoing),
+        target=events.pet_entity(state, incoming),
+        line=f"{side} 脱离换上 {incoming.name}",
+        logs=logs,
+    )
     switch_in(state, side, incoming, logs, active_switch=False)
 
 
@@ -442,9 +589,9 @@ def reenter(state: BattleState, side: str, logs: list) -> bool:
     if pet.entry_turn == state.turn:
         return False
     _emit_leave(state, side, pet, pet)
-    buffs.clear_normal_buffs(pet)
+    buffs.clear_normal_buffs(pet, state)
     _revert_round_replacements(pet)
-    burst.clear_bursts(pet)
+    burst.clear_bursts(pet, state)
     pet.light_heal_rounds = 0
     switch_in(state, side, pet, logs, active_switch=False)
     return True
@@ -462,7 +609,11 @@ def _resolve_pending_reenter(state: BattleState) -> None:
                 for owner, burst_type, value in rewards:
                     if owner is pet and pet.hp > 0 and _active_pet(state, side) is pet:
                         burst.add_burst(
-                            pet, burst_type, value, expires_on_turn=state.turn + 1
+                            pet,
+                            burst_type,
+                            value,
+                            expires_on_turn=state.turn + 1,
+                            state=state,
                         )
 
 
@@ -494,7 +645,16 @@ def _enter_after_leave(
     在离场时登记，此处按侧消费。
     """
     state.active[side] = state.teams[side].index(incoming)
-    logs.append(f"{side} 脱离换上 {incoming.name}")
+    events.emit(
+        state,
+        "switch",
+        action="switch",
+        effect="leave_switch",
+        source=events.team_entity(side),
+        target=events.pet_entity(state, incoming),
+        line=f"{side} 脱离换上 {incoming.name}",
+        logs=logs,
+    )
     # thorn=True：脱离换人也吃入场棘刺/降灵印记
     switch_in(state, side, incoming, logs, thorn=True, active_switch=False)
     if entry_energy:
@@ -513,6 +673,7 @@ def _enter_after_leave(
                 spet,
                 skind,
                 source_trait_id=strait,
+                state=state,
             )
 
 
@@ -669,9 +830,9 @@ def _execute_action_leave(
             for b in pet.buffs
             if buffs.is_buff(b.buff_type, b.value)
         )
-    buffs.clear_normal_buffs(pet)
+    buffs.clear_normal_buffs(pet, state)
     _revert_round_replacements(pet)
-    burst.clear_bursts(pet)
+    burst.clear_bursts(pet, state)
     pet.light_heal_rounds = 0
     pet.windup_skill = None
     state.active[side] = -1
@@ -788,6 +949,25 @@ def _settle_counters(state: BattleState) -> None:
                 "turn": state.turn,
             }
         )
+        events.emit(
+            state,
+            "counter",
+            action="counter",
+            effect=item["counter_category"],
+            source=events.pet_entity(state, pet),
+            target=events.team_entity("B" if pet.side == "A" else "A"),
+            skill_id=item["skill"].skill_id,
+            skill_index=item.get("skill_index", -1),
+            choice_branch=item.get("choice_branch", 0),
+            extra={
+                "counter_category": item["counter_category"],
+                "incoming_skill_id": (
+                    None
+                    if item.get("incoming_skill") is None
+                    else item["incoming_skill"].skill_id
+                ),
+            },
+        )
         counter_ctx = skills.emit(
             state,
             skills.STAGE_COUNTER,
@@ -819,6 +999,16 @@ def _settle_counters(state: BattleState) -> None:
 
 def _round_end(state: BattleState) -> None:
     """回合结束结算（step 主路径与脱离续接共用；离场精灵因出战位 -1 被跳过）。"""
+    state.event_phase = "round_end"
+    if state.trait_round_end_turn != state.turn:
+        events.emit(
+            state,
+            "turn",
+            action="end",
+            source=events.field_entity(),
+            target=events.field_entity(),
+            value=state.turn,
+        )
     # 应对回合的行动后脱离：双方技能全部结算完、进入回合结算前执行。
     for side in ("A", "B"):
         if state.pending_round_end_leave[side]:
@@ -878,7 +1068,7 @@ def _round_end(state: BattleState) -> None:
     for team in state.teams.values():
         for pet in team:
             pet.overload_current.clear()
-            burst.expire_bursts(pet, state.turn)
+            burst.expire_bursts(pet, state.turn, state)
     for side in ("A", "B"):
         _apply_faint(state, side)
     _resolve_trait_leave(state)
@@ -897,6 +1087,7 @@ def _round_end(state: BattleState) -> None:
             state.turn_costs = {"A": 0, "B": 0}
         state.pending_round_ready = True
         _emit_round_ready(state)
+    state.event_phase = "action"
 
 
 def _emit_round_ready(state: BattleState) -> None:
@@ -933,14 +1124,32 @@ def _resolve_action(
             target = action.pet_index
             if target is not None and 0 <= target < len(team) and team[target].hp > 0:
                 state.active[side] = target
-                logs.append(f"{side} 换上 {team[target].name}")
+                events.emit(
+                    state,
+                    "switch",
+                    action="switch",
+                    effect="faint_replacement",
+                    source=events.team_entity(side),
+                    target=events.pet_entity(state, team[target]),
+                    line=f"{side} 换上 {team[target].name}",
+                    logs=logs,
+                )
                 # 出战位为空时的换入也是入场（力竭替换性质）：必须走统一入场结算，
                 # 否则"入场时/每入场1次"类特性（蓄电池/稀兽花宝等）不会触发。
                 switch_in(
                     state, side, team[target], logs, thorn=False, active_switch=False
                 )
                 return logs
-        logs.append(f"{side} 需要选择上场的精灵")
+        events.emit(
+            state,
+            "switch",
+            action="switch",
+            effect="need_selection",
+            source=events.team_entity(side),
+            target=events.team_entity(side),
+            line=f"{side} 需要选择上场的精灵",
+            logs=logs,
+        )
         return logs
 
     pet = team[current]
@@ -950,7 +1159,16 @@ def _resolve_action(
 
     if action.kind == "switch":
         if not buffs.can_switch(pet):
-            logs.append(f"{side} {pet.name} 被禁足，无法主动换人")
+            events.emit(
+                state,
+                "switch",
+                action="block",
+                effect="blocked",
+                source=events.pet_entity(state, pet),
+                target=events.team_entity(side),
+                line=f"{side} {pet.name} 被禁足，无法主动换人",
+                logs=logs,
+            )
             return logs
         target = action.pet_index
         if (
@@ -962,37 +1180,72 @@ def _resolve_action(
             incoming = team[target]
             # 特性：离场事件（subject=离场者，incoming=入场者）
             _emit_leave(state, side, pet, incoming)
-            buffs.clear_normal_buffs(pet)
+            buffs.clear_normal_buffs(pet, state)
             _revert_round_replacements(pet)
-            burst.clear_bursts(pet)
+            burst.clear_bursts(pet, state)
             pet.light_heal_rounds = 0
             pet.windup_skill = None
             state.active[side] = target
-            logs.append(f"{side} 换上 {incoming.name}")
+            events.emit(
+                state,
+                "switch",
+                action="switch",
+                source=events.pet_entity(state, pet),
+                target=events.pet_entity(state, incoming),
+                line=f"{side} 换上 {incoming.name}",
+                logs=logs,
+            )
             swift_index = switch_in(state, side, incoming, logs, active_switch=True)
             if swift_index is not None:
                 if followups is not None:
                     followups.append(Action(kind="skill", skill_index=swift_index))
             return logs
-        logs.append(f"{side} 换人目标无效")
+        events.emit(
+            state,
+            "switch",
+            action="block",
+            effect="invalid",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            line=f"{side} 换人目标无效",
+            logs=logs,
+        )
         return logs
 
     opponent_side = "B" if side == "A" else "A"
     opponent = _active_pet(state, opponent_side)
 
     if not buffs.can_act(pet):
-        logs.append(f"{side} {pet.name} 眩晕，无法行动")
+        events.emit(
+            state,
+            "status",
+            action="block",
+            effect="dizzy",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            line=f"{side} {pet.name} 眩晕，无法行动",
+            logs=logs,
+        )
         return logs
 
     # 先手 buff 一次性：行动开始结算即消耗；排序已完成，不影响本回合先后手。
     # 换人走不到这里（离场时 NORMAL buff 已统一清除）。
-    buffs.remove_buff(pet, buffs.BuffType.PRIORITY)
+    buffs.remove_buff(pet, buffs.BuffType.PRIORITY, state)
 
     if action.kind == "charge":
         pet.has_acted_since_entry = True
-        active_bursts = burst.take_bursts(pet)
+        active_bursts = burst.take_bursts(pet, state)
         gained = _add_energy(state, pet, CHARGE_ENERGY)
-        logs.append(f"{side} {pet.name} 聚能，回复 {gained} 能量")
+        events.emit(
+            state,
+            "charge",
+            action="charge",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            value=gained,
+            line=f"{side} {pet.name} 聚能，回复 {gained} 能量",
+            logs=logs,
+        )
         traits.emit(
             state,
             "charge",
@@ -1024,14 +1277,48 @@ def _resolve_action(
         and skill is not pet.windup_skill
         and not traits.query_windup_any(state, pet)
     ):
-        logs.append(f"{side} {pet.name} 蓄力中，只能使用已蓄力技能、聚能或换人")
+        events.emit(
+            state,
+            "windup",
+            action="block",
+            effect="blocked",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            skill_id=skill.skill_id,
+            skill_index=action.skill_index,
+            line=f"{side} {pet.name} 蓄力中，只能使用已蓄力技能、聚能或换人",
+            logs=logs,
+        )
         return logs
     leave = False
     if not replay and skill_utils.is_skill_on_cooldown(pet, skill.skill_id):
-        logs.append(f"  {skill.name} 冷却中")
+        events.emit(
+            state,
+            "cooldown",
+            action="block",
+            effect="cooldown",
+            source=events.pet_entity(state, pet),
+            target=events.pet_entity(state, pet),
+            skill_id=skill.skill_id,
+            skill_index=action.skill_index,
+            public=False,
+            line=f"  {skill.name} 冷却中",
+            logs=logs,
+        )
         return logs
     if not traits.query_skill_usable(state, pet, skill, skill_index=action.skill_index):
-        logs.append(f"{side} {pet.name} 无法使用 {skill.name}")
+        events.emit(
+            state,
+            "skill",
+            action="block",
+            effect="unusable",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            skill_id=skill.skill_id,
+            skill_index=action.skill_index,
+            line=f"{side} {pet.name} 无法使用 {skill.name}",
+            logs=logs,
+        )
         return logs
 
     # 蓄力：首次选择时支付能量并进入蓄力状态；下一回合再次选择该技能时释放。
@@ -1061,6 +1348,17 @@ def _resolve_action(
             )
             if shortfall > 0:
                 pet.energy += shortfall
+                events.emit(
+                    state,
+                    "energy",
+                    action="gain",
+                    effect="energy_shortfall",
+                    source=events.pet_entity(state, pet),
+                    target=events.pet_entity(state, pet),
+                    skill_id=skill.skill_id,
+                    skill_index=action.skill_index,
+                    value=shortfall,
+                )
         if pet.energy < total_cost:
             # 技能自身：能量不足兜底（如虚假破产"消耗5%生命代替1能量"）
             shortfall = skills.query_energy_shortfall(
@@ -1072,6 +1370,17 @@ def _resolve_action(
             )
             if shortfall > 0:
                 pet.energy += shortfall
+                events.emit(
+                    state,
+                    "energy",
+                    action="gain",
+                    effect="energy_shortfall",
+                    source=events.pet_entity(state, pet),
+                    target=events.pet_entity(state, pet),
+                    skill_id=skill.skill_id,
+                    skill_index=action.skill_index,
+                    value=shortfall,
+                )
         if pet.hp <= 0:
             # 兜底支付耗尽生命：直接力竭，技能不再结算
             _apply_faint(state, side, logs)
@@ -1079,6 +1388,18 @@ def _resolve_action(
         # 已提交的行动照常放出：能量不足时支付当前全部能量，不做拦截。
         total_cost = min(total_cost, pet.energy)
         pet.energy -= total_cost
+        if total_cost > 0:
+            events.emit(
+                state,
+                "energy",
+                action="loss",
+                effect="skill",
+                source=events.pet_entity(state, pet),
+                target=events.pet_entity(state, pet),
+                skill_id=skill.skill_id,
+                skill_index=action.skill_index,
+                value=total_cost,
+            )
         if not replay:
             state.turn_costs[side] += total_cost
 
@@ -1088,7 +1409,17 @@ def _resolve_action(
         pet.windup_skill = skill
         # 蓄力不算"使用攻击技能"（绵里藏针口径），故此处不记 attack_used_this_turn；
         # 对外只暴露"使用了蓄力"，不暴露具体技能。
-        logs.append(f"{side} {pet.name} 开始蓄力")
+        events.emit(
+            state,
+            "windup",
+            action="start",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            skill_id=skill.skill_id,
+            skill_index=action.skill_index,
+            line=f"{side} {pet.name} 开始蓄力",
+            logs=logs,
+        )
         # 特性：进入蓄力状态（洄游 200114 等）
         traits.emit(
             state,
@@ -1101,7 +1432,7 @@ def _resolve_action(
         )
         return logs
 
-    active_bursts = burst.take_bursts(pet)
+    active_bursts = burst.take_bursts(pet, state)
     # 迸发：攻击后给敌方施加能耗+（如超负荷）
     for active_burst in active_bursts:
         if active_burst["type"] == "enemy_energy_cost" and opponent is not None:
@@ -1113,6 +1444,7 @@ def _resolve_action(
                 state.turn,
                 side,
                 pet.name,
+                state=state,
             )
             if gained == 0:
                 continue
@@ -1128,16 +1460,17 @@ def _resolve_action(
     positive_mark = marks.get_mark(state, side, marks.POSITIVE)
     if positive_mark is not None and positive_mark["id"] == 9 and total_cost == 3:
         gain = 4 * positive_mark["stacks"]
-        gained = buffs.grant_buff(pet, buffs.BuffType.ATK, gain)
+        gained = buffs.grant_buff(pet, buffs.BuffType.ATK, gain, state=state)
         if gained:
             traits.on_buff_gain(state, pet, buffs.BuffType.ATK, gained, side, pet.name)
-        gained = buffs.grant_buff(pet, buffs.BuffType.SPATK, gain)
+        gained = buffs.grant_buff(pet, buffs.BuffType.SPATK, gain, state=state)
         if gained:
             traits.on_buff_gain(
                 state, pet, buffs.BuffType.SPATK, gained, side, pet.name
             )
     if skill.skill_id != -1:
         pet.revealed_skills.add(skill.skill_id)
+        pet.used_skill_history.append((state.turn, skill.skill_id, bool(replay)))
         if not replay:
             # 使用记录（疾风连袭重放集合 / "每使用1次X技能"类的来源）：实时更新；
             # 重放是疾风连袭自身的效果，不算一次新的"使用"
@@ -1153,7 +1486,25 @@ def _resolve_action(
         # "上回合双方使用X系技能"类判定的来源（麦芒/掠影）：按技能数据属性记本回合
         pet.last_skill_element = skill.element
         pet.last_skill_category = skill_utils.category_of(skill)
-    logs.append(f"{side} {pet.name} 使用 {'应对！' if is_counter else ''}{skill.name}")
+    events.emit(
+        state,
+        "skill",
+        action="replay" if replay else "use",
+        effect="counter" if is_counter else "skill",
+        source=events.pet_entity(state, pet),
+        target=(
+            events.pet_entity(state, opponent)
+            if opponent is not None
+            else events.team_entity(opponent_side)
+        ),
+        skill_id=skill.skill_id,
+        skill_index=action.skill_index,
+        replay=replay,
+        choice_branch=action.choice_branch,
+        value=total_cost,
+        line=f"{side} {pet.name} 使用 {'应对！' if is_counter else ''}{skill.name}",
+        logs=logs,
+    )
     if used is not None:
         used.append(skill)
     # 特性：技能开始
@@ -1192,7 +1543,9 @@ def _resolve_action(
     # 使用攻击技能"一致），释放回合照常消耗并计入本次伤害。计入 extra_power_*，
     # 故与其它通用威力 buff 一致，星陨印记的附加伤害同样吃（见下方星陨段）。
     if skill.category in (0, 1):
-        next_attack_percent, next_attack_flat = buffs.consume_next_attack_power(pet)
+        next_attack_percent, next_attack_flat = buffs.consume_next_attack_power(
+            pet, state
+        )
     else:
         next_attack_percent, next_attack_flat = 0, 0
 
@@ -1327,7 +1680,21 @@ def _resolve_action(
             if not prevented:
                 opponent.hp = max(0, opponent.hp - total_damage)
                 applied_damage = total_damage
-                logs.append(f"  造成 {applied_damage} 伤害")
+                events.emit(
+                    state,
+                    "damage",
+                    action="damage",
+                    effect="skill",
+                    source=events.pet_entity(state, pet),
+                    target=events.pet_entity(state, opponent),
+                    skill_id=skill.skill_id,
+                    skill_index=action.skill_index,
+                    value=applied_damage,
+                    stacks=hit_count,
+                    line=f"  造成 {applied_damage} 伤害",
+                    logs=logs,
+                    extra={"type_mult": result["type_multiplier"]},
+                )
                 traits.emit(
                     state,
                     "attack",
@@ -1385,6 +1752,17 @@ def _resolve_action(
                         base_heal = heal
                         heal = traits.query_heal(state, pet, heal, source="lifesteal")
                         pet.hp = min(pet.max_hp, pet.hp + heal)
+                        events.emit(
+                            state,
+                            "heal",
+                            action="heal",
+                            effect="lifesteal",
+                            source=events.pet_entity(state, opponent),
+                            target=events.pet_entity(state, pet),
+                            skill_id=skill.skill_id,
+                            value=heal,
+                            logs=logs,
+                        )
                         traits.emit(
                             state,
                             "heal",
@@ -1412,7 +1790,19 @@ def _resolve_action(
             else:
                 lost = hp_before - opponent.hp
                 if lost > 0:
-                    logs.append(f"  造成 {lost} 伤害")
+                    events.emit(
+                        state,
+                        "damage",
+                        action="damage",
+                        effect="skill",
+                        source=events.pet_entity(state, pet),
+                        target=events.pet_entity(state, opponent),
+                        skill_id=skill.skill_id,
+                        skill_index=action.skill_index,
+                        value=lost,
+                        line=f"  造成 {lost} 伤害",
+                        logs=logs,
+                    )
 
         # 命中附加（STAGE_HIT）在命中后立即结算，脱离/返场请求也随之立即处理。
         hit_ctx = skills.emit(
@@ -1465,7 +1855,31 @@ def _resolve_action(
             # 消耗层数经特性查询（守望星 200210"仅消耗一半层数，仍造成满层伤害"）
             consume = traits.query_star_consume(state, pet, n)
             marks.consume_mark_stacks(state, opponent_side, 7, consume)
-            logs.append(f"  星陨印记触发，造成 {lost} 幻系伤害")
+            events.emit(
+                state,
+                "mark",
+                action="consume",
+                source=events.mark_entity(opponent_side),
+                target=events.pet_entity(state, opponent),
+                skill_id=skill.skill_id,
+                skill_index=action.skill_index,
+                attribute=7,
+                stacks=consume,
+            )
+            events.emit(
+                state,
+                "damage",
+                action="damage",
+                effect="mark",
+                source=events.pet_entity(state, pet),
+                target=events.pet_entity(state, opponent),
+                skill_id=skill.skill_id,
+                skill_index=action.skill_index,
+                attribute=17,
+                value=lost,
+                line=f"  星陨印记触发，造成 {lost} 幻系伤害",
+                logs=logs,
+            )
     elif skill.category == 2:
         pet.has_acted_since_entry = True
         # 迸发在行动结算顶部已取过一次（active_bursts），此处不重复取。
@@ -1481,8 +1895,22 @@ def _resolve_action(
         # 防御技能复用通用冷却：任意防御使用后，本精灵所有防御技能进入冷却。
         for defense_skill in pet.skills:
             if defense_skill.category == 2:
-                skill_utils.schedule_skill_cooldown(pet, defense_skill.skill_id)
-        logs.append(f"  防御，减伤 {int(reduction * 100)}%")
+                skill_utils.schedule_skill_cooldown(
+                    pet, defense_skill.skill_id, state=state
+                )
+        events.emit(
+            state,
+            "skill",
+            action="use",
+            effect="defense",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            skill_id=skill.skill_id,
+            skill_index=action.skill_index,
+            value=int(reduction * 100),
+            line=f"  防御，减伤 {int(reduction * 100)}%",
+            logs=logs,
+        )
         # 防御技能本体（STAGE_DEFENSE）：血气"应对攻击保留1血"等须在对方攻击落位前
         # 生效，是 B46 回合末登记的例外（防御应对攻击强制先手）。
         defense_ctx = skills.emit(
@@ -1516,7 +1944,18 @@ def _resolve_action(
         # 迸发在行动结算顶部已取过一次（active_bursts），此处不重复取。
         handler = skills.get_handler(skill.skill_id)
         if handler is None or not handler.implemented:
-            logs.append("  效果暂未实现")
+            events.emit(
+                state,
+                "skill",
+                action="use",
+                effect="unimplemented",
+                source=events.pet_entity(state, pet),
+                target=events.team_entity(side),
+                skill_id=skill.skill_id,
+                skill_index=action.skill_index,
+                line="  效果暂未实现",
+                logs=logs,
+            )
         status_ctx = skills.emit(
             state,
             skills.STAGE_STATUS,
@@ -1565,7 +2004,19 @@ def _resolve_action(
     )
     lost_after_use = hp_before_after_use - pet.hp
     if lost_after_use > 0:
-        logs.append(f"{side} {pet.name} 失去 {lost_after_use} 生命")
+        events.emit(
+            state,
+            "life",
+            action="loss",
+            effect="cost",
+            source=events.pet_entity(state, pet),
+            target=events.pet_entity(state, pet),
+            skill_id=skill.skill_id,
+            skill_index=action.skill_index,
+            value=lost_after_use,
+            line=f"{side} {pet.name} 失去 {lost_after_use} 生命",
+            logs=logs,
+        )
     # 使用后登记的脱离（如"使用后自己脱离"类），统一消费。
     _consume_skill_leave(state, after_use_ctx, side, logs)
     # 使用后自身生命归零（彗星"使用后消耗全部生命"类）：立即力竭。
@@ -1748,6 +2199,17 @@ def _resolve_repeated(
                 )
                 if shortfall > 0:
                     pet.energy += shortfall
+                    events.emit(
+                        state,
+                        "energy",
+                        action="gain",
+                        effect="energy_shortfall",
+                        source=events.pet_entity(state, pet),
+                        target=events.pet_entity(state, pet),
+                        skill_id=skill.skill_id,
+                        skill_index=action.skill_index,
+                        value=shortfall,
+                    )
             if pet.windup_skill is not skill and pet.energy < current_skill_cost(
                 state, side, skill, skill_index=action.skill_index
             ):
@@ -1764,6 +2226,17 @@ def _resolve_repeated(
                 )
                 if shortfall > 0:
                     pet.energy += shortfall
+                    events.emit(
+                        state,
+                        "energy",
+                        action="gain",
+                        effect="energy_shortfall",
+                        source=events.pet_entity(state, pet),
+                        target=events.pet_entity(state, pet),
+                        skill_id=skill.skill_id,
+                        skill_index=action.skill_index,
+                        value=shortfall,
+                    )
             if pet.hp <= 0:
                 # 兜底支付耗尽生命：直接力竭，技能不再结算
                 _apply_faint(state, side, logs)
@@ -1771,7 +2244,18 @@ def _resolve_repeated(
             if pet.windup_skill is not skill and pet.energy < current_skill_cost(
                 state, side, skill, skill_index=action.skill_index
             ):
-                logs.append(f"{side} {pet.name} 能量不足，停止重复使用")
+                events.emit(
+                    state,
+                    "skill",
+                    action="block",
+                    effect="energy_stop",
+                    source=events.pet_entity(state, pet),
+                    target=events.team_entity(side),
+                    skill_id=skill.skill_id,
+                    skill_index=action.skill_index,
+                    line=f"{side} {pet.name} 能量不足，停止重复使用",
+                    logs=logs,
+                )
                 break
         logs.extend(
             _resolve_action(
@@ -1895,6 +2379,15 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     _validate_actions(action_a, action_b)
     state.turn += 1
     state.log = []
+    state.event_phase = "action"
+    events.emit(
+        state,
+        "turn",
+        action="start",
+        source=events.field_entity(),
+        target=events.field_entity(),
+        value=state.turn,
+    )
     # 上一回合的脱离暂停/请求不应残留（正常已被续接消费，这里防御性清空）
     state.paused_turn = None
     state.pending_counters = []
@@ -1913,7 +2406,7 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
             if pet.pending_dizzy:
                 buffs.grant_buff(
                     pet, buffs.BuffType.DIZZY, pet.pending_dizzy,
-                    buffs.DurationKind.NORMAL, state.turn,
+                    buffs.DurationKind.NORMAL, state.turn, state=state,
                 )
                 pet.pending_dizzy = 0
     traits.on_turn_start(state, action_a, action_b)
@@ -1934,7 +2427,15 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
     for side, action in (("A", action_a), ("B", action_b)):
         if action.kind == "flee":
             state.winner = "B" if side == "A" else "A"
-            state.log.append(f"{side} 逃跑了，{state.winner} 获胜")
+            events.emit(
+                state,
+                "flee",
+                action="flee",
+                source=events.team_entity(side),
+                target=events.team_entity(state.winner),
+                attribute=state.winner,
+                line=f"{side} 逃跑了，{state.winner} 获胜",
+            )
             return state
 
     # 共鸣魔法：不占回合操作，双方都选完技能后才结算，且先于本回合行动
@@ -1948,9 +2449,11 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
             counter.action_category(state, opponent_side, opponent_action)
             == counter.STATUS
         )
-        resonance.use_magic(
-            state, side, action.magic_id, opponent_is_status, action.magic_branch
-        )
+        with events.phase(state, "resonance"):
+            resonance.use_magic(
+                state, side, action.magic_id, opponent_is_status, action.magic_branch
+            )
+    state.event_phase = "action"
 
     # 切换精灵优先级最高：先处理所有换人，再处理攻击/聚能
     actions = {"A": action_a, "B": action_b}
@@ -2077,7 +2580,24 @@ def step(state: BattleState, action_a: Action, action_b: Action) -> BattleState:
                     and 0 <= victim_action.skill_index < len(victim.skills)
                 ):
                     label = victim.skills[victim_action.skill_index].name
-                state.log.append(f"{interrupted} {victim.name} {label} 被打断")
+                events.emit(
+                    state,
+                    "interrupt",
+                    action="interrupt",
+                    effect="interrupt",
+                    source=events.pet_entity(state, victim),
+                    target=events.team_entity(interrupted),
+                    attribute=label,
+                    skill_id=(
+                        victim.skills[victim_action.skill_index].skill_id
+                        if victim_action is not None
+                        and victim_action.kind == "skill"
+                        and victim_action.skill_index is not None
+                        and 0 <= victim_action.skill_index < len(victim.skills)
+                        else None
+                    ),
+                    line=f"{interrupted} {victim.name} {label} 被打断",
+                )
         # 先手方行动后请求脱离（如移花接木"随后脱离"）：立即离场并暂停等待选人。
         # **双侧脱离**（风隐）同样在此刻进入收集阶段：双方盲选集齐后才"先退先入、
         # 后退后入"，后手方的行动随后照常结算（打到新精灵上）。
@@ -2267,11 +2787,20 @@ def pet_to_dict(
             for buff in pet.buffs
         ],
         "skills": skill_items,
+        "trait_state": {
+            key: value
+            for key, value in pet.trait_state.items()
+            if isinstance(value, (int, float, bool))
+        },
         "windup_skill_id": (
             None if pet.windup_skill is None else pet.windup_skill.skill_id
         ),
         "defense_reduction": pet.defense_reduction,
         "used_skill_counts": dict(pet.used_skill_counts),
+        "used_skill_history": [
+            {"turn": turn, "skill_id": skill_id, "replay": replay}
+            for turn, skill_id, replay in pet.used_skill_history
+        ],
         "last_used_skill_id": pet.last_used_skill_id,
         "counter_stats": dict(pet.counter_stats),
         "has_acted_since_entry": pet.has_acted_since_entry,
@@ -2477,10 +3006,16 @@ def state_to_dict(state: BattleState, view_side: str | None = None) -> dict:
                 ]
             side_list.append(d)
         teams[side] = side_list
+    visible_events = [
+        {key: value for key, value in event.items() if key != "last_used"}
+        for event in state.events
+        if event["public"] or view_side is None or event.get("owner") == view_side
+    ]
     return {
         "turn": state.turn,
         "winner": state.winner,
         "log": state.log,
+        "events": visible_events,
         "trait_events": list(state.trait_events),
         "counter_events": list(state.counter_events),
         "magic": state.magic,

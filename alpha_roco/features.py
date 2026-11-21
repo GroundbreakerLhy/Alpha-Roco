@@ -1,20 +1,369 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import re
 
+import numpy as np
 import torch
 
-from sim.data_loader import DATA_DIR, calc_all_stats, calc_speed_range, calc_stat
-from sim.skills import impl as _skills_impl  # noqa: F401
+from sim.data_loader import (
+    DATA_DIR,
+    calc_all_stats,
+    calc_hp,
+    calc_speed_range,
+    calc_stat,
+    get_nature_multipliers,
+)
+from sim.enums import LORD_BLOODLINE
+from sim.events import (
+    ENTITY_KINDS,
+    EVENT_ACTIONS,
+    EVENT_EFFECTS,
+    EVENT_KINDS,
+    EVENT_PHASES,
+)
+from sim.skills import impl as _skills_impl
 from sim.typechart import type_multiplier
 
 from .status import duration_code
 
 SPECIAL = ("<PAD>", "<UNK>", "<NONE>")
-EVENT_FEATURES = 11
+EVENT_FEATURE_KEYS = (
+    "turn",
+    "seq",
+    "order",
+    "value",
+    "value_present",
+    "stacks",
+    "duration",
+    "duration_value",
+    "duration_present",
+    "skill_index",
+    "replay",
+    "choice_branch",
+    "public",
+    "source_side",
+    "source_index",
+    "source_pet_present",
+    "target_side",
+    "target_index",
+    "target_pet_present",
+    "attribute",
+    "attribute_present",
+)
+EVENT_FEATURES = len(EVENT_FEATURE_KEYS)
+SKILL_ATTRIBUTE_KEYS = (
+    "category",
+    "element",
+    "power",
+    "energy_cost",
+    "hit_count_flat",
+    "hit_count_percent",
+    "lifesteal",
+    "damage_reduction",
+    "priority_delta",
+    "energy_cost_delta",
+    "power_percent",
+    "power_flat",
+    "drive",
+    "swift",
+    "windup",
+    "choice",
+    "usable",
+    "counter_attack",
+    "counter_defense",
+    "counter_status",
+    "counter_interrupt",
+    "round_replace",
+    "round_replace_cost_delta",
+    "target_self",
+    "target_enemy",
+    "target_self_backline",
+    "target_self_team",
+    "target_enemy_team",
+    "target_field",
+)
+SKILL_STATE_ATTRIBUTE_KEYS = (
+    "drive",
+    "cooldown",
+    "cooldown_pending",
+    "used_count",
+    "windup_active",
+    "temporary",
+    "origin_skill",
+    "growth_power",
+    "growth_energy_cost",
+    "growth_extra_drive",
+    "growth_stamp",
+    "growth_other_0",
+    "growth_other_1",
+    "growth_other_2",
+    "growth_other_3",
+)
+TRAIT_STATE_KEYS = (
+    "triggers",
+    "uses",
+    "charges",
+    "count",
+    "stacks",
+    "entries",
+    "windups",
+    "kills",
+    "layers",
+    "active_counters",
+    "active_uses",
+    "restored_energy",
+    "active",
+    "ready",
+    "sentinel_triggered",
+)
+PET_STATE_ATTRIBUTE_KEYS = (
+    "hp_ratio",
+    "energy",
+    "defense_reduction",
+    "skill_cooldown_count",
+    "skill_cooldown_pending_count",
+    "windup_active",
+    "windup_skill",
+    "burst_count",
+    "burst_attack_flat",
+    "burst_attack_percent",
+    "used_skill_count",
+    "last_used_skill",
+    "counter_count",
+    "counter_attack",
+    "counter_defense",
+    "counter_status",
+    "has_acted_since_entry",
+    "entry_turn",
+    "light_heal_rounds",
+    "overload_next",
+    "overload_current",
+    "leave_count",
+    "attack_used_this_turn",
+    "attack_used_last_turn",
+    "last_skill_element",
+    "last_skill_category",
+    "prev_skill_element",
+    "prev_skill_category",
+    "buff_count",
+    "buff_duration",
+    *[f"trait_{key}" for key in TRAIT_STATE_KEYS],
+    "trait_other_count",
+    "trait_other_value",
+)
+SKILL_EFFECT_STAGES = (
+    "entry_effects",
+    "slot_change_effects",
+    "use_start_effects",
+    "hit_effects",
+    "counter_effects",
+    "defense_effects",
+    "status_effects",
+    "after_use_effects",
+    "round_end_effects",
+)
+DESCRIPTOR_VOCAB_KEYS = frozenset(
+    {
+        "skill_attribute",
+        "skill_effect_kind",
+        "skill_effect_target",
+        "skill_effect_stage",
+        "skill_state_attribute",
+        "pet_state_attribute",
+    }
+)
+
+
+def _attribute_values(skill, static):
+    targets = set(static["targets"])
+    counter = static["counter_target"]
+    return [
+        _number(skill.get("category_raw"), 3),
+        _number(skill.get("element_raw"), 18),
+        _number(skill.get("power_raw"), 200),
+        _number(skill.get("energy_raw"), 10),
+        static["hit_count_flat"] / 10,
+        static["hit_count_percent"] / 100,
+        static["lifesteal"],
+        static["damage_reduction"],
+        static["priority_delta"] / 3,
+        static["energy_cost_delta"] / 10,
+        static["power_percent"] / 200,
+        static["power_flat"] / 200,
+        static["drive"] / 3,
+        float(static["swift"]),
+        float(static["windup"]),
+        float(static["choice"]),
+        float(static["usable"]),
+        float(counter == "attack"),
+        float(counter == "defense"),
+        float(counter == "status"),
+        float(static["counter_interrupt"]),
+        float(static["round_replace"]),
+        static["round_replace_cost_delta"] / 10,
+        float("self" in targets),
+        float("enemy" in targets),
+        float("self_backline" in targets),
+        float("self_team" in targets),
+        float("enemy_team" in targets),
+        float("field" in targets or "both" in targets),
+    ]
+
+
+def _skill_state_values(raw):
+    fields = raw if isinstance(raw, dict) else {}
+    growth = fields.get("growth", {})
+    growth = growth if isinstance(growth, dict) else {}
+    other = sorted(
+        (key, value)
+        for key, value in growth.items()
+        if key not in ("power", "energy_cost", "extra_drive", "stamp")
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    )
+    values = [
+        _number(fields.get("drive", 0), 3),
+        float(bool(fields.get("cooldown"))),
+        float(bool(fields.get("cooldown_pending"))),
+        _number(fields.get("used_count"), 10),
+        float(bool(fields.get("windup_active"))),
+        float(bool(fields.get("temporary"))),
+        _number(fields.get("origin_skill_id"), 10_000_000),
+        _number(growth.get("power"), 10),
+        _number(growth.get("energy_cost"), 10),
+        _number(growth.get("extra_drive"), 10),
+        _number(growth.get("stamp"), 10),
+        *[_number(value, 10) for _, value in other[:4]],
+        *([0.0] * max(0, 4 - len(other))),
+    ]
+    mask = [
+        "drive" in fields,
+        "cooldown" in fields,
+        "cooldown_pending" in fields,
+        "used_count" in fields,
+        "windup_active" in fields,
+        "temporary" in fields,
+        "origin_skill_id" in fields,
+        "power" in growth,
+        "energy_cost" in growth,
+        "extra_drive" in growth,
+        "stamp" in growth,
+        *([True] * min(len(other), 4)),
+        *([False] * max(0, 4 - len(other))),
+    ]
+    return values, mask
+
+
+def _category_number(value):
+    return {"attack": 0.0, "defense": 1.0, "status": 3.0}.get(value, 0.0) / 3
+
+
+def _pet_state_values(raw):
+    fields = raw if isinstance(raw, dict) else {}
+    bursts = fields.get("bursts") or []
+    counters = fields.get("counter_stats") or {}
+    types = counters.get("types") or {}
+    buffs = fields.get("buffs") or []
+    trait_state = fields.get("trait_state") or {}
+    trait_values = []
+    trait_mask = []
+    for key in TRAIT_STATE_KEYS:
+        value = trait_state.get(key)
+        known = isinstance(value, (int, float, bool))
+        trait_values.append(float(value) if isinstance(value, bool) else _number(value, 10))
+        trait_mask.append(known)
+    other_traits = [
+        value
+        for key, value in trait_state.items()
+        if key not in TRAIT_STATE_KEYS
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ]
+    values = [
+        _number(fields.get("hp_percent", 100), 100)
+        if "hp_percent" in fields
+        else _number(fields.get("hp"), fields.get("max_hp", 100)),
+        _number(fields.get("energy"), 10),
+        _number(fields.get("defense_reduction")),
+        min(len(fields.get("skill_cooldowns") or ()), 10) / 10,
+        min(len(fields.get("skill_cooldowns_pending") or ()), 10) / 10,
+        float(fields.get("windup_skill_id") is not None),
+        _number(fields.get("windup_skill_id"), 10_000_000),
+        min(len(bursts), 10) / 10,
+        sum(
+            _number(burst.get("value"), 100)
+            for burst in bursts
+            if burst.get("type") == "attack_power_flat"
+        ),
+        sum(
+            _number(burst.get("value"), 100)
+            for burst in bursts
+            if burst.get("type") == "attack_power_percent"
+        ),
+        min(len(fields.get("used_skill_counts") or {}), 20) / 20,
+        _number(fields.get("last_used_skill_id"), 10_000_000),
+        min(_number(counters.get("count")), 20) / 20,
+        min(_number(types.get("attack")), 20) / 20,
+        min(_number(types.get("defense")), 20) / 20,
+        min(_number(types.get("status")), 20) / 20,
+        float(bool(fields.get("has_acted_since_entry"))),
+        _number(fields.get("entry_turn"), 100),
+        _number(fields.get("light_heal_rounds"), 3),
+        min(len(fields.get("overload_next") or {}), 10) / 10,
+        min(len(fields.get("overload_current") or {}), 10) / 10,
+        _number(fields.get("leave_count"), 10),
+        float(bool(fields.get("attack_used_this_turn"))),
+        float(bool(fields.get("attack_used_last_turn"))),
+        _number(fields.get("last_skill_element"), 18),
+        _category_number(fields.get("last_skill_category")),
+        _number(fields.get("prev_skill_element"), 18),
+        _category_number(fields.get("prev_skill_category")),
+        min(len(buffs), 20) / 20,
+        sum(_number(buff.get("duration"), 10) for buff in buffs),
+        *trait_values,
+        min(len(other_traits), 10) / 10,
+        math.tanh(sum(other_traits) / 10.0),
+    ]
+    mask = [
+        ("hp" in fields or "hp_percent" in fields),
+        "energy" in fields,
+        "defense_reduction" in fields,
+        "skill_cooldowns" in fields,
+        "skill_cooldowns_pending" in fields,
+        "windup_skill_id" in fields,
+        "windup_skill_id" in fields,
+        "bursts" in fields,
+        "bursts" in fields,
+        "bursts" in fields,
+        "used_skill_counts" in fields,
+        "last_used_skill_id" in fields,
+        "counter_stats" in fields,
+        "counter_stats" in fields,
+        "counter_stats" in fields,
+        "counter_stats" in fields,
+        "has_acted_since_entry" in fields,
+        "entry_turn" in fields,
+        "light_heal_rounds" in fields,
+        "overload_next" in fields,
+        "overload_current" in fields,
+        "leave_count" in fields,
+        "attack_used_this_turn" in fields,
+        "attack_used_last_turn" in fields,
+        "last_skill_element" in fields,
+        "last_skill_category" in fields,
+        "prev_skill_element" in fields,
+        "prev_skill_category" in fields,
+        "buffs" in fields,
+        "buffs" in fields,
+        *trait_mask,
+        "trait_state" in fields,
+        "trait_state" in fields,
+    ]
+    return values, mask
 
 
 def _vocabulary(values):
@@ -29,6 +378,16 @@ def _index(value, vocab):
     if value is None:
         return 2
     return vocab.get(value, vocab.get(str(value), 1))
+
+
+def _effect_targets(effect) -> set[str]:
+    targets = set()
+    target = getattr(effect, "target", None)
+    if isinstance(target, str) and target:
+        targets.add(target)
+    for nested in getattr(effect, "effects", ()) or ():
+        targets.update(_effect_targets(nested))
+    return targets
 
 
 def _number(value, scale=1.0):
@@ -59,6 +418,24 @@ def _load(name):
     return json.loads((DATA_DIR / name).read_text(encoding="utf-8"))
 
 
+class _LazyPriors(dict):
+    def __init__(self, species, compute):
+        super().__init__()
+        self._species = species
+        self._compute = compute
+
+    def get(self, key, default=None):
+        try:
+            identity = int(key)
+        except (TypeError, ValueError):
+            return default
+        if identity not in self._species:
+            return default
+        if identity not in self:
+            self[identity] = self._compute(self._species[identity])
+        return self[identity]
+
+
 class ObservationEncoder:
     def __init__(self):
         self.spirits = _load("spirits.json")["spirits"]
@@ -75,15 +452,52 @@ class ObservationEncoder:
             handler.skill_id for handler in all_handlers() if handler.choice
         }
         self.static_of = static_of
+        self.skill_targets = {}
+        self.skill_effect_kinds = set()
+        self.skill_effect_targets = set()
+        for handler in all_handlers():
+            for effect in static_of(handler.skill_id)["effects"]:
+                self.skill_effect_kinds.add(effect["kind"])
+                if effect["target"]:
+                    self.skill_effect_targets.add(effect["target"])
+            if getattr(handler, "category", -1) != 3:
+                continue
+            targets = set()
+            for effect in getattr(handler, "status_effects", ()) or ():
+                targets.update(_effect_targets(effect))
+            self.skill_targets[handler.skill_id] = targets
         self.typechart = _load("typechart.json")
         self.spirit_vocab = _vocabulary(item["id"] for item in self.spirits)
         self.skill_vocab = _vocabulary(item["id"] for item in self.skills)
         self.effect_vocab = _vocabulary(item["id"] for item in self.buffs)
         self.trait_vocab = _vocabulary(item["id"] for item in self.traits)
+        self.bloodline_vocab = _vocabulary(range(19))
+        self.bloodline_skill_map = {}
+        for spirit in self.spirits:
+            for entry in spirit.get("skills", {}).get("bloodline", []):
+                self.bloodline_skill_map.setdefault(int(entry["skillId"]), set()).add(
+                    int(entry["bloodline"])
+                )
         self.element_vocab = _vocabulary(range(19))
-        self.nature_vocab = _vocabulary(
-            item["id"] for item in _load("natures.json")["natures"]
-        )
+        self.natures = _load("natures.json")["natures"]
+        self.nature_vocab = _vocabulary(item["id"] for item in self.natures)
+        self.nature_mults = [
+            get_nature_multipliers(item["id"]) for item in self.natures
+        ]
+        stat_keys = ("hp", "atk", "def", "spatk", "spdef", "speed")
+        self._prior_species = {
+            int(spirit["id"]): spirit
+            for spirit in self.spirits
+            if spirit.get("stats")
+            and all(
+                isinstance(spirit["stats"].get(key), (int, float))
+                for key in stat_keys
+            )
+        }
+        self.prior_stats = _LazyPriors(self._prior_species, self._stat_prior)
+        self._static_cache = {}
+        self._stats_cache = {}
+        self._speed_range_cache = {}
         self.category_vocab = _vocabulary(range(4))
         self.weather_vocab = _vocabulary(
             item["id"] for item in _load("weather.json").get("weathers", [])
@@ -94,6 +508,12 @@ class ObservationEncoder:
         self.action_vocab = _vocabulary(
             ("lead", "skill", "charge", "switch", "flee", "unknown_skill")
         )
+        self.skill_attribute_vocab = _vocabulary(SKILL_ATTRIBUTE_KEYS)
+        self.skill_effect_kind_vocab = _vocabulary(self.skill_effect_kinds)
+        self.skill_effect_target_vocab = _vocabulary(self.skill_effect_targets)
+        self.skill_effect_stage_vocab = _vocabulary(SKILL_EFFECT_STAGES)
+        self.skill_state_attribute_vocab = _vocabulary(SKILL_STATE_ATTRIBUTE_KEYS)
+        self.pet_state_attribute_vocab = _vocabulary(PET_STATE_ATTRIBUTE_KEYS)
         self.phase_vocab = _vocabulary(("lead", "action", "replacement"))
         self.event_vocab = _vocabulary(
             (
@@ -109,12 +529,18 @@ class ObservationEncoder:
                 "round",
             )
         )
+        self.event_kind_vocab = _vocabulary(EVENT_KINDS)
+        self.event_action_vocab = _vocabulary(EVENT_ACTIONS)
+        self.event_effect_vocab = _vocabulary(EVENT_EFFECTS)
+        self.event_phase_vocab = _vocabulary(EVENT_PHASES)
+        self.event_entity_vocab = _vocabulary(ENTITY_KINDS)
         self.side_vocab = _vocabulary(("own", "enemy"))
         self.vocabularies = {
             "spirit": self.spirit_vocab,
             "skill": self.skill_vocab,
             "effect": self.effect_vocab,
             "trait": self.trait_vocab,
+            "bloodline": self.bloodline_vocab,
             "element": self.element_vocab,
             "nature": self.nature_vocab,
             "category": self.category_vocab,
@@ -123,7 +549,18 @@ class ObservationEncoder:
             "action": self.action_vocab,
             "phase": self.phase_vocab,
             "event": self.event_vocab,
+            "event_kind": self.event_kind_vocab,
+            "event_action": self.event_action_vocab,
+            "event_effect": self.event_effect_vocab,
+            "event_phase": self.event_phase_vocab,
+            "event_entity": self.event_entity_vocab,
             "side": self.side_vocab,
+            "skill_attribute": self.skill_attribute_vocab,
+            "skill_effect_kind": self.skill_effect_kind_vocab,
+            "skill_effect_target": self.skill_effect_target_vocab,
+            "skill_effect_stage": self.skill_effect_stage_vocab,
+            "skill_state_attribute": self.skill_state_attribute_vocab,
+            "pet_state_attribute": self.pet_state_attribute_vocab,
         }
         self.vocab_sizes = {
             name: len(vocab) + len(SPECIAL) for name, vocab in self.vocabularies.items()
@@ -134,6 +571,37 @@ class ObservationEncoder:
             sort_keys=True,
         )
         self.vocab_signature = hashlib.sha256(signature.encode("utf-8")).hexdigest()
+
+
+    def _static(self, skill_id):
+        cached = self._static_cache.get(skill_id)
+        if cached is None:
+            cached = dict(self.static_of(skill_id))
+            self._static_cache[skill_id] = cached
+        return cached
+
+    def _stats_of(self, species, raw):
+        ivs = raw["ivs"]
+        key = (
+            species.get("id"),
+            tuple(ivs[key] for key in ("hp", "atk", "def", "spatk", "spdef", "speed")),
+            raw.get("nature"),
+        )
+        cached = self._stats_cache.get(key)
+        if cached is None:
+            cached = calc_all_stats(species["stats"], ivs, raw.get("nature"))
+            self._stats_cache[key] = cached
+        return cached
+
+    def _speed_range_of(self, species):
+        base = species.get("stats", {}).get("speed")
+        if base is None:
+            return [None, None]
+        cached = self._speed_range_cache.get(base)
+        if cached is None:
+            cached = calc_speed_range(base)
+            self._speed_range_cache[base] = cached
+        return cached
 
     def _skill(self, raw):
         fields = raw if isinstance(raw, dict) else {}
@@ -146,7 +614,7 @@ class ObservationEncoder:
         else:
             item = self.skill_by_name.get(str(raw), {})
         skill_id = item.get("id", raw if isinstance(raw, (int, str)) else None)
-        static = self.static_of(
+        static = self._static(
             skill_id
             if isinstance(skill_id, int)
             else (
@@ -155,6 +623,14 @@ class ObservationEncoder:
                 else None
             )
         )
+        numeric_skill_id = (
+            skill_id
+            if isinstance(skill_id, int)
+            else int(skill_id)
+            if isinstance(skill_id, str) and skill_id.isdigit()
+            else None
+        )
+        targets = self.skill_targets.get(numeric_skill_id, set())
         power = fields.get("display_power", fields.get("power", item.get("power")))
         energy = fields.get(
             "energy_cost", fields.get("energyCost", item.get("energyCost"))
@@ -166,10 +642,48 @@ class ObservationEncoder:
             else fields.get("element", item.get("element"))
         )
         counter = static["counter_target"]
+        attributes = _attribute_values(
+            {
+                "category_raw": category,
+                "element_raw": element,
+                "power_raw": power,
+                "energy_raw": energy,
+            },
+            static,
+        )
+        effects = [
+            (
+                self.skill_effect_kind_vocab.get(
+                    effect["kind"], self.skill_effect_kind_vocab.get("<UNK>", 1)
+                ),
+                self.skill_effect_target_vocab.get(
+                    effect["target"] or "", self.skill_effect_target_vocab.get("<NONE>", 2)
+                ),
+                self.skill_effect_stage_vocab.get(
+                    effect["stage"], self.skill_effect_stage_vocab.get("<UNK>", 1)
+                ),
+                min(max((effect["value"] or 0.0) / 10, -10.0), 10.0),
+                duration_code(effect["duration"]),
+            )
+            for effect in static["effects"]
+        ]
+        state_values, state_mask = _skill_state_values(fields)
         return {
             "id": _index(skill_id, self.skill_vocab),
             "category": _index(category, self.category_vocab),
             "element": _index(element, self.element_vocab),
+            "attribute_ids": [
+                self.skill_attribute_vocab[key] for key in SKILL_ATTRIBUTE_KEYS
+            ],
+            "attribute_values": attributes,
+            "attribute_mask": [True] * len(SKILL_ATTRIBUTE_KEYS),
+            "effects": effects,
+            "state_ids": [
+                self.skill_state_attribute_vocab[key]
+                for key in SKILL_STATE_ATTRIBUTE_KEYS
+            ],
+            "state_values": state_values,
+            "state_mask": state_mask,
             "numeric": [
                 _number(power, 200),
                 _number(energy, 10),
@@ -192,6 +706,7 @@ class ObservationEncoder:
             "category_raw": _scalar(category),
             "element_raw": _scalar(element),
             "static": static,
+            "targets": targets,
         }
 
     def _public_own(self, raw):
@@ -208,6 +723,8 @@ class ObservationEncoder:
             "energy": raw.get("energy"),
             "eff_speed_range": raw.get("eff_speed_range") or raw.get("speed_range"),
             "buffs": raw.get("buffs", []),
+            "used_skill_counts": raw.get("used_skill_counts", {}),
+            "used_skill_history": raw.get("used_skill_history", []),
             "skills": [],
         }
 
@@ -219,7 +736,8 @@ class ObservationEncoder:
         ) or self.spirit_by_name.get(name, {})
         stats = raw.get("stats", {}) if is_own else {}
         if is_own and not stats and species and "ivs" in raw:
-            stats = calc_all_stats(species["stats"], raw["ivs"], raw.get("nature"))
+            stats = self._stats_of(species, raw)
+        stat_estimate = stats or self.prior_stats.get(species.get("id"), {})
         hp = raw.get("hp", raw.get("hp_percent", 100))
         max_hp = raw.get("max_hp", 100)
         hp_ratio = (
@@ -229,14 +747,14 @@ class ObservationEncoder:
         )
         speed_range = raw.get("eff_speed_range") or raw.get("speed_range")
         if not speed_range and species:
-            speed_range = calc_speed_range(species["stats"]["speed"])
+            speed_range = self._speed_range_of(species)
         speed_range = speed_range or [None, None]
         values = [
             hp_ratio,
             _number(raw.get("energy"), 10),
             _number(raw.get("level", 60), 100) if is_own else 0.0,
             *[
-                _number(stats.get(key), 500)
+                _number(stat_estimate.get(key), 500)
                 for key in ("hp", "atk", "def", "spatk", "spdef", "speed")
             ],
             _number(raw.get("eff_speed"), 500) if is_own else 0.0,
@@ -248,7 +766,7 @@ class ObservationEncoder:
             "hp" in raw or "hp_percent" in raw or is_own,
             "energy" in raw,
             "level" in raw and is_own,
-            *([bool(stats)] * 6),
+            *([bool(stat_estimate)] * 6),
             "eff_speed" in raw and is_own,
             speed_range[0] is not None,
             speed_range[-1] is not None,
@@ -271,16 +789,39 @@ class ObservationEncoder:
         effects = [
             {
                 "id": _index(effect.get("type"), self.effect_vocab),
+                "source_id": _index(
+                    self.spirit_by_name.get(effect.get("source_pet", ""), {}).get("id"),
+                    self.spirit_vocab,
+                ),
+                "source_trait": _index(
+                    effect.get("source_trait_id"), self.trait_vocab
+                ),
                 "numeric": [
                     _number(effect.get("value"), 100),
                     duration_code(effect.get("duration")),
                     1.0,
+                    float(
+                        bool(effect.get("source_side"))
+                        and effect.get("source_side") == raw.get("side")
+                    ),
+                    {"": 0.0, "trait": 1.0, "debuff": 2.0}.get(
+                        effect.get("source_kind", ""), 0.0
+                    )
+                    / 2.0,
+                    float(effect.get("source_pet", "") == name),
                 ],
                 "mask": True,
             }
             for effect in raw.get("buffs", [])
         ]
+        bloodline = raw.get("bloodline") if is_own else None
+        state_values, state_mask = _pet_state_values(raw)
         return {
+            "state_ids": [
+                self.pet_state_attribute_vocab[key] for key in PET_STATE_ATTRIBUTE_KEYS
+            ],
+            "state_values": state_values,
+            "state_mask": state_mask,
             "id": _index(species.get("id", raw.get("spirit_id")), self.spirit_vocab),
             "element": _index(species.get("mainElement"), self.element_vocab),
             "sub_element": (
@@ -290,12 +831,41 @@ class ObservationEncoder:
             ),
             "nature": _index(nature, self.nature_vocab) if nature is not None else 0,
             "trait": _index(species.get("feature", {}).get("id"), self.trait_vocab),
+            "bloodline": _index(bloodline, self.bloodline_vocab),
+            "bloodline_mask": bloodline is not None,
             "numeric": values,
             "numeric_mask": numeric_mask,
             "skills": skills,
             "effects": effects,
+            "used_skill_history": raw.get("used_skill_history", []),
+            "used_skill_ids": [
+                _index(
+                    entry.get("skill_id") if isinstance(entry, dict) else entry[1],
+                    self.skill_vocab,
+                )
+                for entry in raw.get("used_skill_history", [])
+            ],
             "mask": True,
         }
+
+    def _resonance(self, state, side, revealed_only=False):
+        magic = state.get("resonance_magic", {}).get(side)
+        usage = state.get("resonance_usage", {}).get(side, {})
+        cooldown = state.get("resonance_cooldown", {}).get(side, {})
+        revealed = any(
+            usage.get(magic_id, usage.get(str(magic_id), 0)) > 0
+            for magic_id in (0, 1, 2)
+        )
+        if revealed_only and not revealed:
+            magic = None
+        values = [0.0 if magic is None else _number(magic, 2), float(magic is not None)]
+        for magic_id in (0, 1, 2):
+            values.append(min(usage.get(magic_id, usage.get(str(magic_id), 0)), 2) / 2)
+        for magic_id in (0, 1, 2):
+            values.append(
+                min(cooldown.get(magic_id, cooldown.get(str(magic_id), 0)), 3) / 3
+            )
+        return values
 
     def _team_nature(self, team, index, raw):
         if raw.get("nature") is not None:
@@ -398,7 +968,105 @@ class ObservationEncoder:
         unique = {action_key(candidate): candidate for candidate in pool}
         return list(unique.values()) or [{"kind": "unknown_skill"}]
 
-    def _event_features(self, event, line, side, state, order, is_private, actor_side):
+    def _event_vocab_index(self, value, vocab):
+        return vocab.get(value, vocab.get(str(value), vocab.get("<UNK>", 1)))
+
+    def _event_entity(self, entity, side):
+        entity = entity if isinstance(entity, dict) else {}
+        index = entity.get("index", -1)
+        index = index if isinstance(index, int) and index >= 0 else -1
+        return {
+            "kind": self._event_vocab_index(
+                entity.get("kind", ""), self.event_entity_vocab
+            ),
+            "relative": (
+                1.0
+                if entity.get("side") == side
+                else -1.0
+                if entity.get("side") in ("A", "B")
+                else 0.0
+            ),
+            "index": index,
+            "pet": (
+                entity.get("kind") == "pet"
+                and index >= 0
+                and entity.get("spirit_id") is not None
+            ),
+            "spirit": _index(entity.get("spirit_id"), self.spirit_vocab),
+            "trait": _index(entity.get("trait_id"), self.trait_vocab),
+        }
+
+    def _event_numeric(self, event, source, target, order, count):
+        value = event.get("value", 0)
+        duration = event.get("duration", "")
+        attribute = event.get("attribute", "")
+        value_known = isinstance(value, (int, float)) and not isinstance(value, bool)
+        duration_known = isinstance(duration, (int, float)) and not isinstance(
+            duration, bool
+        )
+        attribute_known = isinstance(
+            attribute, (int, float)
+        ) and not isinstance(attribute, bool)
+        return [
+            min(max(_number(event.get("turn"), 100), 0.0), 1.0),
+            min(max(_number(event.get("seq"), 1000), 0.0), 10.0),
+            order / max(count, 1),
+            min(max(_number(value, 100), -10.0), 10.0),
+            float(value_known and value != 0),
+            min(max(_number(event.get("stacks"), 10), -10.0), 10.0),
+            duration_code(duration) / 2,
+            min(max(_number(duration, 10), 0.0), 10.0),
+            float(duration_known or duration in ("normal", "temporary", "permanent")),
+            min(max(_number(event.get("skill_index"), 10), -1.0), 1.0),
+            float(bool(event.get("replay"))),
+            float(bool(event.get("choice_branch"))),
+            float(bool(event.get("public", True))),
+            source["relative"],
+            min(source["index"], 6) / 6 if source["index"] >= 0 else 0.0,
+            float(source["pet"]),
+            target["relative"],
+            min(target["index"], 6) / 6 if target["index"] >= 0 else 0.0,
+            float(target["pet"]),
+            min(max(_number(attribute, 100), -10.0), 10.0),
+            float(attribute_known or bool(isinstance(attribute, str) and attribute)),
+        ]
+
+    def _structured_event(self, event, side, order, count):
+        source = self._event_entity(event.get("source"), side)
+        target = self._event_entity(event.get("target"), side)
+        return {
+            "kind": self._event_vocab_index(
+                event.get("kind", "unknown"), self.event_kind_vocab
+            ),
+            "phase": self._event_vocab_index(
+                event.get("phase", ""), self.event_phase_vocab
+            ),
+            "action": self._event_vocab_index(
+                event.get("action", ""), self.event_action_vocab
+            ),
+            "effect": self._event_vocab_index(
+                event.get("effect", ""), self.event_effect_vocab
+            ),
+            "source_kind": source["kind"],
+            "target_kind": target["kind"],
+            "skill": _index(event.get("skill_id"), self.skill_vocab),
+            "trait": _index(event.get("trait_id"), self.trait_vocab),
+            "source_spirit": source["spirit"],
+            "source_trait": source["trait"],
+            "target_spirit": target["spirit"],
+            "target_trait": target["trait"],
+            "source_index": source["index"],
+            "target_index": target["index"],
+            "source_present": source["pet"],
+            "target_present": target["pet"],
+            "numeric": self._event_numeric(event, source, target, order, count),
+            "mask": True,
+            "public": bool(event.get("public", True)),
+        }
+
+    def _fallback_event(
+        self, event, line, side, enemy_side, state, order, count, is_private, phase
+    ):
         participants = sorted(
             (
                 (pet.get("name", ""), team_side, index)
@@ -406,52 +1074,88 @@ class ObservationEncoder:
                 for index, pet in enumerate(team)
                 if pet.get("name") and pet["name"] in line
             ),
-            key=lambda item: (item[1] != actor_side, item[2]),
+            key=lambda item: (item[1] != side, item[2]),
         )
         source = participants[0] if participants else ("", "", -1)
         target = next(
-            (value for value in participants[1:] if value[1:] != source[1:]),
+            (item for item in participants[1:] if item[1:] != source[1:]),
             ("", "", -1),
         )
-        relative = lambda team_side: (
-            1.0 if team_side == side else -1.0 if team_side else 0.0
-        )
+
+        def entity(item):
+            name, team_side, index = item
+            if not team_side or index < 0:
+                return {"kind": "field"}
+            pet = state.get("teams", {}).get(team_side, [])[index]
+            return {
+                "kind": "pet",
+                "side": team_side,
+                "index": index,
+                "name": name,
+                "spirit_id": pet.get("spirit_id"),
+                "trait_id": pet.get("trait_id"),
+            }
+
+        skill_id = event.get("skill_id") if isinstance(event, dict) else None
+        if skill_id is None and not is_private:
+            skill_id = next(
+                (
+                    self.skill_by_name[name]["id"]
+                    for name in self.skill_by_name
+                    if name in line
+                ),
+                None,
+            )
+        if skill_id is None and is_private and isinstance(event, dict):
+            skill_index = event.get("skill_index", -1)
+            active = state.get("active", {}).get(side, -1)
+            team = state.get("teams", {}).get(side, [])
+            skills = team[active].get("skills", []) if 0 <= active < len(team) else []
+            if 0 <= skill_index < len(skills):
+                skill = skills[skill_index]
+                skill_id = (
+                    skill.get("skill_id", skill.get("name"))
+                    if isinstance(skill, dict)
+                    else skill
+                )
         matches = re.findall(
             r"(?:造成|伤害|回复|恢复|获得|失去|损失|扣除)[^0-9-]*(-?\d+(?:\.\d+)?)",
             line,
         )
-        raw_value = next(
-            (
-                event.get(key)
-                for key in ("value", "damage", "healing")
-                if isinstance(event, dict) and isinstance(event.get(key), (int, float))
+        raw_value = (
+            event.get("value") if isinstance(event, dict) else None
+        )
+        kind = event.get("kind") if isinstance(event, dict) else None
+        if kind not in self.event_kind_vocab:
+            kind = "private" if is_private else "log"
+        synthetic = {
+            "kind": kind,
+            "phase": (
+                event.get("phase", phase) if isinstance(event, dict) else phase
             ),
-            None,
-        )
-        amount = (
-            float(raw_value) / 1000
-            if raw_value is not None
-            else float(matches[0]) / 1000 if matches else 0.0
-        )
-        known = raw_value is not None or bool(matches)
-        numeric = [
-            min(order, 1000) / 1000,
-            amount,
-            float(known),
-            relative(source[1]),
-            max(source[2], -1) / 6,
-            relative(target[1]),
-            max(target[2], -1) / 6,
-            len(line) / 1000,
-            0.0,
-            0.0,
-            0.0,
-        ]
-        if is_private and isinstance(event, dict):
-            numeric[8] = _number(event.get("skill_index", -1), 10)
-            numeric[9] = _number(event.get("magic_id", -1), 3)
-            numeric[10] = _number(event.get("choice_branch", 0), 1)
-        return numeric
+            "action": "",
+            "effect": "",
+            "source": entity(source),
+            "target": entity(target),
+            "skill_id": skill_id,
+            "trait_id": event.get("trait_id") if isinstance(event, dict) else None,
+            "skill_index": event.get("skill_index", -1)
+            if isinstance(event, dict)
+            else -1,
+            "value": (
+                raw_value
+                if isinstance(raw_value, (int, float))
+                else float(matches[0]) if matches else 0
+            ),
+            "duration": event.get("duration", "") if isinstance(event, dict) else "",
+            "stacks": event.get("stacks", 0) if isinstance(event, dict) else 0,
+            "replay": event.get("replay", False) if isinstance(event, dict) else False,
+            "choice_branch": event.get("choice_branch", 0)
+            if isinstance(event, dict)
+            else 0,
+            "public": not is_private,
+        }
+        return self._structured_event(synthetic, side, order, count)
 
     def encode(self, request):
         state = request.get("state", {})
@@ -491,92 +1195,62 @@ class ObservationEncoder:
                 {"name": name} for name in request.get("opponent_team", [])
             ]
         public_pets = public_own + [self._pet(raw, False) for raw in public_enemy_raw]
-        events = []
-        for is_private, values in (
-            (False, request.get("events", [])),
-            (True, request.get("private_events", [])),
-        ):
-            for index, event in enumerate(values):
-                line = event if isinstance(event, str) else event.get("line", "")
-                event_phase = (
-                    event.get("phase", phase) if isinstance(event, dict) else phase
-                )
-                event_kind = (
-                    event.get("kind", "private" if is_private else "log")
-                    if isinstance(event, dict)
-                    else ("private" if is_private else "log")
-                )
-                action_kind = (
-                    event.get("kind")
-                    if is_private and isinstance(event, dict)
-                    else None
-                )
-                skill_id = (
-                    event.get("skill_id")
-                    if is_private and isinstance(event, dict)
-                    else None
-                )
-                if is_private and action_kind not in self.action_vocab:
-                    action_kind = "unknown_skill"
-                if skill_id is None and is_private and action_kind == "skill":
-                    active_index = state.get("active", {}).get(side, -1)
-                    own_active = (
-                        own_raw[active_index]
-                        if 0 <= active_index < len(own_raw)
-                        else {}
+        bloodline_size = len(self.bloodline_vocab) + len(SPECIAL)
+        enemy_bloodline_targets = []
+        enemy_bloodline_mask = []
+        for raw in enemy_raw:
+            value = raw.get("bloodline")
+            enemy_bloodline_targets.append(
+                _index(value, self.bloodline_vocab) if value is not None else 0
+            )
+            enemy_bloodline_mask.append(value is not None)
+        enemy_bloodline_allowed = []
+        for index in range(len(enemy_raw)):
+            allowed = [True] * bloodline_size
+            if index < len(public_enemy_raw):
+                mapped = set()
+                for skill in public_enemy_raw[index].get("skills", []):
+                    skill_id = (
+                        skill.get("skill_id", skill.get("name"))
+                        if isinstance(skill, dict)
+                        else skill
                     )
-                    skill_index = event.get("skill_index", -1)
-                    own_skills = own_active.get("skills", [])
-                    if 0 <= skill_index < len(own_skills):
-                        skill = own_skills[skill_index]
-                        skill_id = (
-                            skill.get("skill_id", skill.get("name"))
-                            if isinstance(skill, dict)
-                            else skill
+                    if isinstance(skill_id, str) and skill_id.isdigit():
+                        skill_id = int(skill_id)
+                    mapped.update(self.bloodline_skill_map.get(skill_id, ()))
+                if mapped:
+                    allowed = [False] * bloodline_size
+                    for value in mapped:
+                        allowed[_index(value, self.bloodline_vocab)] = True
+            enemy_bloodline_allowed.append(allowed)
+        structured = state.get("events")
+        if structured:
+            events = [
+                self._structured_event(event, side, index, len(structured))
+                for index, event in enumerate(structured)
+            ]
+        else:
+            public_events = state.get("log", [])[-128:] or request.get("events", [])
+            events = []
+            for is_private, values in (
+                (False, public_events),
+                (True, request.get("private_events", [])),
+            ):
+                for index, event in enumerate(values):
+                    line = event if isinstance(event, str) else event.get("line", "")
+                    events.append(
+                        self._fallback_event(
+                            event,
+                            str(line),
+                            side,
+                            enemy_side,
+                            state,
+                            index,
+                            len(values),
+                            is_private,
+                            phase,
                         )
-                private_skill = self._skill(skill_id) if skill_id is not None else None
-                public_skill = (
-                    next(
-                        (
-                            self._skill(name)
-                            for name in self.skill_by_name
-                            if name in line
-                        ),
-                        None,
                     )
-                    if not is_private
-                    else None
-                )
-                actor_side = side
-                if not is_private:
-                    for public_side in (side, enemy_side):
-                        if any(
-                            pet.get("name") and pet["name"] in line
-                            for pet in state.get("teams", {}).get(public_side, [])
-                        ):
-                            actor_side = public_side
-                            break
-                event_features = self._event_features(
-                    event, str(line), side, state, index, is_private, actor_side
-                )
-                event_features[1] = float(event_features[1])
-                events.append(
-                    {
-                        "kind": _index(
-                            "private" if is_private else event_kind, self.event_vocab
-                        ),
-                        "phase": _index(event_phase, self.phase_vocab),
-                        "action": _index(action_kind, self.action_vocab),
-                        "skill": (
-                            private_skill["id"]
-                            if private_skill
-                            else public_skill["id"] if public_skill else 0
-                        ),
-                        "numeric": event_features,
-                        "mask": True,
-                        "public": not is_private,
-                    }
-                )
         fields = []
         weather = state.get("weather")
         fields.append(
@@ -639,17 +1313,36 @@ class ObservationEncoder:
             "side": _index("own", self.side_vocab),
             "turn": _number(state.get("turn", 0), 1000),
             "weather": _index(weather, self.weather_vocab),
+            "own_active": active if isinstance(active, int) else 0,
+            "enemy_active": enemy_active if isinstance(enemy_active, int) else -1,
             "own_pets": own_pets,
             "enemy_pets": enemy_pets,
             "public_pets": public_pets,
             "fields": fields,
             "events": events,
+            "own_resonance": self._resonance(state, side),
+            "enemy_resonance": self._resonance(state, enemy_side, revealed_only=True),
+            "enemy_resonance_target": (
+                int(enemy_resonance)
+                if (enemy_resonance := state.get("resonance_magic", {}).get(enemy_side))
+                in (0, 1, 2)
+                else 0
+            ),
+            "enemy_resonance_mask": state.get("resonance_magic", {}).get(enemy_side)
+            in (0, 1, 2),
+            "enemy_bloodline_targets": enemy_bloodline_targets,
+            "enemy_bloodline_mask": enemy_bloodline_mask,
+            "enemy_bloodline_allowed": enemy_bloodline_allowed,
             "own_candidates": [
-                self._candidate(action, active, own_raw, enemy_active, enemy_raw)
+                self._candidate(
+                    action, active, own_raw, enemy_active, enemy_raw, is_own=True
+                )
                 for action in own_candidates
             ],
             "opponent_candidates": [
-                self._candidate(action, enemy_active, enemy_raw, active, own_raw)
+                self._candidate(
+                    action, enemy_active, enemy_raw, active, own_raw, is_own=False
+                )
                 for action in opponent_candidates
             ],
             "action_mask": [
@@ -657,9 +1350,24 @@ class ObservationEncoder:
             ],
             "opponent_mask": [True] * len(opponent_candidates),
         }
-        return {
-            key: value.squeeze(0) for key, value in collate_inputs([encoded]).items()
-        }
+
+    def _stat_prior(self, species):
+        base = species["stats"]
+        keys = ("hp", "atk", "def", "spatk", "spdef", "speed")
+        totals = {key: 0.0 for key in keys}
+        count = 0
+        for high in itertools.combinations(keys, 3):
+            ivs = {key: 10 if key in high else 0 for key in keys}
+            for multipliers in self.nature_mults:
+                totals["hp"] += calc_hp(
+                    base["hp"], ivs["hp"], multipliers["hp"]
+                )
+                for key in keys[1:]:
+                    totals[key] += calc_stat(
+                        base[key], ivs[key], multipliers[key]
+                    )
+                count += 1
+        return {key: totals[key] / count for key in keys}
 
     def _species(self, raw):
         return self.spirit_by_id.get(
@@ -681,7 +1389,7 @@ class ObservationEncoder:
         if raw.get("stats"):
             return raw["stats"]
         species = self._species(raw)
-        return calc_all_stats(species["stats"]) if species.get("stats") else {}
+        return self.prior_stats.get(species.get("id"), {})
 
     def _speed(self, raw):
         speed = raw.get("eff_speed")
@@ -830,7 +1538,13 @@ class ObservationEncoder:
         ]
 
     def _candidate(
-        self, action, active_index=None, team=None, enemy_index=None, enemy_team=None
+        self,
+        action,
+        active_index=None,
+        team=None,
+        enemy_index=None,
+        enemy_team=None,
+        is_own=False,
     ):
         kind = action.get("kind", "unknown_skill")
         team = team or []
@@ -868,7 +1582,7 @@ class ObservationEncoder:
         )
         attacker = team[pet_index] if 0 <= pet_index < len(team) else {}
         defender = enemy_team[enemy_index] if 0 <= enemy_index < len(enemy_team) else {}
-        derived = [0.0] * 24
+        derived = [0.0] * 27
         if kind == "skill":
             derived[:16] = self._skill_derived(skill_data, attacker, defender)
         elif kind == "switch":
@@ -879,10 +1593,29 @@ class ObservationEncoder:
         derived[21] = float(kind == "switch")
         derived[22] = float(kind == "charge")
         derived[23] = float(kind == "lead")
+        magic_id = action.get("magic_id")
+        bloodline = _scalar(attacker.get("bloodline")) if is_own else None
+        species = self._species(attacker)
+        if magic_id == 0:
+            element = bloodline if bloodline is not None else species.get("mainElement")
+            derived[24] = _number(element, 18)
+            derived[25] = float(bloodline == LORD_BLOODLINE)
+        elif magic_id == 1:
+            derived[25] = float(bloodline == LORD_BLOODLINE)
+            derived[26] = min(len(self._lord_branches(species)), 8) / 8
+        targets = skill_data.get("targets", set())
+        numeric_skill_id = (
+            int(skill_id)
+            if isinstance(skill_id, int)
+            or (isinstance(skill_id, str) and skill_id.isdigit())
+            else self.skill_by_name.get(str(skill_id), {}).get("id")
+        )
         return {
+            "key": action_key(action),
             "kind": _index(kind, self.action_vocab),
             "pet_index": pet_index,
             "skill": skill_data["id"],
+            "skill_id": numeric_skill_id,
             "magic_id": int(
                 action.get("magic_id", -1) if action.get("magic_id") is not None else -1
             ),
@@ -891,10 +1624,56 @@ class ObservationEncoder:
                 int(action.get("choice_branch", 0)),
             ],
             "numeric": skill_data["numeric"][:2],
+            "targets": [
+                float("self" in targets),
+                float("enemy" in targets),
+                float("self_backline" in targets),
+                float("self_team" in targets),
+                float("enemy_team" in targets),
+                float("field" in targets or "both" in targets),
+            ],
             "skill_index": int(skill_index),
             "derived": derived,
+            "skill_present": bool(kind == "skill" and skill_id is not None),
+            "skill_attribute_ids": skill_data["attribute_ids"],
+            "skill_attributes": skill_data["attribute_values"],
+            "skill_effects": skill_data["effects"],
             "mask": bool(action.get("mask", True)),
         }
+
+    def candidate_target_mask(self, item, index):
+        candidates = item.get("own_candidates", [])
+        if not 0 <= index < len(candidates):
+            return None
+        candidate = candidates[index]
+        skill_id = candidate.get("skill_id")
+        if self.skill_by_id.get(str(skill_id), {}).get("category") != 3:
+            return None
+        flags = candidate.get("targets", ())
+        if not any(flags):
+            return None
+        actor = max(0, min(int(candidate.get("pet_index", 0)), 5))
+        enemy = int(item.get("enemy_active", -1))
+        mask = [0.0] * 12
+        if flags[0]:
+            mask[actor] = 1.0
+        if flags[1] and 0 <= enemy < 6:
+            mask[6 + enemy] = 1.0
+        if flags[2]:
+            for pet in range(6):
+                if pet != actor:
+                    mask[pet] = 1.0
+        if flags[3]:
+            for pet in range(6):
+                mask[pet] = 1.0
+        if flags[4]:
+            for pet in range(6):
+                mask[6 + pet] = 1.0
+        if flags[5]:
+            mask[actor] = 1.0
+            if 0 <= enemy < 6:
+                mask[6 + enemy] = 1.0
+        return mask if any(mask) else None
 
 
 def selectable_candidates(request):
@@ -940,9 +1719,27 @@ def action_key(action):
     return (kind, action.get("skill_id"), action.get("pet_index"))
 
 
+_NP_DTYPES = {
+    torch.float32: np.float32,
+    torch.float64: np.float64,
+    torch.long: np.int64,
+    torch.bool: np.bool_,
+}
+
+
+def _np_zeros(*shape, dtype=torch.float32, device=None):
+    return np.zeros(shape, dtype=_NP_DTYPES[dtype])
+
+
+def _np_array(values, dtype=torch.float32, device=None):
+    return np.asarray(values, dtype=_NP_DTYPES[dtype])
+
+
 def collate_inputs(items, device="cpu"):
     if not items:
         return {}
+    target_device = device
+    device = "cpu"
     if all(
         all(isinstance(value, torch.Tensor) for value in item.values())
         for item in items
@@ -951,7 +1748,7 @@ def collate_inputs(items, device="cpu"):
         for key in items[0]:
             tensors = [item[key] for item in items]
             if tensors[0].ndim == 0:
-                result[key] = torch.stack(tensors).to(device)
+                result[key] = torch.stack(tensors).to(target_device)
             else:
                 shape = tuple(
                     max(tensor.shape[axis] for tensor in tensors)
@@ -963,7 +1760,7 @@ def collate_inputs(items, device="cpu"):
                 for index, tensor in enumerate(tensors):
                     slices = tuple(slice(0, size) for size in tensor.shape)
                     batch[(index, *slices)] = tensor.to(device)
-                result[key] = batch
+                result[key] = batch.to(target_device)
         return result
     batch_size = len(items)
     max_pets = max(
@@ -997,125 +1794,535 @@ def collate_inputs(items, device="cpu"):
             default=0,
         ),
     )
+    max_skill_history = max(
+        1,
+        max(
+            (
+                len(pet.get("used_skill_history", ()))
+                for item in items
+                for key in ("own_pets", "enemy_pets", "public_pets")
+                for pet in item[key]
+            ),
+            default=0,
+        ),
+    )
+    max_skill_effects = max(
+        1,
+        max(
+            (
+                len(skill["effects"])
+                for item in items
+                for key in ("own_pets", "enemy_pets")
+                for pet in item[key]
+                for skill in pet["skills"]
+            ),
+            default=0,
+        ),
+    )
+    max_candidate_effects = max(
+        1,
+        max(
+            (
+                len(candidate.get("skill_effects", ()))
+                for item in items
+                for key in ("own_candidates", "opponent_candidates")
+                for candidate in item[key]
+            ),
+            default=0,
+        ),
+    )
     max_fields = max(1, max(len(item["fields"]) for item in items))
     max_events = max(1, max(len(item["events"]) for item in items))
     max_actions = max(1, max(len(item["own_candidates"]) for item in items))
     max_opponents = max(1, max(len(item["opponent_candidates"]) for item in items))
+    bloodline_size = max(
+        1,
+        max(
+            (
+                len(allowed)
+                for item in items
+                for allowed in item["enemy_bloodline_allowed"]
+            ),
+            default=1,
+        ),
+    )
     result = {
-        "phase": torch.tensor(
+        "phase": _np_array(
             [item["phase"] for item in items], dtype=torch.long, device=device
         ),
-        "phase_is_lead": torch.tensor(
+        "phase_is_lead": _np_array(
             [item["phase_is_lead"] for item in items], dtype=torch.bool, device=device
         ),
-        "side": torch.tensor(
+        "side": _np_array(
             [item["side"] for item in items], dtype=torch.long, device=device
         ),
-        "turn": torch.tensor(
+        "turn": _np_array(
             [item["turn"] for item in items], dtype=torch.float32, device=device
         ),
-        "weather": torch.tensor(
+        "weather": _np_array(
             [item["weather"] for item in items], dtype=torch.long, device=device
+        ),
+        "own_active": _np_array(
+            [
+                min(
+                    max(int(item["own_active"]), 0),
+                    max(len(item["own_pets"]) - 1, 0),
+                )
+                for item in items
+            ],
+            dtype=torch.long,
+            device=device,
+        ),
+        "enemy_active": _np_array(
+            [
+                min(
+                    max(int(item["enemy_active"]), 0),
+                    max(len(item["enemy_pets"]) - 1, 0),
+                )
+                for item in items
+            ],
+            dtype=torch.long,
+            device=device,
         ),
     }
     for prefix in ("own", "enemy", "public"):
-        result[f"{prefix}_pets"] = torch.zeros(
+        result[f"{prefix}_pets"] = _np_zeros(
             batch_size, max_pets, 42, dtype=torch.float32, device=device
         )
-        result[f"{prefix}_pet_ids"] = torch.zeros(
+        result[f"{prefix}_pet_ids"] = _np_zeros(
             batch_size, max_pets, dtype=torch.long, device=device
         )
-        result[f"{prefix}_pet_elements"] = torch.zeros(
+        result[f"{prefix}_pet_elements"] = _np_zeros(
             batch_size, max_pets, dtype=torch.long, device=device
         )
-        result[f"{prefix}_pet_sub_elements"] = torch.zeros(
+        result[f"{prefix}_pet_sub_elements"] = _np_zeros(
             batch_size, max_pets, dtype=torch.long, device=device
         )
-        result[f"{prefix}_pet_natures"] = torch.zeros(
+        result[f"{prefix}_pet_natures"] = _np_zeros(
             batch_size, max_pets, dtype=torch.long, device=device
         )
-        result[f"{prefix}_pet_traits"] = torch.zeros(
+        result[f"{prefix}_pet_traits"] = _np_zeros(
             batch_size, max_pets, dtype=torch.long, device=device
         )
-        result[f"{prefix}_pet_mask"] = torch.zeros(
+        result[f"{prefix}_pet_bloodlines"] = _np_zeros(
+            batch_size, max_pets, dtype=torch.long, device=device
+        )
+        result[f"{prefix}_pet_bloodline_mask"] = _np_zeros(
             batch_size, max_pets, dtype=torch.bool, device=device
         )
+        result[f"{prefix}_pet_mask"] = _np_zeros(
+            batch_size, max_pets, dtype=torch.bool, device=device
+        )
+        result[f"{prefix}_used_skill_turns"] = _np_zeros(
+            batch_size, max_pets, max_skill_history, dtype=torch.float32, device=device
+        )
+        result[f"{prefix}_used_skill_ids"] = _np_zeros(
+            batch_size, max_pets, max_skill_history, dtype=torch.long, device=device
+        )
+        result[f"{prefix}_used_skill_replay"] = _np_zeros(
+            batch_size, max_pets, max_skill_history, dtype=torch.bool, device=device
+        )
+        result[f"{prefix}_used_skill_mask"] = _np_zeros(
+            batch_size, max_pets, max_skill_history, dtype=torch.bool, device=device
+        )
     for prefix in ("own", "enemy"):
-        result[f"{prefix}_skills"] = torch.zeros(
+        result[f"{prefix}_skills"] = _np_zeros(
             batch_size, max_pets, max_skills, 14, dtype=torch.float32, device=device
         )
-        result[f"{prefix}_skill_ids"] = torch.zeros(
+        result[f"{prefix}_skill_ids"] = _np_zeros(
             batch_size, max_pets, max_skills, dtype=torch.long, device=device
         )
-        result[f"{prefix}_skill_elements"] = torch.zeros(
+        result[f"{prefix}_skill_elements"] = _np_zeros(
             batch_size, max_pets, max_skills, dtype=torch.long, device=device
         )
-        result[f"{prefix}_skill_categories"] = torch.zeros(
+        result[f"{prefix}_skill_categories"] = _np_zeros(
             batch_size, max_pets, max_skills, dtype=torch.long, device=device
         )
-        result[f"{prefix}_skill_mask"] = torch.zeros(
+        result[f"{prefix}_skill_mask"] = _np_zeros(
             batch_size, max_pets, max_skills, dtype=torch.bool, device=device
         )
-        result[f"{prefix}_effects"] = torch.zeros(
-            batch_size, max_pets, max_effects, 3, dtype=torch.float32, device=device
+        result[f"{prefix}_skill_attribute_ids"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            len(SKILL_ATTRIBUTE_KEYS),
+            dtype=torch.long,
+            device=device,
         )
-        result[f"{prefix}_effect_ids"] = torch.zeros(
+        result[f"{prefix}_skill_attribute_values"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            len(SKILL_ATTRIBUTE_KEYS),
+            dtype=torch.float32,
+            device=device,
+        )
+        result[f"{prefix}_skill_attribute_mask"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            len(SKILL_ATTRIBUTE_KEYS),
+            dtype=torch.bool,
+            device=device,
+        )
+        result[f"{prefix}_skill_effect_kind"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            max_skill_effects,
+            dtype=torch.long,
+            device=device,
+        )
+        result[f"{prefix}_skill_effect_target"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            max_skill_effects,
+            dtype=torch.long,
+            device=device,
+        )
+        result[f"{prefix}_skill_effect_stage"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            max_skill_effects,
+            dtype=torch.long,
+            device=device,
+        )
+        result[f"{prefix}_skill_effect_value"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            max_skill_effects,
+            dtype=torch.float32,
+            device=device,
+        )
+        result[f"{prefix}_skill_effect_duration"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            max_skill_effects,
+            dtype=torch.float32,
+            device=device,
+        )
+        result[f"{prefix}_skill_effect_mask"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            max_skill_effects,
+            dtype=torch.bool,
+            device=device,
+        )
+        result[f"{prefix}_skill_state_ids"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            len(SKILL_STATE_ATTRIBUTE_KEYS),
+            dtype=torch.long,
+            device=device,
+        )
+        result[f"{prefix}_skill_state_values"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            len(SKILL_STATE_ATTRIBUTE_KEYS),
+            dtype=torch.float32,
+            device=device,
+        )
+        result[f"{prefix}_skill_state_mask"] = _np_zeros(
+            batch_size,
+            max_pets,
+            max_skills,
+            len(SKILL_STATE_ATTRIBUTE_KEYS),
+            dtype=torch.bool,
+            device=device,
+        )
+        result[f"{prefix}_pet_state_ids"] = _np_zeros(
+            batch_size,
+            max_pets,
+            len(PET_STATE_ATTRIBUTE_KEYS),
+            dtype=torch.long,
+            device=device,
+        )
+        result[f"{prefix}_pet_state_values"] = _np_zeros(
+            batch_size,
+            max_pets,
+            len(PET_STATE_ATTRIBUTE_KEYS),
+            dtype=torch.float32,
+            device=device,
+        )
+        result[f"{prefix}_pet_state_mask"] = _np_zeros(
+            batch_size,
+            max_pets,
+            len(PET_STATE_ATTRIBUTE_KEYS),
+            dtype=torch.bool,
+            device=device,
+        )
+        result[f"{prefix}_effects"] = _np_zeros(
+            batch_size, max_pets, max_effects, 6, dtype=torch.float32, device=device
+        )
+        result[f"{prefix}_effect_ids"] = _np_zeros(
             batch_size, max_pets, max_effects, dtype=torch.long, device=device
         )
-        result[f"{prefix}_effect_mask"] = torch.zeros(
+        result[f"{prefix}_effect_source_ids"] = _np_zeros(
+            batch_size, max_pets, max_effects, dtype=torch.long, device=device
+        )
+        result[f"{prefix}_effect_source_traits"] = _np_zeros(
+            batch_size, max_pets, max_effects, dtype=torch.long, device=device
+        )
+        result[f"{prefix}_effect_mask"] = _np_zeros(
             batch_size, max_pets, max_effects, dtype=torch.bool, device=device
         )
+    result["public_pet_state_ids"] = _np_zeros(
+        batch_size,
+        max_pets,
+        len(PET_STATE_ATTRIBUTE_KEYS),
+        dtype=torch.long,
+        device=device,
+    )
+    result["public_pet_state_values"] = _np_zeros(
+        batch_size,
+        max_pets,
+        len(PET_STATE_ATTRIBUTE_KEYS),
+        dtype=torch.float32,
+        device=device,
+    )
+    result["public_pet_state_mask"] = _np_zeros(
+        batch_size,
+        max_pets,
+        len(PET_STATE_ATTRIBUTE_KEYS),
+        dtype=torch.bool,
+        device=device,
+    )
     result.update(
         {
-            "fields": torch.zeros(
+            "fields": _np_zeros(
                 batch_size, max_fields, 5, dtype=torch.float32, device=device
             ),
-            "field_mask": torch.zeros(
+            "field_mask": _np_zeros(
                 batch_size, max_fields, dtype=torch.bool, device=device
             ),
-            "events": torch.zeros(
+            "events": _np_zeros(
                 batch_size,
                 max_events,
                 EVENT_FEATURES,
                 dtype=torch.float32,
                 device=device,
             ),
-            "event_kinds": torch.zeros(
-                batch_size, max_events, dtype=torch.long, device=device
-            ),
-            "event_phases": torch.zeros(
-                batch_size, max_events, dtype=torch.long, device=device
-            ),
-            "event_mask": torch.zeros(
+            "event_mask": _np_zeros(
                 batch_size, max_events, dtype=torch.bool, device=device
             ),
-            "event_public_mask": torch.zeros(
+            "event_public_mask": _np_zeros(
                 batch_size, max_events, dtype=torch.bool, device=device
             ),
-            "event_action_kinds": torch.zeros(
+            "event_kind_ids": _np_zeros(
                 batch_size, max_events, dtype=torch.long, device=device
             ),
-            "event_skill_ids": torch.zeros(
+            "event_phase_ids": _np_zeros(
                 batch_size, max_events, dtype=torch.long, device=device
             ),
-            "own_candidates": torch.zeros(
-                batch_size, max_actions, 33, dtype=torch.float32, device=device
+            "event_action_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
             ),
-            "action_mask": torch.zeros(
+            "event_effect_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_source_kind_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_target_kind_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_skill_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_trait_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_source_spirit_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_source_trait_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_target_spirit_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_target_trait_ids": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_source_indices": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_target_indices": _np_zeros(
+                batch_size, max_events, dtype=torch.long, device=device
+            ),
+            "event_source_present": _np_zeros(
+                batch_size, max_events, dtype=torch.bool, device=device
+            ),
+            "event_target_present": _np_zeros(
+                batch_size, max_events, dtype=torch.bool, device=device
+            ),
+            "own_resonance": _np_zeros(
+                batch_size, 8, dtype=torch.float32, device=device
+            ),
+            "enemy_resonance": _np_zeros(
+                batch_size, 8, dtype=torch.float32, device=device
+            ),
+            "enemy_resonance_target": _np_zeros(
+                batch_size, dtype=torch.long, device=device
+            ),
+            "enemy_resonance_mask": _np_zeros(
+                batch_size, dtype=torch.bool, device=device
+            ),
+            "enemy_bloodline_targets": _np_zeros(
+                batch_size, max_pets, dtype=torch.long, device=device
+            ),
+            "enemy_bloodline_mask": _np_zeros(
+                batch_size, max_pets, dtype=torch.bool, device=device
+            ),
+            "enemy_bloodline_allowed": _np_zeros(
+                batch_size, max_pets, bloodline_size, dtype=torch.bool, device=device
+            ),
+            "own_candidates": _np_zeros(
+                batch_size, max_actions, 36, dtype=torch.float32, device=device
+            ),
+            "own_candidate_targets": _np_zeros(
+                batch_size, max_actions, 6, dtype=torch.float32, device=device
+            ),
+            "action_mask": _np_zeros(
                 batch_size, max_actions, dtype=torch.bool, device=device
             ),
-            "opponent_candidates": torch.zeros(
-                batch_size, max_opponents, 33, dtype=torch.float32, device=device
+            "opponent_candidates": _np_zeros(
+                batch_size, max_opponents, 36, dtype=torch.float32, device=device
             ),
-            "opponent_mask": torch.zeros(
+            "opponent_mask": _np_zeros(
                 batch_size, max_opponents, dtype=torch.bool, device=device
+            ),
+            "own_candidate_skill_present": _np_zeros(
+                batch_size, max_actions, dtype=torch.bool, device=device
+            ),
+            "own_candidate_skill_attributes": _np_zeros(
+                batch_size,
+                max_actions,
+                len(SKILL_ATTRIBUTE_KEYS),
+                dtype=torch.float32,
+                device=device,
+            ),
+            "own_candidate_skill_attribute_ids": _np_zeros(
+                batch_size,
+                max_actions,
+                len(SKILL_ATTRIBUTE_KEYS),
+                dtype=torch.long,
+                device=device,
+            ),
+            "opponent_candidate_skill_present": _np_zeros(
+                batch_size, max_opponents, dtype=torch.bool, device=device
+            ),
+            "opponent_candidate_skill_attributes": _np_zeros(
+                batch_size,
+                max_opponents,
+                len(SKILL_ATTRIBUTE_KEYS),
+                dtype=torch.float32,
+                device=device,
+            ),
+            "opponent_candidate_skill_attribute_ids": _np_zeros(
+                batch_size,
+                max_opponents,
+                len(SKILL_ATTRIBUTE_KEYS),
+                dtype=torch.long,
+                device=device,
+            ),
+            "own_candidate_skill_effect_kind": _np_zeros(
+                batch_size,
+                max_actions,
+                max_candidate_effects,
+                dtype=torch.long,
+                device=device,
+            ),
+            "own_candidate_skill_effect_target": _np_zeros(
+                batch_size,
+                max_actions,
+                max_candidate_effects,
+                dtype=torch.long,
+                device=device,
+            ),
+            "own_candidate_skill_effect_stage": _np_zeros(
+                batch_size,
+                max_actions,
+                max_candidate_effects,
+                dtype=torch.long,
+                device=device,
+            ),
+            "own_candidate_skill_effect_value": _np_zeros(
+                batch_size,
+                max_actions,
+                max_candidate_effects,
+                dtype=torch.float32,
+                device=device,
+            ),
+            "own_candidate_skill_effect_duration": _np_zeros(
+                batch_size,
+                max_actions,
+                max_candidate_effects,
+                dtype=torch.float32,
+                device=device,
+            ),
+            "own_candidate_skill_effect_mask": _np_zeros(
+                batch_size,
+                max_actions,
+                max_candidate_effects,
+                dtype=torch.bool,
+                device=device,
+            ),
+            "opponent_candidate_skill_effect_kind": _np_zeros(
+                batch_size,
+                max_opponents,
+                max_candidate_effects,
+                dtype=torch.long,
+                device=device,
+            ),
+            "opponent_candidate_skill_effect_target": _np_zeros(
+                batch_size,
+                max_opponents,
+                max_candidate_effects,
+                dtype=torch.long,
+                device=device,
+            ),
+            "opponent_candidate_skill_effect_stage": _np_zeros(
+                batch_size,
+                max_opponents,
+                max_candidate_effects,
+                dtype=torch.long,
+                device=device,
+            ),
+            "opponent_candidate_skill_effect_value": _np_zeros(
+                batch_size,
+                max_opponents,
+                max_candidate_effects,
+                dtype=torch.float32,
+                device=device,
+            ),
+            "opponent_candidate_skill_effect_duration": _np_zeros(
+                batch_size,
+                max_opponents,
+                max_candidate_effects,
+                dtype=torch.float32,
+                device=device,
+            ),
+            "opponent_candidate_skill_effect_mask": _np_zeros(
+                batch_size,
+                max_opponents,
+                max_candidate_effects,
+                dtype=torch.bool,
+                device=device,
             ),
         }
     )
     for batch_index, item in enumerate(items):
         for prefix in ("own", "enemy", "public"):
             for pet_index, pet in enumerate(item[f"{prefix}_pets"]):
-                result[f"{prefix}_pets"][batch_index, pet_index] = torch.tensor(
+                result[f"{prefix}_pets"][batch_index, pet_index] = _np_array(
                     [*pet["numeric"], *pet["numeric_mask"]],
                     dtype=torch.float32,
                     device=device,
@@ -1129,12 +2336,50 @@ def collate_inputs(items, device="cpu"):
                 ]
                 result[f"{prefix}_pet_natures"][batch_index, pet_index] = pet["nature"]
                 result[f"{prefix}_pet_traits"][batch_index, pet_index] = pet["trait"]
+                result[f"{prefix}_pet_bloodlines"][batch_index, pet_index] = pet[
+                    "bloodline"
+                ]
+                result[f"{prefix}_pet_bloodline_mask"][batch_index, pet_index] = pet[
+                    "bloodline_mask"
+                ]
                 result[f"{prefix}_pet_mask"][batch_index, pet_index] = pet["mask"]
+                for history_index, entry in enumerate(
+                    pet.get("used_skill_history", ())
+                ):
+                    if isinstance(entry, dict):
+                        turn = entry.get("turn", 0)
+                        skill_id = entry.get("skill_id")
+                        replay = entry.get("replay", False)
+                    else:
+                        turn, skill_id, replay = entry
+                    result[f"{prefix}_used_skill_turns"][
+                        batch_index, pet_index, history_index
+                    ] = _number(turn, 100)
+                    result[f"{prefix}_used_skill_ids"][
+                        batch_index, pet_index, history_index
+                    ] = pet["used_skill_ids"][history_index]
+                    result[f"{prefix}_used_skill_replay"][
+                        batch_index, pet_index, history_index
+                    ] = bool(replay)
+                    result[f"{prefix}_used_skill_mask"][
+                        batch_index, pet_index, history_index
+                    ] = True
+                result[f"{prefix}_pet_state_ids"][batch_index, pet_index] = (
+                    _np_array(pet["state_ids"], dtype=torch.long, device=device)
+                )
+                result[f"{prefix}_pet_state_values"][batch_index, pet_index] = (
+                    _np_array(
+                        pet["state_values"], dtype=torch.float32, device=device
+                    )
+                )
+                result[f"{prefix}_pet_state_mask"][batch_index, pet_index] = (
+                    _np_array(pet["state_mask"], dtype=torch.bool, device=device)
+                )
                 if prefix == "public":
                     continue
                 for skill_index, skill in enumerate(pet["skills"]):
                     result[f"{prefix}_skills"][batch_index, pet_index, skill_index] = (
-                        torch.tensor(
+                        _np_array(
                             skill["numeric"], dtype=torch.float32, device=device
                         )
                     )
@@ -1150,41 +2395,136 @@ def collate_inputs(items, device="cpu"):
                     result[f"{prefix}_skill_mask"][
                         batch_index, pet_index, skill_index
                     ] = skill["mask"]
+                    result[f"{prefix}_skill_attribute_ids"][
+                        batch_index, pet_index, skill_index
+                    ] = _np_array(
+                        skill["attribute_ids"], dtype=torch.long, device=device
+                    )
+                    result[f"{prefix}_skill_attribute_values"][
+                        batch_index, pet_index, skill_index
+                    ] = _np_array(
+                        skill["attribute_values"], dtype=torch.float32, device=device
+                    )
+                    result[f"{prefix}_skill_attribute_mask"][
+                        batch_index, pet_index, skill_index
+                    ] = _np_array(
+                        skill["attribute_mask"], dtype=torch.bool, device=device
+                    )
+                    result[f"{prefix}_skill_state_ids"][
+                        batch_index, pet_index, skill_index
+                    ] = _np_array(
+                        skill["state_ids"], dtype=torch.long, device=device
+                    )
+                    result[f"{prefix}_skill_state_values"][
+                        batch_index, pet_index, skill_index
+                    ] = _np_array(
+                        skill["state_values"], dtype=torch.float32, device=device
+                    )
+                    result[f"{prefix}_skill_state_mask"][
+                        batch_index, pet_index, skill_index
+                    ] = _np_array(
+                        skill["state_mask"], dtype=torch.bool, device=device
+                    )
+                    for effect_index, effect in enumerate(skill["effects"]):
+                        kind, target, stage, value, duration = effect
+                        result[f"{prefix}_skill_effect_kind"][
+                            batch_index, pet_index, skill_index, effect_index
+                        ] = kind
+                        result[f"{prefix}_skill_effect_target"][
+                            batch_index, pet_index, skill_index, effect_index
+                        ] = target
+                        result[f"{prefix}_skill_effect_stage"][
+                            batch_index, pet_index, skill_index, effect_index
+                        ] = stage
+                        result[f"{prefix}_skill_effect_value"][
+                            batch_index, pet_index, skill_index, effect_index
+                        ] = value
+                        result[f"{prefix}_skill_effect_duration"][
+                            batch_index, pet_index, skill_index, effect_index
+                        ] = duration
+                        result[f"{prefix}_skill_effect_mask"][
+                            batch_index, pet_index, skill_index, effect_index
+                        ] = True
                 for effect_index, effect in enumerate(pet["effects"]):
                     result[f"{prefix}_effects"][
                         batch_index, pet_index, effect_index
-                    ] = torch.tensor(
+                    ] = _np_array(
                         effect["numeric"], dtype=torch.float32, device=device
                     )
                     result[f"{prefix}_effect_ids"][
                         batch_index, pet_index, effect_index
                     ] = effect["id"]
+                    result[f"{prefix}_effect_source_ids"][
+                        batch_index, pet_index, effect_index
+                    ] = effect["source_id"]
+                    result[f"{prefix}_effect_source_traits"][
+                        batch_index, pet_index, effect_index
+                    ] = effect["source_trait"]
                     result[f"{prefix}_effect_mask"][
                         batch_index, pet_index, effect_index
                     ] = effect["mask"]
+        result["own_resonance"][batch_index] = _np_array(
+            item["own_resonance"], dtype=torch.float32, device=device
+        )
+        result["enemy_resonance"][batch_index] = _np_array(
+            item["enemy_resonance"], dtype=torch.float32, device=device
+        )
+        result["enemy_resonance_target"][batch_index] = item["enemy_resonance_target"]
+        result["enemy_resonance_mask"][batch_index] = item["enemy_resonance_mask"]
+        for pet_index in range(min(max_pets, len(item["enemy_bloodline_targets"]))):
+            result["enemy_bloodline_targets"][batch_index, pet_index] = item[
+                "enemy_bloodline_targets"
+            ][pet_index]
+            result["enemy_bloodline_mask"][batch_index, pet_index] = item[
+                "enemy_bloodline_mask"
+            ][pet_index]
+            result["enemy_bloodline_allowed"][batch_index, pet_index] = _np_array(
+                item["enemy_bloodline_allowed"][pet_index],
+                dtype=torch.bool,
+                device=device,
+            )
         for field_index, field in enumerate(item["fields"]):
-            result["fields"][batch_index, field_index] = torch.tensor(
+            result["fields"][batch_index, field_index] = _np_array(
                 [field["id"] / 10, *field["numeric"], float(field["mask"]), 0],
                 dtype=torch.float32,
                 device=device,
             )
             result["field_mask"][batch_index, field_index] = field["mask"]
         for event_index, event in enumerate(item["events"]):
-            result["events"][batch_index, event_index] = torch.tensor(
+            result["events"][batch_index, event_index] = _np_array(
                 event["numeric"], dtype=torch.float32, device=device
             )
-            result["event_kinds"][batch_index, event_index] = event["kind"]
-            result["event_phases"][batch_index, event_index] = event["phase"]
+            for key, event_key in (
+                ("event_kind_ids", "kind"),
+                ("event_phase_ids", "phase"),
+                ("event_action_ids", "action"),
+                ("event_effect_ids", "effect"),
+                ("event_source_kind_ids", "source_kind"),
+                ("event_target_kind_ids", "target_kind"),
+                ("event_skill_ids", "skill"),
+                ("event_trait_ids", "trait"),
+                ("event_source_spirit_ids", "source_spirit"),
+                ("event_source_trait_ids", "source_trait"),
+                ("event_target_spirit_ids", "target_spirit"),
+                ("event_target_trait_ids", "target_trait"),
+                ("event_source_indices", "source_index"),
+                ("event_target_indices", "target_index"),
+            ):
+                result[key][batch_index, event_index] = event[event_key]
             result["event_mask"][batch_index, event_index] = event["mask"]
             result["event_public_mask"][batch_index, event_index] = event["public"]
-            result["event_action_kinds"][batch_index, event_index] = event["action"]
-            result["event_skill_ids"][batch_index, event_index] = event["skill"]
+            result["event_source_present"][batch_index, event_index] = event[
+                "source_present"
+            ]
+            result["event_target_present"][batch_index, event_index] = event[
+                "target_present"
+            ]
         for key, mask_key in (
             ("own_candidates", "action_mask"),
             ("opponent_candidates", "opponent_mask"),
         ):
             for candidate_index, candidate in enumerate(item[key]):
-                result[key][batch_index, candidate_index] = torch.tensor(
+                result[key][batch_index, candidate_index] = _np_array(
                     [
                         candidate["kind"],
                         candidate["pet_index"],
@@ -1199,4 +2539,53 @@ def collate_inputs(items, device="cpu"):
                     device=device,
                 )
                 result[mask_key][batch_index, candidate_index] = candidate["mask"]
-    return result
+                prefix = "own" if key == "own_candidates" else "opponent"
+                result[f"{prefix}_candidate_skill_present"][
+                    batch_index, candidate_index
+                ] = candidate["skill_present"]
+                result[f"{prefix}_candidate_skill_attributes"][
+                    batch_index, candidate_index
+                ] = _np_array(
+                    candidate["skill_attributes"], dtype=torch.float32, device=device
+                )
+                result[f"{prefix}_candidate_skill_attribute_ids"][
+                    batch_index, candidate_index
+                ] = _np_array(
+                    candidate["skill_attribute_ids"],
+                    dtype=torch.long,
+                    device=device,
+                )
+                for effect_index, effect in enumerate(candidate["skill_effects"]):
+                    kind, target, stage, value, duration = effect
+                    result[f"{prefix}_candidate_skill_effect_kind"][
+                        batch_index, candidate_index, effect_index
+                    ] = kind
+                    result[f"{prefix}_candidate_skill_effect_target"][
+                        batch_index, candidate_index, effect_index
+                    ] = target
+                    result[f"{prefix}_candidate_skill_effect_stage"][
+                        batch_index, candidate_index, effect_index
+                    ] = stage
+                    result[f"{prefix}_candidate_skill_effect_value"][
+                        batch_index, candidate_index, effect_index
+                    ] = value
+                    result[f"{prefix}_candidate_skill_effect_duration"][
+                        batch_index, candidate_index, effect_index
+                    ] = duration
+                    result[f"{prefix}_candidate_skill_effect_mask"][
+                        batch_index, candidate_index, effect_index
+                    ] = True
+                if key == "own_candidates":
+                    result["own_candidate_targets"][
+                        batch_index, candidate_index
+                    ] = _np_array(
+                        candidate["targets"],
+                        dtype=torch.float32,
+                        device=device,
+                    )
+    return {
+        key: torch.from_numpy(value).to(target_device)
+        if isinstance(value, np.ndarray)
+        else value
+        for key, value in result.items()
+    }

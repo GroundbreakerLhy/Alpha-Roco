@@ -190,8 +190,7 @@ class Teacher:
                 self._best_damage(enemy, bench) / max(bench_hp, 1), 1.0
             )
             offensive = (
-                bench_fraction
-                >= current_fraction + self.config.switch_offensive_margin
+                bench_fraction >= current_fraction + self.config.switch_offensive_margin
                 or (
                     bench_fraction >= self.config.switch_offensive_fraction
                     and current_fraction <= self.config.switch_offensive_current

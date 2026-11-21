@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from . import buffs, counter, evolution, traits
+from . import buffs, counter, events, evolution, traits
 from .enums import ELEMENT_NAMES, LORD_BLOODLINE
 from .data_loader import load_typechart, round_half_up
 from .models import BattleSkill
@@ -51,16 +51,40 @@ def can_use(state, side: str, magic_id: int) -> bool:
 def _heal(state, side: str) -> None:
     pet = state.teams[side][state.active[side]]
     heal = int(pet.max_hp * 0.15)
+    before = pet.hp
     pet.hp = min(pet.max_hp, pet.hp + heal)
     pet.light_heal_rounds = 3
-    state.log.append(f"{side} {pet.name} 使用光合治愈")
+    events.emit(
+        state,
+        "resonance",
+        action="use",
+        effect="heal",
+        source=events.pet_entity(state, pet),
+        target=events.pet_entity(state, pet),
+        attribute=HEAL,
+        value=pet.hp - before,
+        line=f"{side} {pet.name} 使用光合治愈",
+    )
 
 
 def _evolve(state, side: str, branch: int = 0) -> bool:
     pet = state.teams[side][state.active[side]]
     name_before = pet.name
+    spirit_before = pet.spirit_id
     if evolution.lordize(pet, branch):
-        state.log.append(f"{side} {name_before} 使用进化之力 变成了 {pet.name}")
+        events.emit(
+            state,
+            "evolve",
+            action="evolve",
+            effect="evolve",
+            source=events.pet_entity(state, pet),
+            target=events.pet_entity(state, pet),
+            skill_id=None,
+            attribute=pet.spirit_id,
+            value=spirit_before,
+            line=f"{side} {name_before} 使用进化之力 变成了 {pet.name}",
+            extra={"spirit_before": spirit_before},
+        )
         traits.emit(state, "evolution", scope="self", side=side, subject=pet, pet=pet)
         # 首领化视作一次入场：重置入场状态并广播，新形态特性立即触发；
         # 不是换人，不结算印记/迸发，不触发迅捷。
@@ -68,7 +92,16 @@ def _evolve(state, side: str, branch: int = 0) -> bool:
         pet.entry_turn = state.turn
         traits.emit(state, "entry", scope="all", side=side, subject=pet)
         return True
-    state.log.append(f"{side} {pet.name} 无法首领化")
+    events.emit(
+        state,
+        "evolve",
+        action="fail",
+        effect="evolve",
+        source=events.pet_entity(state, pet),
+        target=events.pet_entity(state, pet),
+        attribute=pet.spirit_id,
+        line=f"{side} {pet.name} 无法首领化",
+    )
     return False
 
 
@@ -100,14 +133,44 @@ def use_magic(
         wish_skill.counter_target = "status"
         pet.wish_original_skill = pet.skills[0]
         pet.skills[0] = wish_skill
+        events.emit(
+            state,
+            "resonance",
+            action="use",
+            effect="wish",
+            source=events.pet_entity(state, pet),
+            target=events.team_entity(side),
+            skill_id=wish_skill.skill_id,
+            attribute=magic_id,
+        )
     elif magic_id == EVOLVE:
         if not _evolve(state, side, branch):
             return False
     state.resonance_usage[side][magic_id] = (
         state.resonance_usage[side].get(magic_id, 0) + 1
     )
+    events.emit(
+        state,
+        "resonance",
+        action="use",
+        effect="usage",
+        source=events.pet_entity(state, state.teams[side][state.active[side]]),
+        target=events.team_entity(side),
+        attribute=magic_id,
+        value=state.resonance_usage[side][magic_id],
+    )
     if magic_id == WISH:
         state.resonance_cooldown[side][magic_id] = 3
+        events.emit(
+            state,
+            "resonance",
+            action="schedule",
+            source=events.pet_entity(state, state.teams[side][state.active[side]]),
+            target=events.team_entity(side),
+            attribute=magic_id,
+            value=3,
+            public=False,
+        )
     return True
 
 
@@ -116,12 +179,33 @@ def on_round_end(state) -> None:
         for pet in state.teams[side]:
             if pet.light_heal_rounds > 0 and pet.hp > 0:
                 heal = int(pet.max_hp * 0.15)
+                before = pet.hp
                 pet.hp = min(pet.max_hp, pet.hp + heal)
                 pet.light_heal_rounds -= 1
+                events.emit(
+                    state,
+                    "heal",
+                    action="heal",
+                    effect="resonance",
+                    source=events.pet_entity(state, pet),
+                    target=events.pet_entity(state, pet),
+                    attribute=HEAL,
+                    value=pet.hp - before,
+                )
             if pet.wish_original_skill is not None:
                 pet.skills[0] = pet.wish_original_skill
                 pet.wish_original_skill = None
         for magic_id in list(state.resonance_cooldown[side].keys()):
             state.resonance_cooldown[side][magic_id] -= 1
+            events.emit(
+                state,
+                "resonance",
+                action="decay",
+                source=events.team_entity(side),
+                target=events.team_entity(side),
+                attribute=magic_id,
+                value=state.resonance_cooldown[side][magic_id],
+                public=False,
+            )
             if state.resonance_cooldown[side][magic_id] <= 0:
                 del state.resonance_cooldown[side][magic_id]

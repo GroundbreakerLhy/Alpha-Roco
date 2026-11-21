@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import math
+
 from alpha_roco.config import RewardConfig
+from alpha_roco.features import _pet_state_values
 from alpha_roco.losses import terminal_rewards
 from alpha_roco.status import duration_code
 from sim.buffs import classify_buff
 
 DEFAULT_REWARD = RewardConfig()
+PET_STATE_DIM = 6
 
 
 def _hp_ratio(pet: dict, own: bool) -> float:
@@ -18,15 +22,34 @@ def _hp_ratio(pet: dict, own: bool) -> float:
 def _team_hp(pets: list[dict], own: bool, config: RewardConfig) -> float:
     if not pets:
         return 0.0
-    return sum(_hp_ratio(pet, own) for pet in pets) / min(
-        len(pets), config.team_size
-    )
+    return sum(_hp_ratio(pet, own) for pet in pets) / min(len(pets), config.team_size)
 
 
 def _team_alive(pets: list[dict]) -> int:
-    return sum(
-        pet.get("hp", 0) > 0 or pet.get("hp_percent", 0) > 0 for pet in pets
-    )
+    return sum(pet.get("hp", 0) > 0 or pet.get("hp_percent", 0) > 0 for pet in pets)
+
+
+def _pet_state(pet: dict, own: bool) -> list[float]:
+    buff = debuff = buff_duration = debuff_duration = 0.0
+    for item in pet.get("buffs", []):
+        value = item.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        kind = classify_buff(item.get("type", ""), value)
+        if kind in ("buff", "both"):
+            buff += abs(value)
+            buff_duration += duration_code(item.get("duration"))
+        if kind in ("debuff", "both"):
+            debuff += abs(value)
+            debuff_duration += duration_code(item.get("duration"))
+    return [
+        _hp_ratio(pet, own),
+        float(pet.get("energy") or 0.0) / 10.0,
+        buff / 10.0,
+        debuff / 10.0,
+        buff_duration / 2.0,
+        debuff_duration / 2.0,
+    ]
 
 
 def _effect_score(pets: list[dict]) -> float:
@@ -44,6 +67,32 @@ def _effect_score(pets: list[dict]) -> float:
     return score / 10.0
 
 
+def _effect_utility(pets: list[dict]) -> float:
+    score = 0.0
+    for pet in pets:
+        for effect in pet.get("buffs", []):
+            value = effect.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            kind = classify_buff(effect.get("type", ""), value)
+            if kind not in ("buff", "debuff"):
+                continue
+            direction = 1.0 if kind == "buff" else -1.0
+            magnitude = math.tanh(abs(value) / 2.0)
+            duration = 1.0 + 0.5 * duration_code(effect.get("duration"))
+            score += direction * magnitude * duration
+    return score
+
+
+def _mark_utility(marks: dict) -> float:
+    score = 0.0
+    for polarity, sign in (("positive", 1.0), ("negative", -1.0)):
+        mark = marks.get(polarity)
+        if isinstance(mark, dict):
+            score += sign * float(mark.get("stacks", 0))
+    return score
+
+
 def _effect_map(pets: list[dict]) -> dict[tuple[str, str, str], float]:
     result = {}
     for pet in pets:
@@ -52,9 +101,9 @@ def _effect_map(pets: list[dict]) -> dict[tuple[str, str, str], float]:
             value = effect.get("value")
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 continue
-            result[
-                (name, effect.get("type", ""), effect.get("source_kind", ""))
-            ] = value
+            result[(name, effect.get("type", ""), effect.get("source_kind", ""))] = (
+                value
+            )
     return result
 
 
@@ -67,14 +116,33 @@ def _mark_map(marks: dict) -> dict[tuple[str, int], float]:
     return result
 
 
+def _effect_stacks(pets: list[dict]) -> dict[tuple, float]:
+    result = {}
+    for pet in pets:
+        name = pet.get("name", "")
+        for effect in pet.get("buffs", []):
+            value = effect.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            key = (
+                name,
+                effect.get("type", ""),
+                effect.get("source_kind", ""),
+                effect.get("source_pet", ""),
+                effect.get("source_side", ""),
+            )
+            result[key] = result.get(key, 0.0) + abs(float(value))
+    return result
+
+
 def _duration_map(pets: list[dict]) -> dict[tuple[str, str, str], float]:
     result = {}
     for pet in pets:
         name = pet.get("name", "")
         for effect in pet.get("buffs", []):
-            result[
-                (name, effect.get("type", ""), effect.get("source_kind", ""))
-            ] = duration_code(effect.get("duration"))
+            result[(name, effect.get("type", ""), effect.get("source_kind", ""))] = (
+                duration_code(effect.get("duration"))
+            )
     return result
 
 
@@ -110,6 +178,53 @@ def effect_gains(
     return gains
 
 
+def _effect_event_score(previous: dict, current: dict) -> float:
+    effects = sum(
+        math.tanh(gained / 2.0)
+        for _, _, gained in effect_gains(previous, current)
+    )
+    mark_delta = (
+        current.get("own_mark_utility", 0.0)
+        - previous.get("own_mark_utility", 0.0)
+        - current.get("enemy_mark_utility", 0.0)
+        + previous.get("enemy_mark_utility", 0.0)
+    )
+    return effects + math.tanh(max(0.0, mark_delta) / 5.0)
+
+
+def _trait_buff_targets(state: dict) -> list[tuple[str, int, str, int, int]]:
+    teams = state.get("teams", {})
+    result = []
+    for target_side, team in teams.items():
+        for target_index, pet in enumerate(team):
+            for buff in pet.get("buffs", []):
+                trait_id = buff.get("source_trait_id")
+                if trait_id is None:
+                    continue
+                source_side = buff.get("source_side") or target_side
+                source_name = buff.get("source_pet", "")
+                source_index = next(
+                    (
+                        index
+                        for index, source in enumerate(teams.get(source_side, []))
+                        if source.get("name", source.get("spirit", "")) == source_name
+                    ),
+                    -1,
+                )
+                if source_index < 0:
+                    source_index = target_index
+                result.append(
+                    (
+                        source_side,
+                        source_index,
+                        target_side,
+                        target_index,
+                        int(trait_id),
+                    )
+                )
+    return result
+
+
 def state_summary(
     state: dict, side: str, config: RewardConfig = DEFAULT_REWARD
 ) -> dict:
@@ -118,46 +233,98 @@ def state_summary(
     own = teams.get(side, [])
     enemy = teams.get(other, [])
     effect = _effect_score(own) - _effect_score(enemy)
+    own_marks = state.get("marks", {}).get(side, {}) or {}
+    enemy_marks = state.get("marks", {}).get(other, {}) or {}
+    magic = state.get("magic", {})
     return {
         "own_hp": _team_hp(own, True, config),
         "enemy_hp": _team_hp(enemy, False, config),
         "own_alive": _team_alive(own),
         "enemy_alive": _team_alive(enemy),
+        "own_magic": float(magic.get(side, 0) or 0),
+        "enemy_magic": float(magic.get(other, 0) or 0),
+        "own_energy": _active_energy(state, side),
+        "enemy_energy": _active_energy(state, other),
+        "own_effect_utility": _effect_utility(own),
+        "enemy_effect_utility": _effect_utility(enemy),
+        "own_mark_utility": _mark_utility(own_marks),
+        "enemy_mark_utility": _mark_utility(enemy_marks),
         "effect": max(-config.effect_clip, min(config.effect_clip, effect)),
         "own_effects": _effect_map(own),
         "enemy_effects": _effect_map(enemy),
+        "own_effect_stacks": _effect_stacks(own),
+        "enemy_effect_stacks": _effect_stacks(enemy),
         "own_effect_durations": _duration_map(own),
         "enemy_effect_durations": _duration_map(enemy),
-        "own_marks": _mark_map(state.get("marks", {}).get(side, {})),
-        "enemy_marks": _mark_map(state.get("marks", {}).get(other, {})),
-        "own_energy": _active_energy(state, side),
-        "enemy_energy": _active_energy(state, other),
+        "own_marks": _mark_map(own_marks),
+        "enemy_marks": _mark_map(enemy_marks),
+        "own_pet_states": [_pet_state(pet, True) for pet in own],
+        "enemy_pet_states": [_pet_state(pet, False) for pet in enemy],
+        "own_pet_attributes": [_pet_state_values(pet)[0] for pet in own],
+        "enemy_pet_attributes": [_pet_state_values(pet)[0] for pet in enemy],
+        "own_pet_names": [pet.get("name", "") for pet in own],
+        "enemy_pet_names": [pet.get("name", "") for pet in enemy],
+        "trait_buff_targets": _trait_buff_targets(state),
         "weather": _weather_id(state),
     }
 
 
-def potential(summary: dict, config: RewardConfig = DEFAULT_REWARD) -> float:
-    return (
-        config.hp_potential * (summary["enemy_hp"] - summary["own_hp"])
-        + config.alive_potential
-        * (summary["enemy_alive"] - summary["own_alive"])
-        / config.team_size
-        + config.effect_potential * summary.get("effect", 0.0)
+def effect_value(summary: dict) -> float:
+    return math.tanh(
+        (
+            summary.get("own_effect_utility", 0.0)
+            - summary.get("enemy_effect_utility", 0.0)
+        )
+        / 2.0
     )
 
 
-def assign_rewards(episode: list[dict], winner: str, gamma: float = 1.0) -> None:
+def potential(summary: dict, config: RewardConfig = DEFAULT_REWARD) -> float:
+    magic = (summary.get("own_magic", 0.0) - summary.get("enemy_magic", 0.0)) / 4.0
+    components = (
+        summary["enemy_hp"] - summary["own_hp"],
+        (summary["own_alive"] - summary["enemy_alive"]) / config.team_size,
+        max(-1.0, min(1.0, magic)),
+        math.tanh(
+            (summary.get("own_energy", 0.0) - summary.get("enemy_energy", 0.0))
+            / 10.0
+        ),
+        effect_value(summary),
+        math.tanh(
+            (
+                summary.get("own_mark_utility", 0.0)
+                - summary.get("enemy_mark_utility", 0.0)
+            )
+            / 5.0
+        ),
+    )
+    return config.feedback_scale * sum(components) / len(components)
+
+
+def assign_rewards(
+    episode: list[dict],
+    winner: str,
+    gamma: float = 1.0,
+    config: RewardConfig = DEFAULT_REWARD,
+) -> None:
     reward = terminal_rewards(winner)[0]
     episode[0]["reward"] = reward + episode[0].get("lead_bonus", 0.0)
     episode[0]["terminal"] = True
     battle_entries = [entry for entry in episode if entry["phase"] != "lead"]
     for index, entry in enumerate(battle_entries):
-        following = (
-            gamma * battle_entries[index + 1]["potential"]
-            if index + 1 < len(battle_entries)
-            else 0.0
+        following_entry = (
+            battle_entries[index + 1] if index + 1 < len(battle_entries) else None
         )
+        following = gamma * following_entry["potential"] if following_entry else 0.0
         entry["reward"] = following - entry["potential"]
+        if (
+            following_entry is not None
+            and "summary" in entry
+            and "summary" in following_entry
+        ):
+            entry["reward"] += config.effect_event_reward * _effect_event_score(
+                entry["summary"], following_entry["summary"]
+            )
         entry["terminal"] = index + 1 == len(battle_entries)
     if battle_entries:
         battle_entries[-1]["reward"] += reward
@@ -177,6 +344,62 @@ def switch_action_penalty(
     if previous_kind == "switch":
         return -config.switch_consecutive_penalty
     return 0.0
+
+
+def _effect_increased(previous: dict, current: dict, kind: str) -> bool:
+    return any(
+        classify_buff(key[1], current.get(key, 0.0)) == kind
+        and abs(current.get(key, 0.0)) > abs(previous.get(key, 0.0))
+        for key in previous.keys() | current.keys()
+    )
+
+
+def _marks_increased(previous: dict, current: dict) -> bool:
+    return any(
+        current.get(key, 0.0) > previous.get(key, 0.0)
+        for key in previous.keys() | current.keys()
+    )
+
+
+def positive_progress(previous: dict, current: dict) -> bool:
+    return (
+        current["enemy_hp"] < previous["enemy_hp"]
+        or current["own_hp"] > previous["own_hp"]
+        or current["own_energy"] > previous["own_energy"]
+        or _effect_increased(previous["own_effects"], current["own_effects"], "buff")
+        or _effect_increased(
+            previous["enemy_effects"], current["enemy_effects"], "debuff"
+        )
+        or _marks_increased(previous["own_marks"], current["own_marks"])
+        or _marks_increased(previous["enemy_marks"], current["enemy_marks"])
+        or current["weather"] != previous["weather"]
+    )
+
+
+def repeat_action_penalty(
+    previous: dict, current: dict, config: RewardConfig = DEFAULT_REWARD
+) -> float:
+    if previous.get("action_key") is None:
+        return 0.0
+    if previous["action_key"] != current.get("action_key"):
+        return 0.0
+    if positive_progress(previous["summary"], current["summary"]):
+        return 0.0
+    return -config.repeat_no_progress_penalty
+
+
+def apply_repeat_penalty(
+    episode: list[dict], config: RewardConfig = DEFAULT_REWARD
+) -> None:
+    previous = None
+    for entry in episode:
+        if entry["phase"] != "action":
+            continue
+        if previous is not None:
+            entry["reward"] = entry.get("reward", 0.0) + repeat_action_penalty(
+                previous, entry, config
+            )
+        previous = entry
 
 
 def apply_exploration_bonus(

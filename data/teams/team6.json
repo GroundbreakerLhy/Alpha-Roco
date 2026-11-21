@@ -64,7 +64,7 @@
       "ivs": {
         "hp": 10,
         "atk": 10,
-        "def": 10,
+        "def": 0,
         "spatk": 0,
         "spdef": 0,
         "speed": 10
@@ -86,7 +86,7 @@
         "def": 10,
         "spatk": 0,
         "spdef": 0,
-        "speed": 10
+        "speed": 0
       },
       "bloodline": 2,
       "skills": [
@@ -105,7 +105,7 @@
         "def": 10,
         "spatk": 0,
         "spdef": 10,
-        "speed": 10
+        "speed": 0
       },
       "bloodline": null,
       "skills": [

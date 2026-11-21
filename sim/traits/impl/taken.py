@@ -82,7 +82,15 @@ class ThornSkin(TraitHandler):
             dmg = result["damage"]
             if dmg > 0:
                 attacker.hp = max(0, attacker.hp - dmg)
-                ctx.log(f"{attacker.side} {attacker.name} 受到刺肤 {dmg} 伤害")
+                ctx.emit(
+                    "damage",
+                    action="damage",
+                    effect="thorns",
+                    source=ctx.actor,
+                    target=attacker,
+                    value=dmg,
+                    line=f"{attacker.side} {attacker.name} 受到刺肤 {dmg} 伤害",
+                )
 
 
 class ThornTouch(TraitHandler):

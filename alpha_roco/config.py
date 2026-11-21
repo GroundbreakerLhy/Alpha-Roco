@@ -3,6 +3,10 @@ from typing import Any
 
 import torch
 
+MODEL_SCHEMA_VERSION = 7
+FEATURE_SCHEMA_VERSION = 3
+STATE_SCHEMA_VERSION = 2
+
 
 @dataclass
 class ModelConfig:
@@ -31,17 +35,20 @@ class ModelConfig:
 @dataclass
 class RewardConfig:
     team_size: int = 6  # 队伍精灵数
-    hp_potential: float = 0.5  # 血量势能系数
-    alive_potential: float = 0.1  # 存活势能系数
-    effect_potential: float = 0.02  # 强化/减益势能系数
-    effect_clip: float = 2.0  # 效果项截断范围
+    hp_potential: float = 0.5  # 兼容字段；反馈使用归一化分量
+    alive_potential: float = 0.1  # 兼容字段；反馈使用归一化分量
+    effect_potential: float = 0.02  # 兼容字段；反馈使用归一化分量
+    effect_clip: float = 2.0  # 旧效果汇总的截断范围
+    feedback_scale: float = 1.0  # 归一化反馈总缩放
+    effect_event_reward: float = 0.05  # 本次行动产生增益／减益／印记的直接奖励
     lead_oneshot_bonus: float = 0.05  # 首发可一击击杀对方的奖励
     lead_survive_bonus: float = 0.05  # 首发不被对方一击击杀的奖励
     rare_skill_cap: float | None = None  # 激进探索阶段单局上限；None 表示不限制
-    rare_skill_cap_late: float = 0.10  # 后续探索阶段单局上限
+    rare_skill_cap_late: float | None = None  # 后续探索阶段单局上限；None 表示不限制
     trait_novelty_bonus: float = 0.10  # 首次触发某类特性的探索奖励
     switch_first_turn_penalty: float = 0.05  # 第一回合主动换人惩罚
     switch_consecutive_penalty: float = 0.1  # 连续主动换人惩罚
+    repeat_no_progress_penalty: float = 0.05  # 重复无进展惩罚
 
 
 @dataclass
@@ -105,8 +112,8 @@ class SearchConfig:
 
 @dataclass
 class EvaluationConfig:
-    games: int = 196  # 评测局数
-    workers: int = 48  # 评测并行数
+    games: int = 400  # 评测局数
+    workers: int = 16  # 评测并行数
     timeout: float = 20.0  # 单局超时秒数
     seed: int = 0  # 评测种子
 
@@ -127,42 +134,54 @@ class PretrainConfig:
 class TrainConfig:
     batches: int = 2  # PPO 批次数
     games_per_batch: int = 56  # 每批对局数
-    ppo_epochs: int = 2  # 每批 PPO epoch 数
+    ppo_epochs: int = 3  # 每批 PPO epoch 数
     device: str = "cuda" if torch.cuda.is_available() else "cpu"  # 训练设备
     seed: int = 0  # 训练种子
     output: str = "logs/az"  # 输出目录
-    learning_rate: float = 5e-5  # 学习率
+    learning_rate: float = 1e-4  # 学习率
     clip_ratio: float = 0.2  # PPO 裁剪比例
     value_coefficient: float = 0.5  # 价值损失系数
-    entropy_coefficient: float = 0.03  # 熵奖励系数
+    entropy_coefficient: float = 0.04  # 熵奖励系数
     gamma: float = 1.0  # 折扣因子
-    gae_lambda: float = 0.95  # GAE 平滑系数
+    gae_lambda: float = 0.99  # GAE 平滑系数
     max_grad_norm: float = 0.5  # 梯度裁剪上限
-    target_kl: float = 0.02  # KL 早停阈值
+    target_kl: float = 0.04  # KL 早停阈值
     threads: int = 1  # PyTorch 线程数
     log_games: bool = False  # 是否记录对局日志
     keep_checkpoints: int = 1  # 保留 checkpoint 数
     pool_size: int = 8  # best 池大小
-    eval_interval: int = 8  # 评测间隔批数
-    eval_games: int = 196  # 每次评测局数
-    eval_workers: int = 48  # 评测并行数
+    eval_interval: int = 4  # 评测间隔批数
+    eval_games: int = 400  # 每次评测局数
+    eval_seed: int = 0  # 固定评测种子
+    eval_workers: int = 16  # 评测并行数
     sample_workers: int = 16  # 采样并行数
-    update_chunk: int = 16  # 更新分块局数
+    update_chunk: int = 2  # 更新分块局数
     terminal_timeout: float = 20.0  # 单局超时秒数
     opponent_current_prob: float = 0.5  # 对手为当前 best 的概率
+    opponent_sample_rate: float = 0.25  # 训练中每局对手按策略采样的概率
     pool_rate_low: float = 0.2  # 池内优先胜率下界
     pool_rate_high: float = 0.8  # 池内优先胜率上界
     pool_weight: float = 0.2  # 池内非优先权重
     promotion_threshold: float = 0.55  # 晋升胜率阈值
     elo_k: float = 32.0  # Elo 更新系数
-    aux_coefficient: float = 0.1  # 辅助损失系数
-    effect_aux_coefficient: float = 0.1  # 状态变化/效果差辅助损失系数
-    trait_aux_coefficient: float = 0.1  # 特性触发/效果辅助损失系数
+    aux_coefficient: float = 0.1  # 伤害／击杀辅助损失系数
+    effect_aux_coefficient: float = 0.3  # 效果差／效果价值辅助损失系数
+    trait_aux_coefficient: float = 0.3  # 特性触发／目标／候选条件特性辅助损失系数
+    status_target_aux_coefficient: float = 0.3  # 状态技能目标辅助损失系数
+    bloodline_aux_coefficient: float = 0.1  # 对方血脉预测辅助损失系数
+    resonance_aux_coefficient: float = 0.1  # 对方共鸣魔法预测辅助损失系数
+    pet_delta_aux_coefficient: float = 0.1  # 逐精灵状态变化辅助损失系数
+    candidate_delta_aux_coefficient: float = 0.1  # 候选级逐精灵影响辅助损失系数
+    outcome_aux_coefficient: float = 0.1  # 通用结果属性辅助损失系数
+    teacher_coefficient: float = 0.1  # teacher 策略蒸馏系数；首次晋升后关闭
+    joint_aux_coefficient: float = 0.1  # 对方血脉与共鸣联合预测辅助损失系数
+    lead_aux_coefficient: float = 0.1  # 首发后势能辅助损失系数
     state_change_pos_weight: float = 10.0  # 状态变化 BCE 正例权重上限
+    effect_kind_pos_weight: float = 10.0  # 施加效果类型 BCE 正例权重上限
     rare_skill_bonus: float = 0.08  # 激进探索阶段技能奖励系数
     rare_skill_bonus_late: float = 0.02  # 后续阶段技能奖励系数
     exploration_aggressive_batches: int = 0  # 激进探索批次数；0 表示直接使用后续阶段
-    status_exploration_weight: float = 2.5  # 激进阶段状态技能权重
-    status_exploration_weight_late: float = 1.2  # 后续阶段状态技能权重
+    status_exploration_weight: float = 1.0  # 激进阶段状态技能权重
+    status_exploration_weight_late: float = 0.3  # 后续阶段状态技能权重
     rare_skill_batches: int = 0  # 技能探索批次数；0 表示全程
     reward: RewardConfig = field(default_factory=RewardConfig)  # 奖励配置

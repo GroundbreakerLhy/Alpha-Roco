@@ -159,9 +159,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=defaults.output)
     parser.add_argument("--seed", type=int, default=defaults.seed)
     parser.add_argument("--timeout", type=float, default=defaults.timeout)
-    parser.add_argument(
-        "--learning-rate", type=float, default=defaults.learning_rate
-    )
+    parser.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
     return parser.parse_args()
 
 

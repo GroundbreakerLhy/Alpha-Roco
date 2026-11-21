@@ -1,8 +1,9 @@
 .DS_Store
-.cache/
-.vscode/
-logs/
-tests/
-scripts/
-__pycache__/
+.cache
+.vscode
+logs
+tests
+scripts
+__pycache__
+models
 :memory:.ses

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import buffs
+from . import buffs, events
 
 ATTACK = "attack"
 DEFENSE = "defense"
@@ -116,15 +116,37 @@ def is_skill_on_cooldown(pet, skill_id: int) -> bool:
     return skill_id in pet.skill_cooldowns
 
 
-def schedule_skill_cooldown(pet, skill_id: int) -> None:
+def schedule_skill_cooldown(pet, skill_id: int, state=None) -> None:
     """安排技能在下一回合进入冷却。"""
     pet.skill_cooldowns_pending.add(skill_id)
+    if state is not None:
+        events.emit(
+            state,
+            "cooldown",
+            action="schedule",
+            source=events.pet_entity(state, pet),
+            target=events.pet_entity(state, pet),
+            skill_id=skill_id,
+            public=False,
+        )
 
 
-def settle_skill_cooldowns(pet) -> None:
+def settle_skill_cooldowns(pet, state=None) -> None:
     """回合结束结算：下一回合冷却 = 本回合安排的冷却。"""
+    before = set(pet.skill_cooldowns)
     pet.skill_cooldowns = set(pet.skill_cooldowns_pending)
     pet.skill_cooldowns_pending.clear()
+    if state is not None:
+        for skill_id in sorted(pet.skill_cooldowns - before):
+            events.emit(
+                state,
+                "cooldown",
+                action="settle",
+                source=events.pet_entity(state, pet),
+                target=events.pet_entity(state, pet),
+                skill_id=skill_id,
+                public=False,
+            )
 
 
 def is_swift(skill) -> bool:

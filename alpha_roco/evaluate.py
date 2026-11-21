@@ -5,8 +5,14 @@ from pathlib import Path
 
 import torch
 
-from .arena import load_model, play_match, wilson_interval
+from .arena import (
+    evaluation_team_pairs,
+    load_model,
+    play_match,
+    wilson_interval,
+)
 from .config import EvaluationConfig, SearchConfig
+from .fast_arena import fast_play_match_paths
 from .features import ObservationEncoder
 
 
@@ -55,22 +61,35 @@ def main() -> None:
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
     encoder = ObservationEncoder()
-    candidate = load_model(args.candidate, encoder, device)
-    reference = load_model(args.reference, encoder, device)
-    tally = play_match(
-        candidate,
-        reference,
-        encoder,
-        args.games,
-        args.seed,
-        device,
-        args.sample,
-        args.timeout,
-        args.workers,
-        search=args.search,
-        search_top_k=args.search_top_k,
-        search_risk=args.search_risk,
-    )
+    if args.search:
+        candidate = load_model(args.candidate, encoder, device)
+        reference = load_model(args.reference, encoder, device)
+        tally = play_match(
+            candidate,
+            reference,
+            encoder,
+            args.games,
+            args.seed,
+            device,
+            args.sample,
+            args.timeout,
+            args.workers,
+            search=True,
+            search_top_k=args.search_top_k,
+            search_risk=args.search_risk,
+            team_pairs=evaluation_team_pairs(args.games),
+        )
+    else:
+        tally = fast_play_match_paths(
+            args.candidate,
+            args.reference,
+            args.games,
+            args.seed,
+            device,
+            sample=args.sample,
+            workers=args.workers,
+            team_pairs=evaluation_team_pairs(args.games),
+        )
     label = f"candidate=A vs reference=B search={args.search}"
     _print_tally(label, tally)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import events
 from .data_loader import load_typechart
 from .evolution import apply_cute, can_cute
 from .trait_source import current_trait_source
@@ -268,6 +269,22 @@ def _trait_source(
     return source_side or side, source_pet or pet, trait_id
 
 
+def _event_state(state=None):
+    if state is not None:
+        return state
+    context = events.current_context()
+    return None if context is None else context["state"]
+
+
+def _buff_source(state, source_side: str, source_pet: str) -> dict:
+    if source_side:
+        return events.pet_entity_by_name(state, source_side, source_pet)
+    context = events.current_context()
+    if context is not None and context["state"] is state:
+        return context["source"]
+    return events.field_entity()
+
+
 def grant_buff(
     pet,
     buff_type: str,
@@ -328,6 +345,7 @@ def grant_buff(
         source_kind,
         turns=turns,
         source_trait_id=source_trait_id,
+        state=state,
     )
     gained = get_buff_value(pet, buff_type) - before
     if gained and buff_type == BuffType.FREEZE:
@@ -335,6 +353,21 @@ def grant_buff(
     if gained and buff_type == BuffType.LIGHTNING:
         if get_buff_value(pet, BuffType.LIGHTNING) >= 2:
             _trigger_lightning(pet, state)
+    if gained:
+        event_state = _event_state(state)
+        if event_state is not None:
+            events.emit(
+                event_state,
+                "buff",
+                action="apply",
+                source=_buff_source(event_state, source_side, source_pet),
+                target=events.pet_entity(event_state, pet),
+                attribute=buff_type,
+                value=gained,
+                stacks=gained,
+                duration=duration,
+                extra={"source_kind": source_kind},
+            )
     return gained
 
 
@@ -349,6 +382,7 @@ def add_buff(
     source_kind: str = "",
     turns: int | None = None,
     source_trait_id: int | None = None,
+    state=None,
 ) -> None:
     if value == 0:
         return
@@ -361,7 +395,7 @@ def add_buff(
         bound = layer_clamp_bound(buff_type)
         new_total = max(-bound, min(bound, current + value))
         if new_total == 0:
-            remove_buff(pet, buff_type)
+            remove_buff(pet, buff_type, state)
             return
         if new_total == current:
             return
@@ -407,8 +441,23 @@ def add_buff(
     )
 
 
-def remove_buff(pet, buff_type: str) -> None:
+def remove_buff(pet, buff_type: str, state=None) -> None:
+    removed = [b for b in pet.buffs if b.buff_type == buff_type]
     pet.buffs = [b for b in pet.buffs if b.buff_type != buff_type]
+    state = _event_state(state)
+    if state is None:
+        return
+    for buff in removed:
+        events.emit(
+            state,
+            "buff",
+            action="remove",
+            target=events.pet_entity(state, pet),
+            attribute=buff_type,
+            stacks=buff.value,
+            duration=buff.duration,
+            extra={"source_kind": buff.source_kind},
+        )
 
 
 def get_buff_value(pet, buff_type: str) -> int:
@@ -419,18 +468,44 @@ def has_buff(pet, buff_type: str) -> bool:
     return any(b.buff_type == buff_type for b in pet.buffs)
 
 
-def clear_normal_buffs(pet) -> None:
-    pet.buffs = [b for b in pet.buffs if b.duration != DurationKind.NORMAL]
+def clear_normal_buffs(pet, state=None) -> None:
+    event_state = _event_state(state)
+    normal = [b for b in pet.buffs if b.duration == DurationKind.NORMAL]
+    pet.buffs = [b for b in pet.buffs if b not in normal]
+    if event_state is not None:
+        for buff in normal:
+            events.emit(
+                event_state,
+                "buff",
+                action="remove",
+                target=events.pet_entity(event_state, pet),
+                attribute=buff.buff_type,
+                stacks=buff.value,
+                duration=buff.duration,
+            )
 
 
-def expire_temporary_buffs(pet, current_turn: int) -> None:
-    pet.buffs = [
+def expire_temporary_buffs(pet, current_turn: int, state=None) -> None:
+    event_state = _event_state(state)
+    expired = [
         b
         for b in pet.buffs
-        if b.duration != DurationKind.TEMPORARY
-        or b.expire_turn is None
-        or b.expire_turn > current_turn
+        if b.duration == DurationKind.TEMPORARY
+        and b.expire_turn is not None
+        and b.expire_turn <= current_turn
     ]
+    pet.buffs = [b for b in pet.buffs if b not in expired]
+    if event_state is not None:
+        for buff in expired:
+            events.emit(
+                event_state,
+                "buff",
+                action="expire",
+                target=events.pet_entity(event_state, pet),
+                attribute=buff.buff_type,
+                stacks=buff.value,
+                duration=buff.duration,
+            )
 
 
 def can_act(pet) -> bool:
@@ -500,7 +575,17 @@ def _trigger_lightning(pet, state=None) -> None:
     _apply_damage(pet, damage)
     lost = hp_before - pet.hp
     if state is not None and lost > 0:
-        state.log.append(f"{pet.side} {pet.name} 受到引电 {lost} 伤害")
+        events.emit(
+            state,
+            "damage",
+            action="damage",
+            effect="dot",
+            source=events.system_entity(pet.side, "lightning"),
+            target=events.pet_entity(state, pet),
+            attribute="lightning",
+            value=lost,
+            line=f"{pet.side} {pet.name} 受到引电 {lost} 伤害",
+        )
     remove_buff(pet, BuffType.LIGHTNING)
 
 
@@ -516,9 +601,9 @@ def on_round_end(state) -> None:
             _apply_poison(pet, typechart, state)
             _apply_burn(pet, typechart, state)
             _apply_leech(pet, state, typechart)
-            _apply_dizzy(pet)
-            _apply_lock(pet, state.turn)
-            expire_temporary_buffs(pet, state.turn)
+            _apply_dizzy(pet, state)
+            _apply_lock(pet, state.turn, state)
+            expire_temporary_buffs(pet, state.turn, state)
 
 
 def _apply_poison(pet, typechart, state=None) -> None:
@@ -531,7 +616,17 @@ def _apply_poison(pet, typechart, state=None) -> None:
     _apply_damage(pet, damage, state.turn if state is not None else None)
     lost = hp_before - pet.hp
     if lost > 0 and state is not None:
-        state.log.append(f"{pet.side} {pet.name} 受到中毒 {lost} 伤害")
+        events.emit(
+            state,
+            "damage",
+            action="damage",
+            effect="dot",
+            source=events.system_entity(pet.side, "poison"),
+            target=events.pet_entity(state, pet),
+            attribute="poison",
+            value=lost,
+            line=f"{pet.side} {pet.name} 受到中毒 {lost} 伤害",
+        )
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
         traits.emit(
@@ -557,7 +652,17 @@ def _apply_burn(pet, typechart, state=None) -> None:
     _apply_damage(pet, damage, state.turn if state is not None else None)
     lost = hp_before - pet.hp
     if lost > 0 and state is not None:
-        state.log.append(f"{pet.side} {pet.name} 受到灼烧 {lost} 伤害")
+        events.emit(
+            state,
+            "damage",
+            action="damage",
+            effect="dot",
+            source=events.system_entity(pet.side, "burn"),
+            target=events.pet_entity(state, pet),
+            attribute="burn",
+            value=lost,
+            line=f"{pet.side} {pet.name} 受到灼烧 {lost} 伤害",
+        )
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
         traits.emit(
@@ -592,6 +697,23 @@ def _apply_burn(pet, typechart, state=None) -> None:
                 source_trait_id=source.source_trait_id if source else None,
             )
         )
+    if state is not None:
+        events.emit(
+            state,
+            "buff",
+            action="increase" if new_layers > layers else "decay",
+            source=_buff_source(
+                state,
+                source.source_side if source else "",
+                source.source_pet if source else "",
+            ),
+            target=events.pet_entity(state, pet),
+            attribute=BuffType.BURN,
+            value=new_layers - layers,
+            stacks=new_layers,
+            duration=DurationKind.NORMAL,
+            extra={"source_kind": source.source_kind if source else ""},
+        )
 
 
 def _apply_leech(pet, state, typechart) -> None:
@@ -606,7 +728,18 @@ def _apply_leech(pet, state, typechart) -> None:
     _apply_damage(pet, damage, state.turn if state is not None else None)
     lost = hp_before - pet.hp
     if lost > 0:
-        state.log.append(f"{pet.side} {pet.name} 受到寄生 {lost} 伤害")
+        if state is not None:
+            events.emit(
+                state,
+                "damage",
+                action="damage",
+                effect="dot",
+                source=events.system_entity(pet.side, "leech"),
+                target=events.pet_entity(state, pet),
+                attribute="leech",
+                value=lost,
+                line=f"{pet.side} {pet.name} 受到寄生 {lost} 伤害",
+            )
         from . import traits  # 延迟导入，避免与 traits.impl 循环依赖
 
         traits.emit(
@@ -624,7 +757,19 @@ def _apply_leech(pet, state, typechart) -> None:
         pet.buffs[0].source_pet if pet.buffs else "",
     )
     if source is not None and source.hp > 0:
+        before = source.hp
         source.hp = min(source.max_hp, source.hp + damage)
+        if source.hp > before:
+            events.emit(
+                state,
+                "heal",
+                action="heal",
+                effect="dot",
+                source=events.system_entity(pet.side, "leech"),
+                target=events.pet_entity(state, source),
+                attribute="leech",
+                value=source.hp - before,
+            )
 
 
 def check_freeze(pet) -> None:
@@ -639,10 +784,11 @@ def check_freeze(pet) -> None:
     threshold = int(pet.max_hp * 0.05 * layers)
     if threshold >= pet.hp:
         # 绕过 hp 写入入口避免递归；冻结不是伤害，不走免死/减伤。
+        object.__setattr__(pet, "freeze_loss", pet.hp + pet.freeze_loss)
         object.__setattr__(pet, "hp", 0)
 
 
-def _apply_dizzy(pet) -> None:
+def _apply_dizzy(pet, state=None) -> None:
     layers = get_buff_value(pet, BuffType.DIZZY)
     if layers <= 0:
         return
@@ -660,9 +806,20 @@ def _apply_dizzy(pet) -> None:
                 source_trait_id=source.source_trait_id if source else None,
             )
         )
+    if state is not None:
+        events.emit(
+            state,
+            "buff",
+            action="decay",
+            target=events.pet_entity(state, pet),
+            attribute=BuffType.DIZZY,
+            value=-1,
+            stacks=max(0, layers - 1),
+            duration=DurationKind.NORMAL,
+        )
 
 
-def _apply_lock(pet, current_turn: int = 0) -> None:
+def _apply_lock(pet, current_turn: int = 0, state=None) -> None:
     """禁足按回合递减：施加当回合不递减，"3 回合"=接下来 3 个回合结束各减 1。"""
     if not has_buff(pet, BuffType.LOCK):
         return
@@ -673,6 +830,17 @@ def _apply_lock(pet, current_turn: int = 0) -> None:
             buff.value -= 1
             if buff.value <= 0:
                 pet.buffs = [b for b in pet.buffs if b is not buff]
+            if state is not None:
+                events.emit(
+                    state,
+                    "buff",
+                    action="decay" if buff.value > 0 else "remove",
+                    target=events.pet_entity(state, pet),
+                    attribute=BuffType.LOCK,
+                    value=-1,
+                    stacks=max(0, buff.value),
+                    duration=DurationKind.NORMAL,
+                )
             return
 
 
@@ -695,7 +863,7 @@ def get_skill_power_modifier(pet) -> tuple:
     return percent, flat
 
 
-def consume_next_attack_power(pet) -> tuple:
+def consume_next_attack_power(pet, state=None) -> tuple:
     """取用一次性"下一次攻击技能威力"增益，返回 (百分比, 固定值) 并清空。
 
     无增益返回 (0, 0)；NORMAL 时长，离场清除（P11 增量语义）。
@@ -706,6 +874,17 @@ def consume_next_attack_power(pet) -> tuple:
         remove_buff(pet, BuffType.NEXT_ATTACK_POWER_PERCENT)
     if flat:
         remove_buff(pet, BuffType.NEXT_ATTACK_POWER_FLAT)
+    event_state = _event_state(state)
+    if event_state is not None and (percent or flat):
+        events.emit(
+            event_state,
+            "buff",
+            action="consume",
+            target=events.pet_entity(event_state, pet),
+            attribute=BuffType.NEXT_ATTACK_POWER_PERCENT,
+            value=percent,
+            stacks=percent,
+        )
     return percent, flat
 
 

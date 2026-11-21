@@ -88,6 +88,7 @@ class BattlePet:
     max_hp: int
     energy: int
     skills: list
+    freeze_loss: int = 0
     attributes: list = field(default_factory=list)
     speed_range: list = field(default_factory=lambda: [0, 0])
     defense_reduction: float = 0.0
@@ -119,6 +120,7 @@ class BattlePet:
     counter_stats: dict = field(default_factory=lambda: {"count": 0, "types": {}})
     # 本场释放过的技能：{id: 次数}（插入序=首次使用顺序；含迅捷与巧变临时技能）
     used_skill_counts: dict = field(default_factory=dict)
+    used_skill_history: list = field(default_factory=list)
     revealed_skills: set = field(default_factory=set)
     # 上一次使用的技能 id（聚能/换人不变，重放不算新使用）
     last_used_skill_id: Optional[int] = None
@@ -187,6 +189,9 @@ class BattleState:
     )
     turn: int = 0
     log: list = field(default_factory=list)
+    events: list = field(default_factory=list)
+    event_seq: int = 0
+    event_phase: str = "setup"
     trait_events: list = field(default_factory=list)
     counter_events: list = field(default_factory=list)
     winner: Optional[str] = None

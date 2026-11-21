@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 
-from . import buffs
+from . import buffs, events
 from .data_loader import load_typechart
 from .typechart import type_multiplier
 
@@ -37,16 +37,37 @@ def add_mark(state, side: str, mark_id: int, amount: int = 1) -> None:
         return
     side_name = mark_side(mark_id)
     current = state.marks[side][side_name]
+    before = current["stacks"] if current is not None and current["id"] == mark_id else 0
     if current is not None and current["id"] == mark_id:
         current["stacks"] = min(99, current["stacks"] + amount)
+        gained = current["stacks"] - before
     else:
         state.marks[side][side_name] = {"id": mark_id, "stacks": min(99, amount)}
+        gained = min(99, amount)
+    events.emit(
+        state,
+        "mark",
+        action="add",
+        source=events.team_entity(side),
+        target=events.team_entity(side),
+        attribute=mark_id,
+        stacks=gained,
+    )
 
 
 def remove_mark(state, side: str, mark_id: int) -> None:
     for side_name in (POSITIVE, NEGATIVE):
         current = state.marks[side][side_name]
         if current is not None and current["id"] == mark_id:
+            events.emit(
+                state,
+                "mark",
+                action="remove",
+                source=events.team_entity(side),
+                target=events.team_entity(side),
+                attribute=mark_id,
+                stacks=current["stacks"],
+            )
             state.marks[side][side_name] = None
 
 
@@ -58,6 +79,16 @@ def consume_mark_stacks(state, side: str, mark_id: int, amount: int) -> None:
     current = state.marks[side][side_name]
     if current is None or current["id"] != mark_id:
         return
+    consumed = min(amount, current["stacks"])
+    events.emit(
+        state,
+        "mark",
+        action="consume",
+        source=events.team_entity(side),
+        target=events.team_entity(side),
+        attribute=mark_id,
+        stacks=consumed,
+    )
     if amount >= current["stacks"]:
         state.marks[side][side_name] = None
         return
@@ -65,6 +96,17 @@ def consume_mark_stacks(state, side: str, mark_id: int, amount: int) -> None:
 
 
 def clear_side(state, side: str, side_name: str) -> None:
+    current = state.marks[side][side_name]
+    if current is not None:
+        events.emit(
+            state,
+            "mark",
+            action="clear",
+            source=events.team_entity(side),
+            target=events.team_entity(side),
+            attribute=current["id"],
+            stacks=current["stacks"],
+        )
     state.marks[side][side_name] = None
 
 
@@ -115,8 +157,20 @@ def on_round_end(state) -> None:
         positive = state.marks[side]["positive"]
         if positive is not None and positive["id"] == 10:
             gain = positive["stacks"]
+            before = pet.energy
             pet.energy = min(10, pet.energy + gain)
-            state.log.append(f"{side} {pet.name} 光合印记回复 {gain} 能量")
+            gained = pet.energy - before
+            events.emit(
+                state,
+                "energy",
+                action="gain",
+                effect="mark",
+                source=events.mark_entity(side),
+                target=events.pet_entity(state, pet),
+                attribute=10,
+                value=gained,
+                line=f"{side} {pet.name} 光合印记回复 {gain} 能量",
+            )
 
         negative = state.marks[side]["negative"]
         if negative is None:
@@ -125,5 +179,16 @@ def on_round_end(state) -> None:
             mult = type_multiplier(9, pet.attributes, typechart)
             damage = int(pet.max_hp * 0.03 * negative["stacks"] * mult)
             if damage > 0:
+                lost = min(damage, pet.hp)
                 pet.hp = max(0, pet.hp - damage)
-                state.log.append(f"{side} {pet.name} 受到中毒印记 {damage} 伤害")
+                events.emit(
+                    state,
+                    "damage",
+                    action="damage",
+                    effect="dot",
+                    source=events.mark_entity(side),
+                    target=events.pet_entity(state, pet),
+                    attribute=4,
+                    value=lost,
+                    line=f"{side} {pet.name} 受到中毒印记 {damage} 伤害",
+                )

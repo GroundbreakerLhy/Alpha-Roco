@@ -293,7 +293,15 @@ class LoseHp(Effect):
             lost = min(amount, pet.hp)
             pet.hp = max(0, pet.hp - amount)
             if lost > 0:
-                ctx.log(f"{pet.side} {pet.name} 失去 {lost} 生命")
+                ctx.event(
+                    "life",
+                    action="loss",
+                    effect="cost",
+                    source=ctx.actor,
+                    target=pet,
+                    value=lost,
+                    line=f"{pet.side} {pet.name} 失去 {lost} 生命",
+                )
 
 
 @dataclass(kw_only=True)
@@ -336,11 +344,8 @@ class DispelMarks(Effect):
                     continue
                 taken = current["stacks"] if self.count is None else min(current["stacks"], self.count)
                 total += taken
-                remaining = current["stacks"] - taken
                 mark_id = current["id"]
-                ctx.state.marks[side][slot] = None
-                if remaining > 0:
-                    marks.add_mark(ctx.state, side, mark_id, remaining)
+                marks.consume_mark_stacks(ctx.state, side, mark_id, taken)
                 if self.steal:
                     marks.add_mark(ctx.state, ctx.actor.side, mark_id, taken)
         if self.record_as is not None:
@@ -506,8 +511,17 @@ def deal_extra_damage(ctx: SkillContext, power: int, *,
             damage = result["damage"]
             if damage <= 0:
                 continue
+            lost = min(damage, pet.hp)
             pet.hp = max(0, pet.hp - damage)
-            ctx.log(f"  额外造成 {damage} 伤害")
+            ctx.event(
+                "damage",
+                action="damage",
+                effect="extra",
+                source=ctx.actor,
+                target=pet,
+                value=lost,
+                line=f"  额外造成 {damage} 伤害",
+            )
             traits.emit(ctx.state, "take_damage", scope="all", side=pet.side, subject=pet,
                         target=ctx.actor, skill=extra_skill, damage=damage,
                         hit_count=1, is_first=ctx.is_first, logs=ctx.logs)

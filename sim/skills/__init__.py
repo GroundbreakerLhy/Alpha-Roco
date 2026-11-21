@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .. import skill_utils
+from .. import events, skill_utils
 from ..models import BattlePet, BattleSkill, BattleState
 from .base import SkillContext, SkillHandler
 from .ops import (  # noqa: F401  效果原语（按需从 sim.skills 直接引用）
@@ -169,7 +169,22 @@ def emit(state: BattleState, stage: str, actor: BattlePet, skill: BattleSkill,
         raise ValueError(f"未知技能阶段：{stage}")
     handler = get_handler(skill.skill_id)
     if handler is not None:
-        getattr(handler, hook_name)(ctx)
+        with events.context(
+            state,
+            source=events.pet_entity(state, actor),
+            target=events.pet_entity(state, ctx.target),
+            skill_id=skill.skill_id,
+        ):
+            before = events.snapshot(state)
+            start_seq = state.event_seq
+            getattr(handler, hook_name)(ctx)
+            events.reconcile(
+                state,
+                before,
+                start_seq,
+                source=events.pet_entity(state, actor),
+                effect="skill",
+            )
     return ctx
 
 

@@ -57,102 +57,132 @@ def log(msg):
         f.flush()
 
 
-def send_decision(conn, state, side, phase, team, *, lead=False, opponent_team=None, own_pets=None):
-    candidates = (
-        [{"kind": "lead", "lead": index, "pet_index": index} for index in range(len(team))]
-        if lead
-        else enumerate_candidates(state, side, phase)
-    )
-    if not hasattr(send_decision, "phase"):
-        send_decision.phase = None
-        send_decision.group_id = -1
-        send_decision.sent_sides = set()
-        send_decision.sequence = 0
-        send_decision.event_logs = {}
-        send_decision.private_events = {}
-        send_decision.last_candidates = {}
-    if send_decision.phase != phase or side in send_decision.sent_sides:
-        send_decision.group_id += 1
-        send_decision.sent_sides = set()
-        send_decision.phase = phase
-    send_decision.sent_sides.add(side)
-    state_view = {"teams": {side: []}} if lead else state_to_dict(state, view_side=side)
-    public_state = None
-    if lead:
-        state_view = {"teams": {side: own_pets if own_pets is not None else []}}
-        state_view["turn"] = 0
-        state_view["winner"] = None
-        state_view["active"] = {"A": -1, "B": -1}
-        state_view["magic"] = {"A": 4, "B": 4}
-        state_view["log"] = []
-        public_state = {
-            "teams": {
-                side: state_view["teams"][side],
-                ("B" if side == "A" else "A"): [
-                    {"name": name} for name in opponent_team or []
-                ],
+class DecisionBuilder:
+    def __init__(self):
+        self.phase = None
+        self.group_id = -1
+        self.sent_sides = set()
+        self.sequence = 0
+        self.event_logs = {}
+        self.private_events = {}
+        self.last_candidates = {}
+
+    def request(
+        self,
+        state,
+        side,
+        phase,
+        team,
+        *,
+        lead=False,
+        opponent_team=None,
+        own_pets=None,
+    ):
+        candidates = (
+            [{"kind": "lead", "lead": index, "pet_index": index} for index in range(len(team))]
+            if lead
+            else enumerate_candidates(state, side, phase)
+        )
+        if self.phase != phase or side in self.sent_sides:
+            self.group_id += 1
+            self.sent_sides = set()
+            self.phase = phase
+        self.sent_sides.add(side)
+        if lead:
+            other = "B" if side == "A" else "A"
+            opponent = [{"name": name} for name in opponent_team or []]
+            state_view = {
+                "teams": {side: own_pets if own_pets is not None else [], other: opponent},
+                "turn": 0,
+                "winner": None,
+                "active": {"A": -1, "B": -1},
+                "magic": {"A": 4, "B": 4},
+                "log": [],
             }
-        }
-        state_view["teams"]["B" if side == "A" else "A"] = public_state["teams"]["B" if side == "A" else "A"]
-        state_view["magic"] = {"A": 4, "B": 4}
-    event_log = send_decision.event_logs.get(side)
-    cursor = 0
-    if state is not None:
-        if event_log is None or event_log[0] is not state.log:
-            cursor = 0
+            public_state = {"teams": {side: state_view["teams"][side], other: opponent}}
         else:
-            cursor = event_log[1]
-        events = [{"kind": "log", "phase": "unknown", "line": line} for line in state.log[cursor:]]
-        send_decision.event_logs[side] = (state.log, len(state.log))
-    else:
-        events = []
-    send_decision.last_candidates[side] = candidates
-    private_events = send_decision.private_events.pop(side, [])
-    payload = {
-        "type": "decision",
-        "request": {
+            state_view = state_to_dict(state, view_side=side)
+            public_state = None
+        event_log = self.event_logs.get(side)
+        cursor = 0
+        if state is not None:
+            if event_log is None or event_log[0] is not state.log:
+                cursor = 0
+            else:
+                cursor = event_log[1]
+            events = [
+                {"kind": "log", "phase": "unknown", "line": line}
+                for line in state.log[cursor:]
+            ]
+            self.event_logs[side] = (state.log, len(state.log))
+        else:
+            events = []
+        self.last_candidates[side] = candidates
+        private_events = self.private_events.pop(side, [])
+        request = {
             "type": "decision",
             "side": side,
             "phase": phase,
-            "group_id": send_decision.group_id,
-            "sequence": send_decision.sequence,
+            "group_id": self.group_id,
+            "sequence": self.sequence,
             "state": state_view,
-            "public_state": public_state if lead else None,
+            "public_state": public_state,
             "team": team,
             "opponent_team": opponent_team if lead else None,
             "candidates": candidates,
             "events": events,
             "private_events": private_events,
+        }
+        self.sequence += 1
+        return request
+
+    def record(self, side, action):
+        candidates = self.last_candidates.get(side, [])
+        submitted = next(
+            (
+                candidate
+                for candidate in candidates
+                if all(
+                    candidate.get(key) == action.get(key)
+                    for key in (
+                        "kind",
+                        "skill_index",
+                        "pet_index",
+                        "lead",
+                        "magic_id",
+                        "magic_branch",
+                        "choice_branch",
+                    )
+                )
+            ),
+            action,
+        )
+        self.private_events.setdefault(side, []).append(dict(submitted))
+
+
+DECISIONS = DecisionBuilder()
+
+
+def send_decision(conn, state, side, phase, team, *, lead=False, opponent_team=None, own_pets=None):
+    send_line(
+        conn,
+        {
+            "type": "decision",
+            "request": DECISIONS.request(
+                state,
+                side,
+                phase,
+                team,
+                lead=lead,
+                opponent_team=opponent_team,
+                own_pets=own_pets,
+            ),
         },
-    }
-    send_decision.sequence += 1
-    send_line(conn, payload)
+    )
 
 
 def record_submission(side, action):
-    records = getattr(send_decision, "private_events", {})
-    candidates = getattr(send_decision, "last_candidates", {}).get(side, [])
-    submitted = next(
-        (
-            candidate
-            for candidate in candidates
-            if all(
-                candidate.get(key) == action.get(key)
-                for key in (
-                    "kind",
-                    "skill_index",
-                    "pet_index",
-                    "lead",
-                    "magic_id",
-                    "magic_branch",
-                    "choice_branch",
-                )
-            )
-        ),
-        action,
-    )
-    records.setdefault(side, []).append(dict(submitted))
-    send_decision.private_events = records
+    DECISIONS.record(side, action)
 
 
 def is_valid_switch(raw, state, side):

@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import random
 from typing import Optional
 
+from .. import events
 from ..models import Action, BattlePet, BattleSkill, BattleState
 from ..trait_source import trait_source_context
 from .base import TraitContext, TraitHandler
@@ -171,8 +173,38 @@ def emit(
             **kw,
         )
         state.trait_events.append(_record(ctx))
+        events.emit(
+            state,
+            "trait",
+            action="trigger",
+            effect=event,
+            source=events.pet_entity(state, p),
+            target=events.pet_entity(
+                state, ctx.subject if ctx.subject is not None else ctx.target
+            ),
+            trait_id=p.trait_id,
+            attribute=p.trait_id,
+            value=ctx.damage or ctx.heal or ctx.energy_gain,
+            extra={"trait_event": event},
+        )
         with trait_source_context(p.side, p.name, p.trait_id):
-            fn(ctx)
+            with events.context(
+                state,
+                source=events.pet_entity(state, p),
+                trait_id=p.trait_id,
+                skill_id=(ctx.skill.skill_id if ctx.skill is not None else None),
+                effect=event,
+            ):
+                before = events.snapshot(state)
+                start_seq = state.event_seq
+                fn(ctx)
+                events.reconcile(
+                    state,
+                    before,
+                    start_seq,
+                    source=events.pet_entity(state, p),
+                    effect="trait",
+                )
 
 
 def emit_lethal(
@@ -196,7 +228,38 @@ def emit_lethal(
         **kw,
     )
     with trait_source_context(defender.side, defender.name, defender.trait_id):
-        result = bool(fn(ctx))
+        with events.context(
+            state,
+            source=events.pet_entity(state, defender),
+            target=events.pet_entity(state, kw.get("attacker")),
+            trait_id=defender.trait_id,
+            effect="lethal",
+        ):
+            before = events.snapshot(state)
+            start_seq = state.event_seq
+            result = bool(fn(ctx))
+            events.reconcile(
+                state,
+                before,
+                start_seq,
+                source=events.pet_entity(state, defender),
+                effect="trait",
+                include_hp=False,
+            )
+    events.emit(
+        state,
+        "trait",
+        action="trigger",
+        effect="lethal",
+        source=events.pet_entity(state, defender),
+        target=events.pet_entity(
+            state, kw.get("attacker") if kw.get("attacker") is not None else defender
+        ),
+        trait_id=defender.trait_id,
+        attribute=defender.trait_id,
+        value=damage,
+        extra={"trait_event": "lethal", "result": result},
+    )
     state.trait_events.append(
         {
             "event": "lethal",
@@ -296,7 +359,6 @@ def on_round_end(state: BattleState, order: list | None = None) -> None:
     """按速度顺序结算双方特性；单个特性触发的返场在 handler 内完整执行。"""
     if order is None:
         from ..battle import _effective_speed
-        import random
         a_speed = _effective_speed(state, "A")
         b_speed = _effective_speed(state, "B")
         order = (["A", "B"] if a_speed > b_speed else ["B", "A"]
@@ -617,6 +679,20 @@ def grant_energy(state: BattleState, pet: BattlePet, amount: int, **kw) -> int:
     pet.energy = min(limit, pet.energy + amount)
     gained = pet.energy - before
     if gained > 0:
+        context = events.current_context()
+        events.emit(
+            state,
+            "energy",
+            action="gain",
+            source=(
+                context["source"]
+                if context is not None and context["state"] is state
+                else events.pet_entity(state, pet)
+            ),
+            target=events.pet_entity(state, pet),
+            value=gained,
+            extra={"energy_gain": gained},
+        )
         emit(
             state,
             "energy_gain",

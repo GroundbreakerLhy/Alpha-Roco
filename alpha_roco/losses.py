@@ -109,3 +109,23 @@ def opponent_cross_entropy(
         ~opponent_mask.bool(), torch.finfo(logits.dtype).min
     )
     return F.cross_entropy(masked_logits, actions)
+
+
+def opponent_distribution_loss(
+    logits: torch.Tensor,
+    probabilities: torch.Tensor,
+    opponent_mask: torch.Tensor,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    mask = opponent_mask.bool()
+    target = probabilities * mask
+    target = target / target.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+    masked_logits = logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
+    log_probs = torch.log_softmax(masked_logits, dim=-1).masked_fill(~mask, 0.0)
+    weighted = torch.where(
+        target > 0,
+        target * log_probs,
+        torch.zeros_like(target),
+    )
+    loss = -weighted.sum(dim=-1)
+    return loss.mean() if reduction == "mean" else loss
