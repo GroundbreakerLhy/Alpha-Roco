@@ -1045,6 +1045,24 @@ class Manipulate(OpsSkill):
 register(Manipulate())
 
 
+# ---------------- 7030240 根吸收 ----------------
+class RootAbsorb(OpsSkill):
+    """自己回复 15% 生命和 4 能量。"""
+
+    skill_id = 7030240
+    name = "根吸收"
+    category = 3
+    implemented = True
+
+    status_effects = (
+        Heal(percent=0.15),
+        GainEnergy(value=4),
+    )
+
+
+register(RootAbsorb())
+
+
 # ---------------- 7030250 氧输送 ----------------
 class OxygenSupply(OpsSkill):
     """自己回复 4 能量，并获得魔攻 +70%。"""

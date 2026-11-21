@@ -1018,7 +1018,7 @@
       "energyCost": 2,
       "power": null,
       "desc": "自己回复15%生命和4能量。",
-      "done": false,
+      "done": true,
       "tested": false
     },
     {
