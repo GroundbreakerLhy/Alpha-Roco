@@ -7,6 +7,8 @@ import json
 import multiprocessing
 import random
 import shutil
+import subprocess
+import sys
 import threading
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
@@ -223,6 +225,7 @@ def _sample_action(
     device: torch.device,
     reward_config: RewardConfig,
     generator: torch.Generator | None = None,
+    status_explore: float = 0.0,
 ):
     item = encoder.encode(request)
     summary = state_summary(request["state"], request["side"], reward_config)
@@ -231,19 +234,34 @@ def _sample_action(
         probabilities, log_probabilities = _masked_probabilities(
             output["logits"], batch["action_mask"]
         )
-        action_index = torch.multinomial(probabilities, 1, generator=generator)
-        action = selectable_candidates(request)[int(action_index.item())]
-        old_log_prob = float(log_probabilities.gather(1, action_index).item())
+        action_index = int(
+            torch.multinomial(probabilities, 1, generator=generator).item()
+        )
+        candidates = selectable_candidates(request)
+        if status_explore > 0 and random.random() < status_explore:
+            status = [
+                index
+                for index, candidate in enumerate(candidates)
+                if _is_status_skill(encoder, candidate)
+            ]
+            if status:
+                weights = probabilities[0, status]
+                if float(weights.sum()) > 0:
+                    choice = torch.multinomial(weights, 1, generator=generator)
+                    action_index = status[int(choice.item())]
+        index_tensor = torch.tensor([[action_index]], device=device)
+        action = candidates[action_index]
+        old_log_prob = float(log_probabilities.gather(1, index_tensor).item())
         old_value = float(output["value"].reshape(-1)[0].item())
         if history is not None:
-            history.observe(model, output, int(action_index.item()), request["phase"])
+            history.observe(model, output, action_index, request["phase"])
     return (
         action,
         history,
         {
             "item": item,
             "phase": request["phase"],
-            "action": int(action_index.item()),
+            "action": action_index,
             "old_log_prob": old_log_prob,
             "old_value": old_value,
             "reward": 0.0,
@@ -337,6 +355,7 @@ def _collect_versus_game(
     exploration: _Exploration | None = None,
     opponent_sample: bool = False,
     game_index: int | None = None,
+    status_explore: float = 0.0,
 ) -> dict[str, Any]:
     episode: list[dict[str, Any]] = []
     histories = {"A": HistoryState(), "B": HistoryState()}
@@ -408,6 +427,7 @@ def _collect_versus_game(
                         device,
                         reward_config,
                         generator=generator,
+                        status_explore=status_explore,
                     )
                     entry["status"] = _is_status_skill(encoder, action)
                     entry["exploration_skill"] = _is_exploration_skill(encoder, action)
@@ -503,6 +523,9 @@ def _collect_versus_game(
         exploration.cap if exploration is not None else None,
     )
     _assign_aux_targets(episode, encoder)
+    outcome = 1.0 if winner == "A" else -1.0 if winner == "B" else 0.0
+    for entry in episode:
+        entry["win_value_target"] = outcome
     return {
         "episode": episode,
         "winner": winner,
@@ -992,6 +1015,45 @@ def _batched_episode_steps(
         yield step, active, batch, output
 
 
+def _plan_action_class(
+    action: dict[str, Any], encoder: ObservationEncoder, plan_vocab_size: int
+) -> int:
+    key = action.get("action_key")
+    base = plan_vocab_size - 8
+    if key is None:
+        return plan_vocab_size - 1
+    kind, identity = key[0], key[1]
+    if kind == "skill":
+        return encoder.skill_vocab.get(
+            identity, encoder.skill_vocab.get(str(identity), 1)
+        )
+    if kind == "switch" and isinstance(identity, int) and 0 <= identity < 6:
+        return base + identity
+    if kind == "charge":
+        return base + 6
+    return plan_vocab_size - 1
+
+
+def _assign_plan_targets(
+    episodes: list[list[dict[str, Any]]],
+    encoder: ObservationEncoder,
+    plan_vocab_size: int,
+) -> None:
+    empty = plan_vocab_size - 1
+    for episode in episodes:
+        battle = [entry for entry in episode if entry["phase"] != "lead"]
+        lead = next((entry for entry in episode if entry["phase"] == "lead"), None)
+        if lead is not None:
+            lead["plan_long_target"] = [
+                _plan_action_class(entry, encoder, plan_vocab_size)
+                for entry in battle[:4]
+            ] + [empty] * max(0, 4 - len(battle))
+        for entry in battle:
+            entry["plan_short_target"] = _plan_action_class(
+                entry, encoder, plan_vocab_size
+            )
+
+
 def _policy_update(
     model: AlphaRoco,
     optimizer: torch.optim.Optimizer,
@@ -1003,12 +1065,21 @@ def _policy_update(
     teacher: AlphaRoco | None = None,
 ) -> dict[str, float]:
     counts = _prepare_advantages(episodes, config, device)
+    _assign_plan_targets(episodes, encoder, model.plan_vocab_size)
     policy_ids = {id(parameter) for parameter in model.policy_parameters()}
     opponent_params = list(model.opponent_parameters())
     _set_trainable(model, policy_ids)
     metrics = {
         "policy": 0.0,
         "value": 0.0,
+        "win_value": 0.0,
+        "win_value_accuracy": 0.0,
+        "win_value_brier": 0.0,
+        "candidate_q": 0.0,
+        "candidate_q_accuracy": 0.0,
+        "plan": 0.0,
+        "plan_short_accuracy": 0.0,
+        "plan_long_accuracy": 0.0,
         "entropy": 0.0,
         "kl": 0.0,
         "clip_fraction": 0.0,
@@ -1087,6 +1158,24 @@ def _policy_update(
         for entry in episode
         if entry.get("effect_value_target") is not None
     )
+    win_count = sum(
+        1
+        for episode in episodes
+        for entry in episode
+        if entry.get("win_value_target") is not None
+    )
+    short_plan_count = sum(
+        1
+        for episode in episodes
+        for entry in episode
+        if entry.get("plan_short_target") is not None
+    )
+    long_plan_count = sum(
+        1
+        for episode in episodes
+        for entry in episode
+        if entry.get("plan_long_target") is not None
+    )
     completed_epochs = 0
     for _ in range(ppo_epochs):
         optimizer.zero_grad(set_to_none=True)
@@ -1095,6 +1184,14 @@ def _policy_update(
             for key in (
                 "policy",
                 "value",
+                "win_value",
+                "win_value_accuracy",
+                "win_value_brier",
+                "candidate_q",
+                "candidate_q_accuracy",
+                "plan",
+                "plan_short_accuracy",
+                "plan_long_accuracy",
                 "entropy",
                 "kl",
                 "clip_fraction",
@@ -1229,6 +1326,103 @@ def _policy_update(
                         "clip_fraction",
                     ):
                         sums[key] += (result[key]).detach() * scale
+                win_positions = [
+                    position
+                    for position, entry in enumerate(entries)
+                    if entry.get("win_value_target") is not None
+                ]
+                if win_positions:
+                    win_target = torch.tensor(
+                        [entries[position]["win_value_target"] for position in win_positions],
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    win_prediction = output["win_value"][win_positions]
+                    win_loss = F.mse_loss(win_prediction, win_target)
+                    scale = len(win_positions) / max(win_count, 1)
+                    losses.append(win_loss * config.win_value_coefficient * scale)
+                    sums["win_value"] += win_loss.detach() * scale
+                    sums["win_value_accuracy"] += (
+                        (win_prediction.sign() == win_target.sign())
+                        .float()
+                        .mean()
+                        .detach()
+                        * scale
+                    )
+                    sums["win_value_brier"] += (
+                        ((win_prediction / 2.0 - win_target / 2.0) ** 2)
+                        .mean()
+                        .detach()
+                        * scale
+                    )
+                    selected_action = torch.tensor(
+                        [entries[position]["action"] for position in win_positions],
+                        device=device,
+                    )
+                    candidate_prediction = output["aux"]["candidate_q"][
+                        win_positions, selected_action
+                    ]
+                    candidate_loss = F.mse_loss(candidate_prediction, win_target)
+                    losses.append(
+                        candidate_loss * config.candidate_q_coefficient * scale
+                    )
+                    sums["candidate_q"] += candidate_loss.detach() * scale
+                    sums["candidate_q_accuracy"] += (
+                        (candidate_prediction.sign() == win_target.sign())
+                        .float()
+                        .mean()
+                        .detach()
+                        * scale
+                    )
+                short_positions = [
+                    position
+                    for position, entry in enumerate(entries)
+                    if entry.get("plan_short_target") is not None
+                ]
+                if short_positions:
+                    short_target = torch.tensor(
+                        [entries[position]["plan_short_target"] for position in short_positions],
+                        device=device,
+                    )
+                    short_logits = output["short_plan_logits"][short_positions]
+                    short_loss = F.cross_entropy(short_logits, short_target)
+                    short_scale = len(short_positions) / max(short_plan_count, 1)
+                    losses.append(
+                        short_loss * config.plan_coefficient * short_scale
+                    )
+                    sums["plan"] += short_loss.detach() * short_scale
+                    sums["plan_short_accuracy"] += (
+                        (short_logits.argmax(dim=-1) == short_target)
+                        .float()
+                        .mean()
+                        .detach()
+                        * short_scale
+                    )
+                long_positions = [
+                    position
+                    for position, entry in enumerate(entries)
+                    if entry.get("plan_long_target") is not None
+                ]
+                if long_positions:
+                    long_target = torch.tensor(
+                        [entries[position]["plan_long_target"] for position in long_positions],
+                        device=device,
+                    )
+                    long_logits = output["long_plan_logits"][long_positions]
+                    long_loss = F.cross_entropy(
+                        long_logits.reshape(-1, model.plan_vocab_size),
+                        long_target.reshape(-1),
+                    )
+                    long_scale = len(long_positions) / max(long_plan_count, 1)
+                    losses.append(long_loss * config.plan_coefficient * long_scale)
+                    sums["plan"] += long_loss.detach() * long_scale
+                    sums["plan_long_accuracy"] += (
+                        (long_logits.argmax(dim=-1) == long_target)
+                        .float()
+                        .mean()
+                        .detach()
+                        * long_scale
+                    )
                 aux_positions = [
                     position
                     for position, entry in enumerate(entries)
@@ -2302,6 +2496,32 @@ def _load_pool(
     return [(path.name, load_model(path, encoder, device)) for path in paths[-size:]]
 
 
+def _compare(candidate: Path, reference: Path, output: Path, device: str) -> None:
+    if output.exists():
+        shutil.rmtree(output)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tests.compare_models",
+            "--candidate",
+            str(candidate),
+            "--reference",
+            str(reference),
+            "--games",
+            "12",
+            "--split",
+            "--output",
+            str(output),
+            "--device",
+            device,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def _sample_opponent(
     best_model: AlphaRoco,
     pool: list[tuple[str, AlphaRoco]],
@@ -2389,6 +2609,7 @@ def _collector_task(task: dict[str, Any]) -> tuple[int, str, dict[str, Any]]:
             exploration=_COLLECT_CONTEXT["exploration"],
             opponent_sample=task["opponent_sample"],
             game_index=task["game_index"],
+            status_explore=task["status_explore"],
         ),
     )
 
@@ -2462,6 +2683,7 @@ def _collect_batch(
                 exploration=exploration,
                 opponent_sample=opponent_sample,
                 game_index=game_index,
+                status_explore=config.status_explore_rate,
             ),
         )
 
@@ -2497,6 +2719,7 @@ def _collect_batch(
                         "gamma": config.gamma,
                         "timeout": config.terminal_timeout,
                         "exploration": spec,
+                        "status_explore": config.status_explore_rate,
                     }
                     for (
                         game_index,
@@ -2860,6 +3083,7 @@ def run(
             interval = wilson_interval(tally["win"], sum(tally.values()))
             elo = best_elo + config.elo_k * (rate - 0.5)
             promoted = rate > config.promotion_threshold
+            _compare(checkpoint_path, best_path, output / "compare", config.device)
             if promoted:
                 snapshot = pool_dir / f"best-batch-{reference_batch:06d}.pt"
                 if not snapshot.exists():
@@ -2933,39 +3157,13 @@ def run(
             "promoted": promoted,
             "entropy": policy_metrics["entropy"],
             "kl": policy_metrics["kl"],
-            "teacher_kl": policy_metrics["teacher_kl"],
             "value_loss": policy_metrics["value"],
-            "outcome_delta_loss": policy_metrics["outcome_delta"],
-            "outcome_delta_baseline": policy_metrics["outcome_delta_baseline"],
-            "outcome_target_loss": policy_metrics["outcome_target"],
-            "outcome_target_baseline": policy_metrics["outcome_target_baseline"],
-            "candidate_trait_trigger_loss": policy_metrics["candidate_trait_trigger"],
-            "candidate_trait_trigger_baseline": policy_metrics[
-                "candidate_trait_trigger_baseline"
-            ],
-            "candidate_trait_target_loss": policy_metrics["candidate_trait_target"],
-            "candidate_trait_target_baseline": policy_metrics[
-                "candidate_trait_target_baseline"
-            ],
-            "effect_value_loss": policy_metrics["effect_value"],
-            "effect_value_baseline": policy_metrics["effect_value_baseline"],
-            "opponent_ce": opponent_metrics["opponent_ce"],
-            "opponent_soft_samples": opponent_metrics["opponent_soft_samples"],
-            "opponent_hard_samples": opponent_metrics["opponent_hard_samples"],
-            "both_lose_rate": both_lose / config.games_per_batch,
-            "status_actions": status_actions,
-            "status_action_rate": status_actions / max(total_actions, 1),
-            "unique_status_skills": len(status_skill_ids),
-            "unique_skills": len(used_skill_ids),
-            "unique_effects": len(effect_keys),
-            "trait_effects": trait_effects,
+            "win_value_loss": policy_metrics["win_value"],
+            "win_value_accuracy": policy_metrics["win_value_accuracy"],
+            "win_value_brier": policy_metrics["win_value_brier"],
+            "candidate_q_loss": policy_metrics["candidate_q"],
+            "candidate_q_accuracy": policy_metrics["candidate_q_accuracy"],
         }
-        record.update(
-            {
-                key: float(value) if isinstance(value, torch.Tensor) else value
-                for key, value in policy_metrics.items()
-            }
-        )
         with (output / "metrics.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         pool_stats_path.write_text(
@@ -2975,17 +3173,13 @@ def run(
         print(
             f"iter_num={batch_number} eval_win_rate={eval_text} promoted={promoted} "
             f"entropy={record['entropy']:.4f} "
-            f"kl={record['kl']:.4f} teacher_kl={record['teacher_kl']:.4f} "
-            f"value={record['value_loss']:.4f} "
-            f"outcome_delta={record['outcome_delta_loss']:.4f} "
-            f"outcome_target={record['outcome_target_loss']:.4f} "
-            f"opp_ce={record['opponent_ce']:.4f} "
-            f"both_lose_rate={record['both_lose_rate']:.3f} "
-            f"status_rate={record['status_action_rate']:.3f} "
-            f"uniq_status={record['unique_status_skills']} "
-            f"uniq_skill={record['unique_skills']} "
-            f"uniq_effect={record['unique_effects']} "
-            f"trait_fx={record['trait_effects']}",
+            f"kl={record['kl']:.4f} "
+            f"value_loss={record['value_loss']:.4f} "
+            f"win_value_loss={record['win_value_loss']:.4f} "
+            f"win_value_accuracy={record['win_value_accuracy']:.4f} "
+            f"win_value_brier={record['win_value_brier']:.4f} "
+            f"candidate_q_loss={record['candidate_q_loss']:.4f} "
+            f"candidate_q_accuracy={record['candidate_q_accuracy']:.4f}",
             flush=True,
         )
     return saved_paths
@@ -3060,6 +3254,7 @@ def _parse_args() -> (
     parser.add_argument("--warm-start", type=Path)
     parser.add_argument("--teacher", type=Path)
     parser.add_argument("--champion", type=Path)
+    parser.add_argument("--status-explore-rate", type=float, default=0.0)
     parser.add_argument(
         "--teacher-coefficient",
         type=float,
@@ -3094,6 +3289,7 @@ def _parse_args() -> (
             teacher_coefficient=args.teacher_coefficient,
             rare_skill_bonus=args.rare_skill_bonus,
             rare_skill_batches=args.rare_skill_batches,
+            status_explore_rate=args.status_explore_rate,
         ),
         args.resume,
         args.warm_start,

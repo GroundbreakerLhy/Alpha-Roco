@@ -3,7 +3,7 @@ from typing import Any
 
 import torch
 
-MODEL_SCHEMA_VERSION = 7
+MODEL_SCHEMA_VERSION = 10
 FEATURE_SCHEMA_VERSION = 3
 STATE_SCHEMA_VERSION = 2
 
@@ -141,6 +141,9 @@ class TrainConfig:
     learning_rate: float = 1e-4  # 学习率
     clip_ratio: float = 0.2  # PPO 裁剪比例
     value_coefficient: float = 0.5  # 价值损失系数
+    win_value_coefficient: float = 0.3  # 胜负价值损失系数
+    candidate_q_coefficient: float = 0.3  # 候选级结果损失系数
+    plan_coefficient: float = 0.1  # 内部计划自监督损失系数
     entropy_coefficient: float = 0.04  # 熵奖励系数
     gamma: float = 1.0  # 折扣因子
     gae_lambda: float = 0.99  # GAE 平滑系数
@@ -178,6 +181,7 @@ class TrainConfig:
     lead_aux_coefficient: float = 0.1  # 首发后势能辅助损失系数
     state_change_pos_weight: float = 10.0  # 状态变化 BCE 正例权重上限
     effect_kind_pos_weight: float = 10.0  # 施加效果类型 BCE 正例权重上限
+    status_explore_rate: float = 0.0  # 采样时强制选状态技能的概率
     rare_skill_bonus: float = 0.08  # 激进探索阶段技能奖励系数
     rare_skill_bonus_late: float = 0.02  # 后续阶段技能奖励系数
     exploration_aggressive_batches: int = 0  # 激进探索批次数；0 表示直接使用后续阶段

@@ -127,6 +127,19 @@ def collate_histories(histories, device, width, candidates=None):
             device=device,
         ),
     }
+    plan_dim = next(
+        (len(history.long_plan) for history in histories if history.long_plan is not None),
+        0,
+    )
+    if plan_dim:
+        plans = torch.zeros(len(histories), plan_dim, device=device)
+        present = torch.zeros(len(histories), dtype=torch.bool, device=device)
+        for index, history in enumerate(histories):
+            if history.long_plan is not None:
+                plans[index] = history.long_plan.to(device)
+                present[index] = True
+        result["long_plan"] = plans
+        result["long_plan_present"] = present
     if candidates is not None:
         frequency = torch.zeros(
             len(histories),
@@ -153,6 +166,7 @@ class HistoryState:
         self.public_actions: list[dict] = []
         self.position = 0
         self.pending: tuple[Tensor, Tensor, int] | None = None
+        self.long_plan: Tensor | None = None
 
     def batch(self, device, width, candidates=None):
         return collate_histories(
@@ -169,6 +183,8 @@ class HistoryState:
         )[batch_index, action_index]
         self.own_keys.append(model.history_key(state, action, self.position))
         self.own_values.append(model.history_value(state, action))
+        if phase == "lead" and "long_plan" in output:
+            self.long_plan = output["long_plan"][batch_index].detach()
         self.pending = (
             output["public_state"][batch_index],
             output["opponent_action_encodings"][batch_index],
@@ -963,6 +979,18 @@ class AlphaRoco(nn.Module):
         self.history_key_norm = nn.LayerNorm(width)
         self.history_value_norm = nn.LayerNorm(width)
         self.opponent = OpponentModel(self.config, vocab_sizes)
+        self.plan_vocab_size = vocab_sizes["skill"] + 8
+        self.long_plan_encoder = nn.Sequential(
+            nn.Linear(width, 128), nn.GELU()
+        )
+        self.short_plan_encoder = nn.Sequential(
+            nn.Linear(width + 128, 128), nn.GELU()
+        )
+        self.plan_score_projection = nn.Linear(128, width)
+        nn.init.zeros_(self.plan_score_projection.weight)
+        nn.init.zeros_(self.plan_score_projection.bias)
+        self.long_plan_action_head = nn.Linear(128, 4 * self.plan_vocab_size)
+        self.short_plan_action_head = nn.Linear(128, self.plan_vocab_size)
         self.context = nn.Sequential(
             nn.Linear(width * 3, 256),
             nn.GELU(),
@@ -1023,6 +1051,9 @@ class AlphaRoco(nn.Module):
             nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 1)
         )
         self.battle_value = nn.Sequential(
+            nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 1)
+        )
+        self.win_value = nn.Sequential(
             nn.Linear(width, 128), nn.GELU(), nn.Linear(128, 1)
         )
         self.aux_damage_dealt = nn.Sequential(
@@ -1129,6 +1160,12 @@ class AlphaRoco(nn.Module):
         self.aux_effect_value = nn.Sequential(
             nn.Linear(width * 2, 128), nn.GELU(), nn.Linear(128, 1)
         )
+        self.candidate_q = nn.Sequential(
+            nn.Linear(width * 2, 128), nn.GELU(), nn.Linear(128, 1)
+        )
+        with torch.no_grad():
+            self.candidate_q[-1].weight.mul_(1e-2)
+            self.candidate_q[-1].bias.mul_(1e-2)
         self.effect_value_score = nn.Linear(1, 1)
         for layer in (
             self.effect_base_score,
@@ -1403,6 +1440,25 @@ class AlphaRoco(nn.Module):
         battle_context = battle_context + self.joint_belief_projection(
             joint_belief @ self.joint_belief_embedding.weight
         )
+        if history is not None and "long_plan" in history:
+            stored_long_plan = history["long_plan"].to(battle_context.device)
+            long_plan = torch.where(
+                is_lead[:, None],
+                self.long_plan_encoder(battle_context),
+                stored_long_plan,
+            )
+        else:
+            long_plan = self.long_plan_encoder(battle_context)
+        short_plan = self.short_plan_encoder(
+            torch.cat((battle_context, long_plan), dim=-1)
+        )
+        plan_context = battle_context + self.plan_score_projection(
+            long_plan + short_plan
+        )
+        long_plan_logits = self.long_plan_action_head(long_plan).reshape(
+            batch_size, 4, self.plan_vocab_size
+        )
+        short_plan_logits = self.short_plan_action_head(short_plan)
         candidates = batch["own_candidates"]
         candidate_base = self.candidate_encoder(candidates)
         candidate_base = candidate_base + self.candidate_magic_projection(
@@ -1514,6 +1570,17 @@ class AlphaRoco(nn.Module):
                 dim=-1,
             )
         ).squeeze(-1)
+        candidate_q = (
+            self.candidate_q(
+                torch.cat(
+                    (
+                        battle_context.unsqueeze(1).expand_as(action_embeddings),
+                        action_embeddings,
+                    ),
+                    dim=-1,
+                )
+            ).squeeze(-1)
+        ).tanh() * 2.0
         pet_mask = torch.cat((own_mask, enemy_mask), dim=1)
         pet_pool = (pet_tokens * pet_mask.unsqueeze(-1)).sum(dim=1) / pet_mask.sum(
             dim=1, keepdim=True
@@ -1609,7 +1676,7 @@ class AlphaRoco(nn.Module):
             self.base_score(
                 torch.cat(
                     (
-                        battle_context.unsqueeze(1).expand_as(action_embeddings),
+                        plan_context.unsqueeze(1).expand_as(action_embeddings),
                         action_embeddings,
                     ),
                     dim=-1,
@@ -1621,6 +1688,7 @@ class AlphaRoco(nn.Module):
             ).squeeze(-1)
             + self.effect_value_score(effect_value.unsqueeze(-1)).squeeze(-1)
         )
+        base_logits = base_logits + 0.5 * candidate_q.detach() * (~is_lead[:, None])
         q = opponent_q
         pair_context = battle_context[:, None, None, :].expand(
             -1, action_embeddings.shape[1], opponent_actions.shape[1], -1
@@ -1664,7 +1732,9 @@ class AlphaRoco(nn.Module):
             ).tanh()
             * 2.0
         )
+        win_value = self.win_value(battle_context).squeeze(-1).tanh() * 2.0
         aux = {
+            "candidate_q": candidate_q,
             "damage_dealt": torch.sigmoid(
                 self.aux_damage_dealt(battle_context).squeeze(-1)
             ),
@@ -1797,6 +1867,11 @@ class AlphaRoco(nn.Module):
             "base_logits": battle_base_logits,
             "interactions": interactions,
             "value": value,
+            "win_value": win_value,
+            "long_plan": long_plan,
+            "short_plan": short_plan,
+            "long_plan_logits": long_plan_logits,
+            "short_plan_logits": short_plan_logits,
             "aux": aux,
             "battle_context": battle_context,
             "effect_context": effect_context,

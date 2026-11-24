@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import signal
 import subprocess
@@ -40,6 +41,16 @@ def _chunk_for(free: int) -> int | None:
     if free >= MIN_FREE_MIB:
         return 4
     return None
+
+
+def _claim(output: Path) -> None:
+    path = output / "watch.pid"
+    if path.exists():
+        pid = int(path.read_text(encoding="utf-8").strip())
+        if Path(f"/proc/{pid}").exists():
+            raise SystemExit(f"已有 watcher 在运行：{pid}")
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    atexit.register(lambda: path.unlink(missing_ok=True))
 
 
 def _latest(output: Path) -> Path | None:
@@ -97,6 +108,7 @@ def main() -> None:
     )
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    _claim(output)
     log_path = output / "train.log"
     while True:
         checkpoint = _latest(output)
